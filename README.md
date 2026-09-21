@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/32471357/README.md)
 # Il mio Piano — app del piano nutrizionale
 
 App per telefono (installabile come una vera app, senza passare dagli store)
@@ -155,10 +156,25 @@ il conteggio "3/5 pasti fatti". Le spunte sono salvate solo sul telefono
 usato (localStorage) e si azzerano automaticamente ogni giorno; lo storico
 delle spunte più vecchie di 21 giorni viene ripulito da solo.
 
-## 8. Importare o sostituire il piano da Impostazioni
+## 8. Modificare un pasto senza file (consigliato per le modifiche di routine)
 
-In **Impostazioni → Importa / sostituisci il piano** puoi caricare un file
-`.json` per personalizzare il menu senza toccare il codice:
+In **Impostazioni → "Modifica un pasto"** puoi cambiare il testo di un singolo
+pasto direttamente dall'app: scegli settimana e giorno dai due menu a
+tendina, i campi si riempiono con il testo attuale, li modifichi e premi
+**"Salva questo giorno"**. Nessun file da scaricare o caricare — il piano
+che stai usando si aggiorna immediatamente e resta salvato sul telefono.
+
+I 5 pasti (colazione, spuntino mattina, pranzo, spuntino pomeriggio, cena)
+sono obbligatori; coccola e kcal totali sono facoltativi. Se lasci un campo
+vuoto, l'app te lo segnala e non salva nulla, così il piano resta sempre
+coerente.
+
+## 9. Importare o sostituire l'intero piano da file
+
+Per modifiche di routine usa la sezione "Modifica un pasto" qui sopra. Il
+caricamento da file `.json` resta utile per cambi grossi — ad esempio
+quando la nutrizionista consegna un piano completamente nuovo — perché
+sostituisce tutte le settimane in un colpo solo:
 
 1. Tocca **"Scarica il piano attuale come modello (.json)"**: ottieni un
    file già nel formato corretto, con i tuoi pasti attuali.
@@ -196,7 +212,7 @@ Servono almeno le settimane `"1"`, `"2"`, `"3"`, `"4"` (la `"5"` è
 opzionale, si applica solo nei mesi con 5ª settimana). `kcal` e `coccola`
 sono facoltativi.
 
-## 9. Aggiornare i menu — `js/data.js`
+## 10. Aggiornare i menu — `js/data.js`
 
 Quando la nutrizionista ti dà un nuovo piano (nuova settimana, sostituzioni,
 ecc.), apri `js/data.js` e modifica i testi dei pasti: è un oggetto con una
@@ -207,7 +223,7 @@ e fare commit/push.
 
 ---
 
-## 10. Aggiornare l'app dopo una modifica
+## 11. Aggiornare l'app dopo una modifica
 
 L'app salva una copia offline dei file (per funzionare anche senza
 connessione). Dopo ogni modifica che vuoi vedere subito riflessa anche su un
@@ -222,7 +238,7 @@ aggiornata al prossimo avvio dell'app.
 
 ---
 
-## 11. Domande frequenti
+## 12. Domande frequenti
 
 **Devo pagare qualcosa?** No. GitHub Pages è gratuito per repository pubblici, e l'app non usa servizi a pagamento.
 
