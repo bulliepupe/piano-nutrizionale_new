@@ -1,3 +1,4 @@
+
 /**
  * app.js — logica dell'interfaccia.
  * Nessuna dipendenza esterna, nessun passaggio di build: apri index.html
@@ -359,13 +360,15 @@
             <dt>Nutrizionista</dt><dd>${escapeHTML(p.nutrizionista || "—")}</dd>
           </dl>
         </div>
-        ${haCustom ? `<p class="hint" style="margin-top:10px;"><span class="status-dot ok" style="display:inline-block;margin-right:6px;"></span>Stai usando un piano importato manualmente.</p>` : ""}
+        ${haCustom ? `<p class="hint" style="margin-top:10px;"><span class="status-dot ok" style="display:inline-block;margin-right:6px;"></span>Stai usando un piano personalizzato.</p>` : ""}
         <p class="hint" style="margin-top:14px;">Il ciclo delle settimane e la regola della 5ª settimana si modificano nel file <code class="inline">config.json</code> del progetto — istruzioni nel README.</p>
       </section>
 
+      ${renderEditorPastoHTML()}
+
       <section class="settings-section">
-        <h2>Importa / sostituisci il piano</h2>
-        <p class="hint">Carica un file .json per personalizzare o sostituire il menu attuale. Scarica prima il modello: ha già il formato corretto, così eviti errori — modifica solo i testi dei pasti e ricaricalo.</p>
+        <h2>Importa / sostituisci l'intero piano</h2>
+        <p class="hint">Per cambi grossi (un piano tutto nuovo dalla nutrizionista) puoi anche sostituire tutto in blocco con un file .json. Per le modifiche di tutti i giorni ti conviene la sezione "Modifica un pasto" qui sopra — niente file, si salva subito.</p>
         <div class="import-actions">
           <button type="button" class="btn btn--ghost" id="btn-esporta-piano">Scarica il piano attuale come modello (.json)</button>
           <label class="btn" for="input-importa-piano">Importa piano da file…</label>
@@ -391,6 +394,8 @@
       });
     });
 
+    collegaEditorPasto();
+
     document.getElementById("btn-esporta-piano").addEventListener("click", esportaPianoAttuale);
     document.getElementById("input-importa-piano").addEventListener("change", onFileImportPiano);
     const btnReset = document.getElementById("btn-reset-piano");
@@ -403,6 +408,112 @@
         render();
       });
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Editor rapido di un singolo pasto/giorno (senza passare da file .json)
+  // ---------------------------------------------------------------------
+
+  /** Ricorda l'ultima settimana/giorno scelti nell'editor tra un render e l'altro. */
+  function settimanaGiornoEditorCorrenti() {
+    const disponibili = [1, 2, 3, 4, 5].filter((n) => Array.isArray(PIANO_ATTIVO.settimane[n]));
+    if (typeof renderImpostazioni.settSel !== "number" || !disponibili.includes(renderImpostazioni.settSel)) {
+      const oggi = new Date();
+      const { settimana: settCorrente } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG);
+      renderImpostazioni.settSel = disponibili.includes(settCorrente) ? settCorrente : disponibili[0];
+    }
+    if (typeof renderImpostazioni.giornoSel !== "number") {
+      renderImpostazioni.giornoSel = window.weekLogic.calcolaSettimanaGiorno(new Date(), CONFIG).giornoIndex;
+    }
+    return { disponibili, settSel: renderImpostazioni.settSel, giornoSel: renderImpostazioni.giornoSel };
+  }
+
+  function renderEditorPastoHTML() {
+    const { disponibili, settSel, giornoSel } = settimanaGiornoEditorCorrenti();
+    const giornoEdit = (PIANO_ATTIVO.settimane[settSel] && PIANO_ATTIVO.settimane[settSel][giornoSel]) || {};
+
+    return `
+      <section class="settings-section">
+        <h2>Modifica un pasto</h2>
+        <p class="hint">Scegli settimana e giorno, cambia il testo dei pasti e salva: niente file, il piano che stai usando si aggiorna subito.</p>
+        <div class="field-row">
+          <span class="field-row__label">Settimana</span>
+          <select id="sel-edit-settimana">
+            ${disponibili.map((n) => `<option value="${n}" ${n === settSel ? "selected" : ""}>Settimana ${n}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field-row">
+          <span class="field-row__label">Giorno</span>
+          <select id="sel-edit-giorno">
+            ${window.weekLogic.GIORNI.map((g, i) => `<option value="${i}" ${i === giornoSel ? "selected" : ""}>${g}</option>`).join("")}
+          </select>
+        </div>
+        <div class="editor-pasti" id="editor-pasti-form">
+          ${MEAL_KEYS.map((key) => `
+            <label class="editor-campo">
+              <span>${MEAL_META[key].label}</span>
+              <textarea data-campo="${key}" rows="2">${escapeHTML(giornoEdit[key] || "")}</textarea>
+            </label>
+          `).join("")}
+          <label class="editor-campo">
+            <span>Coccola (facoltativa)</span>
+            <input type="text" data-campo="coccola" value="${escapeHTML(giornoEdit.coccola || "")}">
+          </label>
+          <label class="editor-campo">
+            <span>Kcal totali (facoltativo)</span>
+            <input type="number" data-campo="kcal" value="${giornoEdit.kcal != null ? giornoEdit.kcal : ""}">
+          </label>
+        </div>
+        <button type="button" class="btn" id="btn-salva-pasto" style="margin-top:14px;">Salva questo giorno</button>
+      </section>
+    `;
+  }
+
+  function collegaEditorPasto() {
+    document.getElementById("sel-edit-settimana").addEventListener("change", (e) => {
+      renderImpostazioni.settSel = Number(e.target.value);
+      render();
+    });
+    document.getElementById("sel-edit-giorno").addEventListener("change", (e) => {
+      renderImpostazioni.giornoSel = Number(e.target.value);
+      render();
+    });
+    document.getElementById("btn-salva-pasto").addEventListener("click", salvaPastoModificato);
+  }
+
+  function salvaPastoModificato() {
+    const { settSel, giornoSel } = settimanaGiornoEditorCorrenti();
+
+    const campi = {};
+    document.querySelectorAll("#editor-pasti-form [data-campo]").forEach((el) => {
+      campi[el.dataset.campo] = el.value;
+    });
+
+    const vuoti = MEAL_KEYS.filter((k) => !campi[k] || !campi[k].trim());
+    if (vuoti.length) {
+      mostraToast("Compila tutti i pasti prima di salvare — manca: " + vuoti.map((k) => MEAL_META[k].label).join(", "), 4200);
+      return;
+    }
+
+    // Non modificare mai PIANO_ATTIVO/PIANO_BASE sul posto: si lavora su una copia.
+    const pianoModificato = JSON.parse(JSON.stringify(PIANO_ATTIVO));
+    const giornoObj = pianoModificato.settimane[settSel][giornoSel];
+    MEAL_KEYS.forEach((k) => { giornoObj[k] = campi[k].trim(); });
+    giornoObj.coccola = (campi.coccola || "").trim();
+    const kcalNum = Number(campi.kcal);
+    giornoObj.kcal = (campi.kcal !== "" && !Number.isNaN(kcalNum)) ? kcalNum : null;
+
+    // Passa comunque dal validatore: garantisce che il piano resti sempre nel formato corretto.
+    const risultato = validaPiano(pianoModificato);
+    if (!risultato.ok) {
+      mostraToast("Non salvato — " + risultato.errori[0], 4200);
+      return;
+    }
+
+    localStorage.setItem(LS_KEYS.pianoCustom, JSON.stringify(risultato.piano));
+    PIANO_ATTIVO = risultato.piano;
+    mostraToast("Pasto salvato");
+    render();
   }
 
   // ---------------------------------------------------------------------
