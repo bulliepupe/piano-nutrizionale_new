@@ -1,0 +1,20 @@
+{
+  "_leggimi": "Questo file è l'unica fonte di verità usata sia dall'app sia dalle notifiche automatiche di GitHub Actions. Modificalo e fai commit/push per applicare i cambiamenti (vedi README, sezione 'Configurare il piano').",
+
+  "startDate": "2026-08-31",
+  "_startDate_spiegazione": "Il lunedì da cui parte il ciclo 'Settimana 1'. Impostalo al lunedì della settimana in cui il tuo nutrizionista ha iniziato la Settimana 1 del piano attuale.",
+
+  "week5Months": [],
+  "_week5Months_spiegazione": "Elenco di mesi (formato YYYY-MM) in cui, secondo la 'Regola 5ª settimana' indicata dalla nutrizionista, si usa il menu della Settimana 5 al posto del ciclo 1-2-3-4. Si applica solo al 5° lunedì di quel mese. Esempio: [\"2026-12\"]",
+
+  "overrideWeek": null,
+  "_overrideWeek_spiegazione": "Se vuoi forzare manualmente una settimana specifica (1-5) per tutti i giorni, indipendentemente dalla data, scrivi il numero qui (es. 3). Altrimenti lascia null.",
+
+  "orari": {
+    "colazione": "08:00",
+    "spuntinoMattina": "10:30",
+    "pranzo": "13:00",
+    "spuntinoPomeriggio": "16:30",
+    "cena": "20:00"
+  }
+}

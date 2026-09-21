@@ -1,0 +1,17 @@
+{
+  "name": "Il mio Piano — Piano Nutrizionale",
+  "short_name": "Il mio Piano",
+  "description": "Il menu del giorno e della settimana del tuo piano nutrizionale personalizzato, con promemoria pasti.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EEF2E8",
+  "theme_color": "#2F5142",
+  "lang": "it",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
