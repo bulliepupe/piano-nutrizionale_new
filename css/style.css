@@ -446,6 +446,38 @@ details.norme li { margin-bottom: 6px; }
   margin-top: 4px;
 }
 
+/* ---------- Editor rapido di un pasto ---------- */
+.editor-pasti {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+}
+.editor-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.editor-campo textarea,
+.editor-campo input[type="text"],
+.editor-campo input[type="number"] {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: 9px 11px;
+  background: var(--surface);
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+.editor-campo textarea { min-height: 46px; }
+
 code.inline {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: var(--border-soft);
