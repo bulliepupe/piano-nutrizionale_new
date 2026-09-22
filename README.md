@@ -1,13 +1,17 @@
+[README (1).md](https://github.com/user-attachments/files/32515331/README.1.md)
 [README.md](https://github.com/user-attachments/files/32471357/README.md)
 # Il mio Piano — app del piano nutrizionale
 
 App per telefono (installabile come una vera app, senza passare dagli store)
-che mostra ogni giorno il menu del tuo piano nutrizionale personalizzato e
-manda un promemoria nei momenti dei pasti.
+che mostra ogni giorno il menu del piano nutrizionale personalizzato e manda
+un promemoria nei momenti dei pasti.
 
-Non richiede account, server o abbonamenti: è un sito web che, una volta
-pubblicato su GitHub Pages, puoi "installare" sulla schermata Home del
-telefono. Il codice è tutto qui dentro, pronto per essere caricato.
+Da questa versione l'app ha un **accesso cloud**: il professionista
+(dietista/nutrizionista) ha un pannello per creare pazienti e modificarne il
+piano, e ogni paziente vede il proprio piano sincronizzato in tempo reale, su
+qualsiasi dispositivo — senza dover più modificare file su GitHub per ogni
+paziente. Il codice resta comunque un sito statico, pubblicato gratis su
+GitHub Pages; il "cloud" è **Firebase** (Google), nel suo piano gratuito.
 
 ---
 
@@ -15,15 +19,18 @@ telefono. Il codice è tutto qui dentro, pronto per essere caricato.
 
 ```
 piano-nutrizionale/
-├── index.html          → la pagina dell'app
-├── manifest.json        → dice al telefono come installare l'app (nome, icona…)
-├── service-worker.js    → fa funzionare l'app offline e gestisce le notifiche
-├── config.json           → LE IMPOSTAZIONI DEL TUO PIANO (data, orari, regole)
+├── index.html            → la pagina dell'app (login + vista paziente + pannello professionista)
+├── manifest.json         → dice al telefono come installare l'app (nome, icona…)
+├── service-worker.js     → fa funzionare l'app offline e gestisce le notifiche
+├── config.json           → ciclo delle settimane e orari di default (condivisi da tutti i pazienti)
+├── firestore.rules       → regole di sicurezza da incollare nella console Firebase
 ├── css/style.css         → l'aspetto grafico
-├── js/data.js            → i menu delle 5 settimane (dai PDF della nutrizionista)
+├── js/data.js            → piano di ESEMPIO usato come punto di partenza per un nuovo paziente
 ├── js/week-logic.js      → calcola quale settimana/giorno mostrare oggi
-├── js/app.js              → la logica dell'interfaccia e delle notifiche
-└── icons/                 → le icone dell'app
+├── js/firebase-config.js → i tuoi parametri del progetto Firebase (da compilare)
+├── js/cloud.js           → tutte le chiamate a Firebase (accesso, Firestore)
+├── js/app.js             → la logica dell'interfaccia, dei ruoli e delle notifiche
+└── icons/                → le icone dell'app
 ```
 
 Non c'è nessun passaggio di "compilazione": è HTML/CSS/JS semplice, apri e funziona.
@@ -63,19 +70,66 @@ git push -u origin main
 
    `https://TUO-USERNAME.github.io/piano-nutrizionale/`
 
-   È l'indirizzo della tua app: aprilo dal telefono.
-
 Ogni volta che modifichi un file e fai un nuovo commit/push, GitHub Pages
 aggiorna automaticamente il sito in un minuto o due.
 
 ---
 
-## 4. Installare l'app sul telefono
+## 4. Configurare l'accesso cloud (Firebase) — da fare una sola volta
+
+Senza questo passaggio l'app mostra solo la schermata di accesso, senza
+poter funzionare: è il "motore" che tiene sincronizzati professionista e
+pazienti.
+
+1. Vai su [console.firebase.google.com](https://console.firebase.google.com) ed entra col tuo account Google.
+2. **Aggiungi progetto** → dagli un nome (es. "Il mio Piano") → puoi disattivare Google Analytics (non serve) → **Crea progetto**.
+3. Nel menu a sinistra apri **Build → Authentication** → **Inizia** → nella lista dei provider abilita **Email/Password** (primo interruttore) → **Salva**.
+4. Sempre nel menu a sinistra apri **Build → Firestore Database** → **Crea database** → scegli una posizione (una europea, es. `eur3`) → **Avvia in modalità produzione** → **Abilita**.
+5. Apri la scheda **Regole** del database appena creato, cancella il contenuto e incolla quello del file `firestore.rules` di questo progetto → **Pubblica**.
+6. Torna alla pagina principale del progetto (icona ingranaggio in alto → **Impostazioni progetto**) → scorri fino a **Le tue app** → icona **</>** (Web) → dai un nome all'app → **Registra app**. Comparirà un blocco `firebaseConfig = {...}`: copia quei valori.
+7. Apri `js/firebase-config.js` in questo progetto e incolla i valori copiati al posto dei segnaposto `INSERISCI_...`. Salva, fai commit e push su GitHub.
+
+Fatto: dopo 1-2 minuti (il tempo che GitHub Pages aggiorni il sito) l'app è
+pronta per la registrazione del primo professionista.
+
+**Sui costi:** il piano gratuito di Firebase ("Spark") include Authentication
+illimitata e Firestore fino a 1 GB di dati e 50.000 letture/20.000
+scritture al giorno — più che sufficiente per uno studio con decine o
+centinaia di pazienti. Non serve inserire una carta di credito.
+
+---
+
+## 5. I due ruoli: professionista e paziente
+
+- **Professionista** (tu, o chi gestisce i piani): alla prima apertura
+  dell'app tocca **"Registrati come professionista"** nella schermata di
+  accesso e crea il proprio account con email e password. Da lì si entra
+  nel **pannello professionista**: elenco pazienti, "+ Nuovo paziente" per
+  crearne uno (viene generata anche una password provvisoria da comunicare
+  al paziente), e l'editor per modificare i pasti di ciascun piano — le
+  modifiche arrivano **subito** sull'app del paziente, anche se è su un
+  altro telefono.
+- **Paziente**: riceve dal professionista email e password provvisoria,
+  le usa per accedere e vede il proprio piano (Oggi / Settimana /
+  Impostazioni) esattamente come nella versione precedente dell'app — con
+  la differenza che ora **non può più modificare pasti, regole generali o
+  dati anagrafici**: quelli si aggiornano solo dal pannello del
+  professionista. Il paziente può però attivare/disattivare i promemoria,
+  cambiare tema, e spuntare i pasti fatti — anche queste spunte sono
+  sincronizzate sul cloud.
+
+Un professionista può gestire più pazienti dallo stesso account; ogni
+paziente vede solo il proprio piano (lo impongono anche le regole di
+sicurezza in `firestore.rules`, non solo l'interfaccia).
+
+---
+
+## 6. Installare l'app sul telefono
 
 **Android (Chrome):**
 1. Apri l'indirizzo GitHub Pages nel browser Chrome.
 2. Tocca il menu ⋮ in alto a destra → **Aggiungi a schermata Home** (o comparirà un banner automatico "Installa app").
-3. Conferma: l'icona a foglia comparirà tra le tue app, e si aprirà a schermo intero come un'app vera.
+3. Conferma: l'icona comparirà tra le tue app, e si aprirà a schermo intero come un'app vera.
 
 **iPhone (Safari):**
 1. Apri l'indirizzo GitHub Pages in **Safari** (deve essere Safari, non Chrome, perché su iOS solo Safari può installare app web).
@@ -86,171 +140,115 @@ Da questo momento l'app si apre dall'icona sulla Home, senza barra del browser.
 
 ---
 
-## 5. Attivare i promemoria dei pasti
+## 7. Attivare i promemoria dei pasti
 
-1. Apri l'app (dall'icona installata, idealmente).
+1. Apri l'app e accedi.
 2. Vai su **Impostazioni** e attiva **Attiva promemoria**, oppure tocca la campanella in alto.
 3. Il telefono chiederà il permesso di mostrare notifiche: conferma.
-4. Da **Impostazioni** puoi anche modificare l'orario di ciascun pasto.
+4. Da **Impostazioni** puoi anche modificare l'orario di ciascun pasto (solo su questo dispositivo).
 
 **Come funzionano, onestamente:** l'app programma il promemoria di ogni pasto
 mentre è aperta o rimane in background di recente; se la riapri entro 90
 minuti da un orario già passato, ti mostra comunque il promemoria di quel
-pasto ("recupero"). È un funzionamento locale, senza server: molto affidabile
-su Android se tieni l'app tra le app recenti, meno prevedibile se il telefono
-la chiude del tutto per ore, specialmente su iPhone (Safari limita le notifiche
-web in background più di Chrome/Android).
-
-Se in futuro vuoi notifiche "vere" anche ad app completamente chiusa per
-giorni, serve un servizio di invio push lato server (es. Firebase Cloud
-Messaging o OneSignal) che manda la notifica dall'esterno a un orario
-prestabilito: è un passo in più, fammelo sapere quando vuoi e ti preparo
-anche quello.
+pasto ("recupero"). È un funzionamento locale al dispositivo: molto
+affidabile su Android se tieni l'app tra le app recenti, meno prevedibile se
+il telefono la chiude del tutto per ore, specialmente su iPhone. Notifiche
+vere anche ad app completamente chiusa per giorni sono tra i prossimi
+miglioramenti pianificati (richiedono Firebase Cloud Messaging, che si
+appoggia proprio al progetto Firebase già creato al punto 4).
 
 ---
 
-## 6. Configurare il tuo piano — `config.json`
-
-Questo è il file da modificare quando cambia qualcosa nel piano. Aprilo,
-cambia i valori e fai commit/push: l'app si aggiorna da sola.
+## 8. Il ciclo delle settimane — `config.json`
 
 ```json
 {
   "startDate": "2026-09-14",
   "week5Months": [],
   "overrideWeek": null,
-  "orari": {
-    "colazione": "08:00",
-    "spuntinoMattina": "10:30",
-    "pranzo": "13:00",
-    "spuntinoPomeriggio": "16:30",
-    "cena": "20:00"
-  }
+  "orari": { "colazione": "08:00", "spuntinoMattina": "10:30", "pranzo": "13:00", "spuntinoPomeriggio": "16:30", "cena": "20:00" }
 }
 ```
 
 - **`startDate`** — il lunedì da cui parte la "Settimana 1". Da lì in poi
   l'app ruota automaticamente 1 → 2 → 3 → 4 → 1 → 2… una settimana alla volta.
-- **`week5Months`** — elenco di mesi (`"2026-12"`, ecc.) in cui, secondo la
-  regola della nutrizionista, si usa il menu della Settimana 5. Si attiva
-  solo nel 5° lunedì di quel mese (i mesi che ne hanno cinque).
-- **`overrideWeek`** — per forzare manualmente una settimana fissa (1-5)
-  indipendentemente dalla data, scrivi il numero; altrimenti lascia `null`.
-- **`orari`** — gli orari di default usati per il promemoria di ciascun
-  pasto (personalizzabili anche dall'app, per dispositivo, in Impostazioni).
+- **`week5Months`** — mesi (`"2026-12"`, ecc.) in cui si usa il menu della
+  Settimana 5, solo al 5° lunedì di quel mese.
+- **`overrideWeek`** — per forzare una settimana fissa (1-5) indipendentemente
+  dalla data; altrimenti `null`.
+- **`orari`** — orari di default dei pasti, personalizzabili anche per
+  singolo dispositivo dall'app.
 
-> Nota sulla "Regola 5ª settimana": nel PDF originale la regola era
-> troncata ("si applica ai mesi in cui le settimane con più di tre giorni
-> lavorativi sono più di 4…"). Ho implementato l'interpretazione più
-> naturale (5° lunedì del mese), ma se la nutrizionista intendeva altro,
-> usa semplicemente `overrideWeek` nelle settimane in questione, oppure
-> aggiorna `week5Months` di conseguenza.
+Questo file è **condiviso da tutti i pazienti** di questo deployment (lo
+stesso sito serve tutti): oggi il ciclo delle settimane è unico per tutti,
+non ancora personalizzabile per singolo paziente — è tra le prossime
+migliorie pianificate.
 
 ---
 
-## 7. Spuntare i pasti fatti
+## 9. Modificare i pasti di un paziente (pannello professionista)
 
-Nella vista **Oggi**, sotto ogni pasto c'è un pulsante "Segna come fatto".
-Toccandolo il pasto si spunta (bordo verde, testo barrato) e in alto compare
-il conteggio "3/5 pasti fatti". Le spunte sono salvate solo sul telefono
-usato (localStorage) e si azzerano automaticamente ogni giorno; lo storico
-delle spunte più vecchie di 21 giorni viene ripulito da solo.
+Da **"I tuoi pazienti"**, tocca il paziente: si apre l'editor.
 
-## 8. Modificare un pasto senza file (consigliato per le modifiche di routine)
+- **Modifica un pasto** — scegli settimana e giorno dai due menu a tendina,
+  cambia il testo dei pasti (i 5 sono obbligatori; coccola e kcal
+  facoltativi) e premi **"Salva questo giorno"**: si sincronizza subito con
+  l'app del paziente, ovunque si trovi.
+- **Importa / sostituisci l'intero piano** — per un cambio grosso (piano
+  completamente nuovo) puoi scaricare il piano attuale come modello `.json`,
+  modificarlo con un editor di testo mantenendo la struttura dei campi, e
+  ricaricarlo: sostituisce tutte le settimane in un colpo solo. L'app
+  controlla il file prima di accettarlo (7 giorni per settimana, tutti i
+  pasti compilati, ecc.) e segnala con precisione cosa manca, senza
+  applicare nulla di incompleto.
 
-In **Impostazioni → "Modifica un pasto"** puoi cambiare il testo di un singolo
-pasto direttamente dall'app: scegli settimana e giorno dai due menu a
-tendina, i campi si riempiono con il testo attuale, li modifichi e premi
-**"Salva questo giorno"**. Nessun file da scaricare o caricare — il piano
-che stai usando si aggiorna immediatamente e resta salvato sul telefono.
-
-I 5 pasti (colazione, spuntino mattina, pranzo, spuntino pomeriggio, cena)
-sono obbligatori; coccola e kcal totali sono facoltativi. Se lasci un campo
-vuoto, l'app te lo segnala e non salva nulla, così il piano resta sempre
-coerente.
-
-## 9. Importare o sostituire l'intero piano da file
-
-Per modifiche di routine usa la sezione "Modifica un pasto" qui sopra. Il
-caricamento da file `.json` resta utile per cambi grossi — ad esempio
-quando la nutrizionista consegna un piano completamente nuovo — perché
-sostituisce tutte le settimane in un colpo solo:
-
-1. Tocca **"Scarica il piano attuale come modello (.json)"**: ottieni un
-   file già nel formato corretto, con i tuoi pasti attuali.
-2. Modifica i testi dei pasti nel file scaricato con un editor di testo
-   (mantieni la struttura invariata: non cambiare i nomi dei campi).
-3. In Impostazioni tocca **"Importa piano da file…"** e seleziona il file
-   modificato.
-
-L'app controlla che il file sia formattato correttamente prima di
-accettarlo (7 giorni per settimana, tutti i pasti compilati, ecc.): se
-manca qualcosa te lo segnala con un messaggio preciso (es. "Sett. 2,
-Giovedì: manca 'Pranzo'") e non applica nulla, così non rischi di rompere
-l'app. Il piano importato resta salvato solo su quel dispositivo
-(localStorage) — non modifica i file su GitHub. Per tornare al piano di
-partenza, usa **"Ripristina il piano originale"** (compare solo quando un
-piano importato è attivo).
-
-Formato atteso del file (puoi anche scriverlo da zero seguendo questo schema):
-
-```json
-{
-  "paziente": { "nome": "…", "obiettivo": "…", "targetKcal": 1500, "nutrizionista": "…" },
-  "orariDefault": { "colazione": "08:00", "spuntinoMattina": "10:30", "pranzo": "13:00", "spuntinoPomeriggio": "16:30", "cena": "20:00" },
-  "normeGenerali": ["Regola 1", "Regola 2"],
-  "settimane": {
-    "1": [
-      { "colazione": "…", "spuntinoMattina": "…", "pranzo": "…", "spuntinoPomeriggio": "…", "cena": "…", "coccola": "…", "kcal": 1500 },
-      { "…": "… (7 oggetti in tutto, uno per giorno, da Lunedì a Domenica, nell'ordine)" }
-    ]
-  }
-}
-```
-
-Servono almeno le settimane `"1"`, `"2"`, `"3"`, `"4"` (la `"5"` è
-opzionale, si applica solo nei mesi con 5ª settimana). `kcal` e `coccola`
-sono facoltativi.
-
-## 10. Aggiornare i menu — `js/data.js`
-
-Quando la nutrizionista ti dà un nuovo piano (nuova settimana, sostituzioni,
-ecc.), apri `js/data.js` e modifica i testi dei pasti: è un oggetto con una
-voce per ogni settimana (1-5) e, dentro, un elenco dei 7 giorni con gli
-stessi campi (`colazione`, `spuntinoMattina`, `pranzo`, `spuntinoPomeriggio`,
-`cena`, `coccola`, `kcal`). Basta modificare il testo tra virgolette, salvare
-e fare commit/push.
+La modifica diretta di regole generali e dati anagrafici dal pannello arriva
+nel prossimo aggiornamento; per ora si possono includere nel file `.json`
+importato (campi `paziente` e `normeGenerali`, vedi lo schema scaricabile
+dall'editor).
 
 ---
 
-## 11. Aggiornare l'app dopo una modifica
+## 10. Il piano di esempio — `js/data.js`
 
-L'app salva una copia offline dei file (per funzionare anche senza
-connessione). Dopo ogni modifica che vuoi vedere subito riflessa anche su un
-telefono che ha già installato l'app, apri `service-worker.js` e cambia:
+Non è più "il" piano di un singolo paziente: è lo **schema di partenza**
+copiato automaticamente ogni volta che il professionista crea un nuovo
+paziente dal pannello (così non si parte da zero). Modificalo se vuoi che i
+nuovi pazienti partano da un modello diverso dal tuo — non tocca i pazienti
+già creati.
+
+---
+
+## 11. Aggiornare l'app dopo una modifica al codice
+
+L'app salva una copia offline dei file per funzionare anche senza
+connessione. Dopo ogni modifica al codice (non al piano di un paziente, che
+si sincronizza da solo via Firestore) che vuoi vedere subito riflessa anche
+su un telefono che ha già installato l'app, apri `service-worker.js` e alza:
 
 ```js
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v8";
 ```
 
-in `"v2"`, `"v3"`, ecc. — questo forza il telefono a scaricare la versione
-aggiornata al prossimo avvio dell'app.
+di uno — questo forza il telefono a scaricare la versione aggiornata al
+prossimo avvio dell'app.
 
 ---
 
 ## 12. Domande frequenti
 
-**Devo pagare qualcosa?** No. GitHub Pages è gratuito per repository pubblici, e l'app non usa servizi a pagamento.
+**Devo pagare qualcosa?** No: GitHub Pages e il piano gratuito di Firebase
+coprono comodamente uno studio con centinaia di pazienti (vedi punto 4).
 
-**I miei dati (piano, nome, peso) finiscono da qualche parte online?** Il
-repository su GitHub è pubblico per impostazione predefinita (necessario per
-Pages gratuito), quindi chiunque conosca l'indirizzo può vedere i file,
-incluso il tuo piano in `js/data.js`. Se preferisci tenerlo privato, GitHub
-permette repository privati anche gratuitamente, ma **GitHub Pages gratuito
-richiede un repository pubblico** (i repository privati con Pages
-richiedono un piano GitHub Pro). Se per te è importante, fammelo sapere: si
-può ospitare l'app altrove (es. Netlify o Vercel, gratuiti anche con
-repository privati) con pochissime modifiche.
+**I dati dei pazienti finiscono nel repository pubblico su GitHub?** No —
+è proprio il cambiamento di questa versione: il codice dell'app (uguale per
+tutti) resta su GitHub, pubblico; i dati di ciascun paziente (piano,
+pasti fatti) vivono su Firestore, protetti dalle regole di sicurezza in
+`firestore.rules`, e sono leggibili solo dal paziente stesso e dal
+professionista che li ha creati.
+
+**Un paziente può vedere il piano di un altro?** No, le regole di sicurezza
+di Firestore lo impediscono a livello di database, non solo di interfaccia.
 
 **Posso usarla anche senza installarla?** Sì, funziona come sito web
 normale; installarla serve solo per averla come icona a schermo intero e
