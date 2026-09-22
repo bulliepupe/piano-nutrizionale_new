@@ -1,8 +1,15 @@
 
 /**
  * app.js — logica dell'interfaccia.
- * Nessuna dipendenza esterna, nessun passaggio di build: apri index.html
- * (idealmente servito via HTTPS/GitHub Pages) e funziona.
+ * Nessuna dipendenza di build: apre index.html via HTTPS/GitHub Pages e funziona.
+ *
+ * Novità di questa versione: il piano NON vive più solo su questo dispositivo.
+ * C'è un accesso (Firebase Auth) e due ruoli:
+ *  - "professionista": pannello per creare pazienti e modificare i loro piani
+ *    (salva su Firestore — vedi js/cloud.js);
+ *  - "paziente": vede il proprio piano in tempo reale (si aggiorna da solo se
+ *    il professionista lo cambia, anche da un altro dispositivo) e può solo
+ *    usarlo (spunte pasti, promemoria, aspetto) — non modificarlo.
  */
 
 (function () {
@@ -17,32 +24,56 @@
     cena: { label: "Cena", classe: "meal--cena" },
   };
 
+  // Solo preferenze locali al dispositivo: non riguardano il contenuto del
+  // piano (quello ora vive su Firestore), quindi restano in localStorage.
   const LS_KEYS = {
     notifiche: "pnut:notifiche-attive",
     orari: "pnut:orari-override",
     tema: "pnut:tema",
     ultimoCheck: "pnut:ultimo-check",
-    pastiFatti: "pnut:pasti-fatti", // + ":YYYY-MM-DD" per ogni giorno
-    pianoCustom: "pnut:piano-custom", // piano importato dall'utente, sostituisce js/data.js
   };
 
-  // Piano "di fabbrica" da js/data.js — resta sempre disponibile come fallback
-  // e come base per i campi non specificati in un piano importato.
-  const PIANO_BASE = window.PIANO;
-  let PIANO_ATTIVO = caricaPianoPersonalizzato() || PIANO_BASE;
+  // Struttura di esempio (5 settimane) usata come punto di partenza quando il
+  // professionista crea un nuovo paziente — resta comunque disponibile offline.
+  const PIANO_TEMPLATE = window.PIANO;
 
   const DEFAULT_CONFIG = {
     startDate: "2026-09-14",
     week5Months: [],
     overrideWeek: null,
-    orari: Object.assign({}, PIANO_ATTIVO.orariDefault),
+    orari: Object.assign({}, PIANO_TEMPLATE.orariDefault),
   };
 
   let CONFIG = DEFAULT_CONFIG;
   let currentView = "oggi";
   let settimanaAnteprima = null; // per la vista Settimana: null = usa quella corrente calcolata
 
+  // ---------------------------------------------------------------------
+  // Stato di autenticazione / ruolo
+  // ---------------------------------------------------------------------
+  let RUOLO = null; // "paziente" | "professionista"
+  let UID = null;
+
+  // ---- stato lato paziente ----
+  let PIANO_ATTIVO = null; // piano corrente letto da Firestore in tempo reale
+  let PASTI_FATTI_OGGI = {};
+  let unsubPiano = null;
+  let unsubPastiOggi = null;
+
+  // ---- stato lato professionista ----
+  let PAZIENTI_PROF = [];
+  let unsubPazienti = null;
+  let vistaProfCorrente = "lista"; // "lista" | "editor" | "nuovo"
+  let pazienteSelezionatoId = null;
+  let PIANO_ATTIVO_PROF = null;
+  const EDITOR_PROF = { settSel: null, giornoSel: null };
+
+  const elAuthLoading = document.getElementById("auth-loading");
+  const elAuthScreen = document.getElementById("auth-screen");
+  const elAppPaziente = document.getElementById("app-paziente");
+  const elAppProfessionista = document.getElementById("app-professionista");
   const root = document.getElementById("view-root");
+  const profRoot = document.getElementById("prof-root");
   const dataOggiEl = document.getElementById("data-oggi");
 
   // ---------------------------------------------------------------------
@@ -50,26 +81,203 @@
   // ---------------------------------------------------------------------
   init();
 
-  async function init() {
+  function init() {
+    mostraSchermata("loading");
+    collegaFormAutenticazione();
+
+    if (!window.cloud) {
+      mostraSchermata("login");
+      mostraErroreIn("auth-error", "Errore nel caricamento di Firebase: controlla i tag <script> in index.html.");
+      return;
+    }
+    if (!window.cloud.configurato) {
+      mostraSchermata("login");
+      document.getElementById("auth-sub").textContent =
+        "Configurazione Firebase mancante: incolla i tuoi valori in js/firebase-config.js per attivare l'accesso.";
+      return;
+    }
+    window.cloud.onAuthChange(onAuthStateChanged);
+  }
+
+  async function onAuthStateChanged(user) {
+    pulisciListenerCloud();
+    if (!user) {
+      RUOLO = null;
+      UID = null;
+      mostraSchermata("login");
+      return;
+    }
+    UID = user.uid;
+    // Subito dopo una registrazione, Firebase può avvisare dell'accesso avvenuto
+    // prima che il documento users/{uid} (scritto subito dopo, in una chiamata
+    // separata) sia effettivamente disponibile in lettura: qualche tentativo con
+    // una breve attesa evita di disconnettere per errore un account appena creato.
+    let utenteDati = null;
+    for (let tentativo = 0; tentativo < 4 && !utenteDati; tentativo++) {
+      if (tentativo > 0) await new Promise((r) => setTimeout(r, 400));
+      try {
+        utenteDati = await window.cloud.caricaUtente(user.uid);
+      } catch (e) {
+        // riprova
+      }
+    }
+    if (!utenteDati) {
+      await window.cloud.logout();
+      mostraSchermata("login");
+      mostraErroreIn("auth-error", "Account non configurato correttamente. Contatta il tuo professionista.");
+      return;
+    }
+    RUOLO = utenteDati.ruolo;
+    if (RUOLO === "professionista") {
+      avviaProfessionista(utenteDati);
+    } else {
+      avviaPaziente();
+    }
+  }
+
+  function mostraSchermata(nome) {
+    elAuthLoading.hidden = nome !== "loading";
+    elAuthScreen.hidden = nome !== "login";
+    elAppPaziente.hidden = nome !== "paziente";
+    elAppProfessionista.hidden = nome !== "professionista";
+  }
+
+  function pulisciListenerCloud() {
+    if (unsubPiano) { unsubPiano(); unsubPiano = null; }
+    if (unsubPastiOggi) { unsubPastiOggi(); unsubPastiOggi = null; }
+    if (unsubPazienti) { unsubPazienti(); unsubPazienti = null; }
+    pazienteSelezionatoId = null;
+    vistaProfCorrente = "lista";
+  }
+
+  // ---------------------------------------------------------------------
+  // Form di accesso / registrazione professionista
+  // ---------------------------------------------------------------------
+  function collegaFormAutenticazione() {
+    document.getElementById("form-login").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("auth-email").value;
+      const password = document.getElementById("auth-password").value;
+      const errEl = document.getElementById("auth-error");
+      errEl.hidden = true;
+      const btn = document.getElementById("btn-auth-submit");
+      btn.disabled = true;
+      btn.textContent = "Accesso in corso…";
+      try {
+        await window.cloud.login(email, password);
+        // onAuthStateChanged gestisce il resto.
+      } catch (err) {
+        mostraErroreIn("auth-error", traduciErroreAuth(err));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Accedi";
+      }
+    });
+
+    document.getElementById("btn-password-dimenticata").addEventListener("click", async () => {
+      const email = document.getElementById("auth-email").value;
+      if (!email) {
+        mostraErroreIn("auth-error", "Scrivi prima la tua email nel campo sopra.");
+        return;
+      }
+      try {
+        await window.cloud.resetPassword(email);
+        mostraErroreIn("auth-error", "Email per reimpostare la password inviata — controlla la posta.");
+      } catch (err) {
+        mostraErroreIn("auth-error", traduciErroreAuth(err));
+      }
+    });
+
+    document.getElementById("btn-mostra-signup").addEventListener("click", () => {
+      document.getElementById("blocco-signup-professionista").hidden = true;
+      document.getElementById("form-login").hidden = true;
+      document.getElementById("form-signup").hidden = false;
+    });
+    document.getElementById("btn-annulla-signup").addEventListener("click", () => {
+      document.getElementById("form-signup").hidden = true;
+      document.getElementById("form-login").hidden = false;
+      document.getElementById("blocco-signup-professionista").hidden = false;
+    });
+
+    document.getElementById("form-signup").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const nome = document.getElementById("signup-nome").value;
+      const email = document.getElementById("signup-email").value;
+      const password = document.getElementById("signup-password").value;
+      const errEl = document.getElementById("signup-error");
+      errEl.hidden = true;
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      try {
+        await window.cloud.registraProfessionista(email, password, nome);
+      } catch (err) {
+        mostraErroreIn("signup-error", traduciErroreAuth(err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById("btn-logout-paziente").addEventListener("click", eseguiLogout);
+    document.getElementById("btn-logout-prof").addEventListener("click", eseguiLogout);
+  }
+
+  async function eseguiLogout() {
+    pulisciListenerCloud();
+    await window.cloud.logout();
+  }
+
+  function mostraErroreIn(id, msg) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.hidden = false;
+  }
+
+  function traduciErroreAuth(err) {
+    const code = err && err.code;
+    const mappa = {
+      "auth/invalid-email": "Email non valida.",
+      "auth/user-not-found": "Nessun account con questa email.",
+      "auth/wrong-password": "Password errata.",
+      "auth/invalid-credential": "Email o password errate.",
+      "auth/email-already-in-use": "Esiste già un account con questa email.",
+      "auth/weak-password": "Password troppo debole (minimo 6 caratteri).",
+      "auth/too-many-requests": "Troppi tentativi, riprova tra qualche minuto.",
+      "auth/network-request-failed": "Problema di connessione.",
+    };
+    return (code && mappa[code]) || "Si è verificato un errore imprevisto. Riprova.";
+  }
+
+  // =======================================================================
+  // LATO PAZIENTE
+  // =======================================================================
+  async function avviaPaziente() {
+    mostraSchermata("paziente");
     applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
-    pulisciPastiVecchi();
     aggiornaEyebrowData();
     registraServiceWorker();
     collegaTabbar();
-    render();
+
+    // Piano in tempo reale: si aggiorna da solo se il professionista lo modifica,
+    // anche da un altro dispositivo — questo è il "cloud sync" richiesto.
+    unsubPiano = window.cloud.ascoltaPianoPaziente(UID, (piano) => {
+      PIANO_ATTIVO = piano;
+      if (currentView === "oggi" || currentView === "settimana" || currentView === "impostazioni") render();
+    });
+    collegaAscoltoPastiOggi();
 
     if (notificheAttive()) {
       pianificaNotificheOggi();
       mostraPromemoriaPerso();
     }
     aggiornaIconaCampanella();
+    render();
 
-    // Se l'app resta aperta a cavallo della mezzanotte, ripianifica.
     setInterval(() => {
       const oggi = new Date().toDateString();
       if (oggi !== ultimoGiornoRenderizzato) {
         ultimoGiornoRenderizzato = oggi;
+        collegaAscoltoPastiOggi();
         render();
         if (notificheAttive()) pianificaNotificheOggi();
       }
@@ -87,8 +295,6 @@
         orari: Object.assign({}, DEFAULT_CONFIG.orari, remoto.orari),
       });
     } catch (e) {
-      // Fallback silenzioso: succede ad es. alla primissima apertura offline
-      // prima che il service worker abbia messo in cache config.json.
       return DEFAULT_CONFIG;
     }
   }
@@ -99,7 +305,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Navigazione
+  // Navigazione (tabbar paziente)
   // ---------------------------------------------------------------------
   function collegaTabbar() {
     document.querySelectorAll(".tabbar__btn").forEach((btn) => {
@@ -120,25 +326,28 @@
 
   function aggiornaEyebrowData() {
     const oggi = new Date();
-    const fmt = oggi.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
-    dataOggiEl.textContent = fmt;
+    dataOggiEl.textContent = oggi.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
   }
 
   // ---------------------------------------------------------------------
   // Vista "Oggi"
   // ---------------------------------------------------------------------
   function renderOggi() {
+    if (!PIANO_ATTIVO) {
+      root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account. Controlla di nuovo più tardi.</div>`;
+      return;
+    }
+
     const oggi = new Date();
     const { settimana, giornoNome, giorno } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
     const orari = orariEffettivi();
 
     if (!giorno) {
-      root.innerHTML = `<div class="empty">Nessun dato disponibile per oggi nel piano caricato. Controlla il file importato in Impostazioni.</div>`;
+      root.innerHTML = `<div class="empty">Nessun dato disponibile per oggi nel piano caricato.</div>`;
       return;
     }
 
-    const dateKey = chiaveData(oggi);
-    const fatti = caricaPastiFatti(dateKey);
+    const fatti = PASTI_FATTI_OGGI;
     const numFatti = MEAL_KEYS.filter((k) => fatti[k]).length;
 
     root.innerHTML = `
@@ -186,43 +395,32 @@
   }
 
   // ---------------------------------------------------------------------
-  // Spunta "pasto effettuato" (per giorno, salvata sul dispositivo)
+  // Spunta "pasto effettuato" — sincronizzata su Firestore per paziente/giorno
   // ---------------------------------------------------------------------
   function chiaveData(date) {
     const d = date || new Date();
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   }
 
-  function caricaPastiFatti(dateKey) {
-    try {
-      return JSON.parse(localStorage.getItem(LS_KEYS.pastiFatti + ":" + dateKey) || "{}");
-    } catch (e) {
-      return {};
-    }
-  }
-
-  function salvaPastiFatti(dateKey, stato) {
-    localStorage.setItem(LS_KEYS.pastiFatti + ":" + dateKey, JSON.stringify(stato));
-  }
-
-  function onToggleMealCheck(key) {
+  function collegaAscoltoPastiOggi() {
+    if (unsubPastiOggi) unsubPastiOggi();
     const dateKey = chiaveData(new Date());
-    const stato = caricaPastiFatti(dateKey);
-    stato[key] = !stato[key];
-    salvaPastiFatti(dateKey, stato);
-    renderOggi();
+    unsubPastiOggi = window.cloud.ascoltaPastiFattiCloud(UID, dateKey, (stato) => {
+      PASTI_FATTI_OGGI = stato || {};
+      if (currentView === "oggi") renderOggi();
+    });
   }
 
-  /** Rimuove le spunte più vecchie di 21 giorni per non far crescere localStorage all'infinito. */
-  function pulisciPastiVecchi() {
-    const prefisso = LS_KEYS.pastiFatti + ":";
-    const adesso = Date.now();
-    Object.keys(localStorage).forEach((k) => {
-      if (!k.startsWith(prefisso)) return;
-      const d = new Date(k.slice(prefisso.length));
-      if (isNaN(d.getTime())) return;
-      if ((adesso - d.getTime()) / 86400000 > 21) localStorage.removeItem(k);
-    });
+  async function onToggleMealCheck(key) {
+    const dateKey = chiaveData(new Date());
+    const nuovoStato = Object.assign({}, PASTI_FATTI_OGGI);
+    nuovoStato[key] = !nuovoStato[key];
+    try {
+      await window.cloud.salvaPastiFattiCloud(UID, dateKey, nuovoStato);
+      // L'ascolto in tempo reale aggiorna la UI da solo.
+    } catch (e) {
+      mostraToast("Impossibile salvare: controlla la connessione");
+    }
   }
 
   function renderCoccolaHTML(giorno) {
@@ -236,7 +434,7 @@
   }
 
   function renderNormeHTML() {
-    const norme = PIANO_ATTIVO.normeGenerali || [];
+    const norme = (PIANO_ATTIVO && PIANO_ATTIVO.normeGenerali) || [];
     if (!norme.length) return "";
     return `
       <details class="norme">
@@ -250,6 +448,11 @@
   // Vista "Settimana"
   // ---------------------------------------------------------------------
   function renderSettimana() {
+    if (!PIANO_ATTIVO) {
+      root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
+      return;
+    }
+
     const oggi = new Date();
     const { settimana: settimanaCorrente, giornoIndex: oggiIndex } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG);
     const settimanaMostrata = settimanaAnteprima || settimanaCorrente;
@@ -307,14 +510,13 @@
   }
 
   // ---------------------------------------------------------------------
-  // Vista "Impostazioni"
+  // Vista "Impostazioni" (paziente) — solo consultazione, niente modifiche al piano
   // ---------------------------------------------------------------------
   function renderImpostazioni() {
-    const p = PIANO_ATTIVO.paziente || {};
+    const p = (PIANO_ATTIVO && PIANO_ATTIVO.paziente) || {};
     const orari = orariEffettivi();
     const attive = notificheAttive();
     const permesso = ("Notification" in window) ? Notification.permission : "unsupported";
-    const haCustom = !!localStorage.getItem(LS_KEYS.pianoCustom);
 
     root.innerHTML = `
       <section class="settings-section">
@@ -351,30 +553,18 @@
       </section>
 
       <section class="settings-section">
-        <h2>Il piano</h2>
-        <div class="card-info">
-          <dl>
-            <dt>Paziente</dt><dd>${escapeHTML(p.nome || "—")}</dd>
-            <dt>Obiettivo</dt><dd>${escapeHTML(p.obiettivo || "—")}</dd>
-            <dt>Target giornaliero</dt><dd>${p.targetKcal != null ? "~" + p.targetKcal + " kcal" : "—"}</dd>
-            <dt>Nutrizionista</dt><dd>${escapeHTML(p.nutrizionista || "—")}</dd>
-          </dl>
-        </div>
-        ${haCustom ? `<p class="hint" style="margin-top:10px;"><span class="status-dot ok" style="display:inline-block;margin-right:6px;"></span>Stai usando un piano personalizzato.</p>` : ""}
-        <p class="hint" style="margin-top:14px;">Il ciclo delle settimane e la regola della 5ª settimana si modificano nel file <code class="inline">config.json</code> del progetto — istruzioni nel README.</p>
-      </section>
-
-      ${renderEditorPastoHTML()}
-
-      <section class="settings-section">
-        <h2>Importa / sostituisci l'intero piano</h2>
-        <p class="hint">Per cambi grossi (un piano tutto nuovo dalla nutrizionista) puoi anche sostituire tutto in blocco con un file .json. Per le modifiche di tutti i giorni ti conviene la sezione "Modifica un pasto" qui sopra — niente file, si salva subito.</p>
-        <div class="import-actions">
-          <button type="button" class="btn btn--ghost" id="btn-esporta-piano">Scarica il piano attuale come modello (.json)</button>
-          <label class="btn" for="input-importa-piano">Importa piano da file…</label>
-          <input type="file" id="input-importa-piano" accept="application/json,.json" hidden>
-          ${haCustom ? `<button type="button" class="btn btn--ghost" id="btn-reset-piano">Ripristina il piano originale</button>` : ""}
-        </div>
+        <h2>Il mio piano</h2>
+        ${PIANO_ATTIVO ? `
+          <div class="card-info">
+            <dl>
+              <dt>Paziente</dt><dd>${escapeHTML(p.nome || "—")}</dd>
+              <dt>Obiettivo</dt><dd>${escapeHTML(p.obiettivo || "—")}</dd>
+              <dt>Target giornaliero</dt><dd>${p.targetKcal != null ? "~" + p.targetKcal + " kcal" : "—"}</dd>
+              <dt>Nutrizionista</dt><dd>${escapeHTML(p.nutrizionista || "—")}</dd>
+            </dl>
+          </div>
+        ` : `<p class="hint">Nessun piano assegnato ancora.</p>`}
+        <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
       </section>
     `;
 
@@ -393,264 +583,6 @@
         mostraToast("Orario aggiornato");
       });
     });
-
-    collegaEditorPasto();
-
-    document.getElementById("btn-esporta-piano").addEventListener("click", esportaPianoAttuale);
-    document.getElementById("input-importa-piano").addEventListener("change", onFileImportPiano);
-    const btnReset = document.getElementById("btn-reset-piano");
-    if (btnReset) {
-      btnReset.addEventListener("click", () => {
-        localStorage.removeItem(LS_KEYS.pianoCustom);
-        PIANO_ATTIVO = PIANO_BASE;
-        CONFIG.orari = Object.assign({}, PIANO_ATTIVO.orariDefault, CONFIG.orari && JSON.parse(localStorage.getItem(LS_KEYS.orari) || "null") || {});
-        mostraToast("Ripristinato il piano originale");
-        render();
-      });
-    }
-  }
-
-  // ---------------------------------------------------------------------
-  // Editor rapido di un singolo pasto/giorno (senza passare da file .json)
-  // ---------------------------------------------------------------------
-
-  /** Ricorda l'ultima settimana/giorno scelti nell'editor tra un render e l'altro. */
-  function settimanaGiornoEditorCorrenti() {
-    const disponibili = [1, 2, 3, 4, 5].filter((n) => Array.isArray(PIANO_ATTIVO.settimane[n]));
-    if (typeof renderImpostazioni.settSel !== "number" || !disponibili.includes(renderImpostazioni.settSel)) {
-      const oggi = new Date();
-      const { settimana: settCorrente } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG);
-      renderImpostazioni.settSel = disponibili.includes(settCorrente) ? settCorrente : disponibili[0];
-    }
-    if (typeof renderImpostazioni.giornoSel !== "number") {
-      renderImpostazioni.giornoSel = window.weekLogic.calcolaSettimanaGiorno(new Date(), CONFIG).giornoIndex;
-    }
-    return { disponibili, settSel: renderImpostazioni.settSel, giornoSel: renderImpostazioni.giornoSel };
-  }
-
-  function renderEditorPastoHTML() {
-    const { disponibili, settSel, giornoSel } = settimanaGiornoEditorCorrenti();
-    const giornoEdit = (PIANO_ATTIVO.settimane[settSel] && PIANO_ATTIVO.settimane[settSel][giornoSel]) || {};
-
-    return `
-      <section class="settings-section">
-        <h2>Modifica un pasto</h2>
-        <p class="hint">Scegli settimana e giorno, cambia il testo dei pasti e salva: niente file, il piano che stai usando si aggiorna subito.</p>
-        <div class="field-row">
-          <span class="field-row__label">Settimana</span>
-          <select id="sel-edit-settimana">
-            ${disponibili.map((n) => `<option value="${n}" ${n === settSel ? "selected" : ""}>Settimana ${n}</option>`).join("")}
-          </select>
-        </div>
-        <div class="field-row">
-          <span class="field-row__label">Giorno</span>
-          <select id="sel-edit-giorno">
-            ${window.weekLogic.GIORNI.map((g, i) => `<option value="${i}" ${i === giornoSel ? "selected" : ""}>${g}</option>`).join("")}
-          </select>
-        </div>
-        <div class="editor-pasti" id="editor-pasti-form">
-          ${MEAL_KEYS.map((key) => `
-            <label class="editor-campo">
-              <span>${MEAL_META[key].label}</span>
-              <textarea data-campo="${key}" rows="2">${escapeHTML(giornoEdit[key] || "")}</textarea>
-            </label>
-          `).join("")}
-          <label class="editor-campo">
-            <span>Coccola (facoltativa)</span>
-            <input type="text" data-campo="coccola" value="${escapeHTML(giornoEdit.coccola || "")}">
-          </label>
-          <label class="editor-campo">
-            <span>Kcal totali (facoltativo)</span>
-            <input type="number" data-campo="kcal" value="${giornoEdit.kcal != null ? giornoEdit.kcal : ""}">
-          </label>
-        </div>
-        <button type="button" class="btn" id="btn-salva-pasto" style="margin-top:14px;">Salva questo giorno</button>
-      </section>
-    `;
-  }
-
-  function collegaEditorPasto() {
-    document.getElementById("sel-edit-settimana").addEventListener("change", (e) => {
-      renderImpostazioni.settSel = Number(e.target.value);
-      render();
-    });
-    document.getElementById("sel-edit-giorno").addEventListener("change", (e) => {
-      renderImpostazioni.giornoSel = Number(e.target.value);
-      render();
-    });
-    document.getElementById("btn-salva-pasto").addEventListener("click", salvaPastoModificato);
-  }
-
-  function salvaPastoModificato() {
-    const { settSel, giornoSel } = settimanaGiornoEditorCorrenti();
-
-    const campi = {};
-    document.querySelectorAll("#editor-pasti-form [data-campo]").forEach((el) => {
-      campi[el.dataset.campo] = el.value;
-    });
-
-    const vuoti = MEAL_KEYS.filter((k) => !campi[k] || !campi[k].trim());
-    if (vuoti.length) {
-      mostraToast("Compila tutti i pasti prima di salvare — manca: " + vuoti.map((k) => MEAL_META[k].label).join(", "), 4200);
-      return;
-    }
-
-    // Non modificare mai PIANO_ATTIVO/PIANO_BASE sul posto: si lavora su una copia.
-    const pianoModificato = JSON.parse(JSON.stringify(PIANO_ATTIVO));
-    const giornoObj = pianoModificato.settimane[settSel][giornoSel];
-    MEAL_KEYS.forEach((k) => { giornoObj[k] = campi[k].trim(); });
-    giornoObj.coccola = (campi.coccola || "").trim();
-    const kcalNum = Number(campi.kcal);
-    giornoObj.kcal = (campi.kcal !== "" && !Number.isNaN(kcalNum)) ? kcalNum : null;
-
-    // Passa comunque dal validatore: garantisce che il piano resti sempre nel formato corretto.
-    const risultato = validaPiano(pianoModificato);
-    if (!risultato.ok) {
-      mostraToast("Non salvato — " + risultato.errori[0], 4200);
-      return;
-    }
-
-    localStorage.setItem(LS_KEYS.pianoCustom, JSON.stringify(risultato.piano));
-    PIANO_ATTIVO = risultato.piano;
-    mostraToast("Pasto salvato");
-    render();
-  }
-
-  // ---------------------------------------------------------------------
-  // Importazione / esportazione del piano nutrizionale
-  // ---------------------------------------------------------------------
-
-  /** Legge ed eventualmente convalida il piano personalizzato salvato; scarta dati corrotti. */
-  function caricaPianoPersonalizzato() {
-    const raw = localStorage.getItem(LS_KEYS.pianoCustom);
-    if (!raw) return null;
-    try {
-      const risultato = validaPiano(JSON.parse(raw));
-      if (risultato.ok) return risultato.piano;
-    } catch (e) { /* JSON corrotto, ignora */ }
-    localStorage.removeItem(LS_KEYS.pianoCustom);
-    return null;
-  }
-
-  function esportaPianoAttuale() {
-    const blob = new Blob([JSON.stringify(PIANO_ATTIVO, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "piano-nutrizionale.json";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-    mostraToast("Modello scaricato");
-  }
-
-  function onFileImportPiano(e) {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = ""; // consente di ricaricare subito lo stesso file se corretto
-    if (!file) return;
-    if (!/\.json$/i.test(file.name) && file.type && file.type !== "application/json") {
-      mostraToast("Il file deve essere in formato .json");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => mostraToast("Impossibile leggere il file");
-    reader.onload = () => {
-      let json;
-      try {
-        json = JSON.parse(String(reader.result));
-      } catch (err) {
-        mostraToast("Il file non è un JSON valido: controlla la formattazione.", 5000);
-        return;
-      }
-      const risultato = validaPiano(json);
-      if (!risultato.ok) {
-        const primi = risultato.errori.slice(0, 4);
-        const extra = risultato.errori.length > 4 ? ` (+${risultato.errori.length - 4} altri problemi)` : "";
-        mostraToast("File non importato — " + primi.join(" · ") + extra, 6500);
-        return;
-      }
-      localStorage.setItem(LS_KEYS.pianoCustom, JSON.stringify(risultato.piano));
-      PIANO_ATTIVO = risultato.piano;
-      mostraToast("Piano importato correttamente");
-      render();
-    };
-    reader.readAsText(file);
-  }
-
-  /**
-   * Convalida un oggetto piano importato dall'utente e lo normalizza nello
-   * stesso formato di js/data.js, così il resto dell'app non deve sapere
-   * se il piano attivo è quello di fabbrica o uno importato.
-   * Ritorna { ok:true, piano } oppure { ok:false, errori:[...] }.
-   */
-  function validaPiano(input) {
-    const errori = [];
-    if (!input || typeof input !== "object" || Array.isArray(input)) {
-      return { ok: false, errori: ["il file deve contenere un oggetto JSON"] };
-    }
-    if (!input.settimane || typeof input.settimane !== "object" || Array.isArray(input.settimane)) {
-      return { ok: false, errori: ["manca la sezione 'settimane'"] };
-    }
-
-    const chiaviTrovate = Object.keys(input.settimane).filter((k) => ["1", "2", "3", "4", "5"].includes(String(k)));
-    if (!chiaviTrovate.length) {
-      return { ok: false, errori: ["nessuna settimana valida (1-5) dentro 'settimane'"] };
-    }
-
-    const settimaneValide = {};
-    chiaviTrovate.forEach((chiave) => {
-      const giorni = input.settimane[chiave];
-      if (!Array.isArray(giorni) || giorni.length !== 7) {
-        errori.push(`Settimana ${chiave}: servono 7 giorni (trovati ${Array.isArray(giorni) ? giorni.length : 0})`);
-        return;
-      }
-      const giorniValidati = [];
-      giorni.forEach((giornoObj, i) => {
-        const nomeGiorno = window.weekLogic.GIORNI[i];
-        if (!giornoObj || typeof giornoObj !== "object") {
-          errori.push(`Sett. ${chiave}, ${nomeGiorno}: giorno non valido`);
-          return;
-        }
-        const out = { giorno: nomeGiorno };
-        let giornoOk = true;
-        MEAL_KEYS.forEach((key) => {
-          const v = giornoObj[key];
-          if (typeof v !== "string" || !v.trim()) {
-            errori.push(`Sett. ${chiave}, ${nomeGiorno}: manca '${MEAL_META[key].label}'`);
-            giornoOk = false;
-          } else {
-            out[key] = v.trim();
-          }
-        });
-        out.kcal = (typeof giornoObj.kcal === "number" && isFinite(giornoObj.kcal)) ? giornoObj.kcal : null;
-        out.coccola = (typeof giornoObj.coccola === "string" && giornoObj.coccola.trim()) ? giornoObj.coccola.trim() : "";
-        if (giornoOk) giorniValidati.push(out);
-      });
-      if (giorniValidati.length === 7) settimaneValide[chiave] = giorniValidati;
-    });
-
-    if (errori.length) return { ok: false, errori };
-
-    const pazienteIn = (input.paziente && typeof input.paziente === "object") ? input.paziente : {};
-    const orariDefaultIn = (input.orariDefault && typeof input.orariDefault === "object") ? input.orariDefault : {};
-
-    const piano = {
-      paziente: {
-        nome: typeof pazienteIn.nome === "string" ? pazienteIn.nome : "",
-        eta: typeof pazienteIn.eta === "number" ? pazienteIn.eta : null,
-        pesoKg: typeof pazienteIn.pesoKg === "number" ? pazienteIn.pesoKg : null,
-        altezzaM: typeof pazienteIn.altezzaM === "number" ? pazienteIn.altezzaM : null,
-        targetKcal: typeof pazienteIn.targetKcal === "number" ? pazienteIn.targetKcal : null,
-        obiettivo: typeof pazienteIn.obiettivo === "string" ? pazienteIn.obiettivo : "",
-        nutrizionista: typeof pazienteIn.nutrizionista === "string" ? pazienteIn.nutrizionista : "",
-      },
-      orariDefault: Object.assign({}, PIANO_BASE.orariDefault, orariDefaultIn),
-      normeGenerali: Array.isArray(input.normeGenerali) ? input.normeGenerali.filter((n) => typeof n === "string" && n.trim()) : [],
-      settimane: settimaneValide,
-    };
-
-    return { ok: true, piano };
   }
 
   function statoNotificheTesto(permesso, attive) {
@@ -714,7 +646,8 @@
   }
 
   function aggiornaIconaCampanella() {
-    document.getElementById("btn-notifiche").classList.toggle("is-on", notificheAttive());
+    const btn = document.getElementById("btn-notifiche");
+    if (btn) btn.classList.toggle("is-on", notificheAttive());
   }
 
   let timersProgrammati = [];
@@ -734,7 +667,7 @@
       const quando = new Date(oggi);
       quando.setHours(h, m, 0, 0);
       const attesa = quando.getTime() - Date.now();
-      if (attesa <= 0) return; // già passato per oggi
+      if (attesa <= 0) return;
       const id = setTimeout(() => {
         mostraNotifica(MEAL_META[key].label, giorno[key]);
       }, attesa);
@@ -753,7 +686,6 @@
     }
   }
 
-  /** Se l'app viene riaperta poco dopo l'orario di un pasto (entro 90 minuti), mostra comunque il promemoria. */
   function mostraPromemoriaPerso() {
     const oggiStr = new Date().toDateString();
     const ultimo = JSON.parse(localStorage.getItem(LS_KEYS.ultimoCheck) || "{}");
@@ -784,8 +716,403 @@
     localStorage.setItem(LS_KEYS.ultimoCheck, JSON.stringify({ giorno: oggiStr, mostrati: Array.from(mostrati) }));
   }
 
+  // =======================================================================
+  // LATO PROFESSIONISTA
+  // =======================================================================
+  function avviaProfessionista(utenteDati) {
+    mostraSchermata("professionista");
+    applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
+    registraServiceWorker();
+    vistaProfCorrente = "lista";
+    pazienteSelezionatoId = null;
+
+    unsubPazienti = window.cloud.ascoltaPazientiProfessionista(UID, (pazienti) => {
+      PAZIENTI_PROF = pazienti;
+      if (vistaProfCorrente === "lista") {
+        renderListaPazienti();
+      } else if (vistaProfCorrente === "editor" && pazienteSelezionatoId) {
+        const aggiornato = pazienti.find((p) => p.id === pazienteSelezionatoId);
+        if (aggiornato) {
+          PIANO_ATTIVO_PROF = aggiornato;
+          renderEditorProfessionista();
+        }
+      }
+    });
+
+    renderListaPazienti();
+  }
+
+  function renderListaPazienti() {
+    vistaProfCorrente = "lista";
+    pazienteSelezionatoId = null;
+    document.getElementById("prof-header-titolo").textContent = "I tuoi pazienti";
+
+    profRoot.innerHTML = `
+      <button type="button" class="btn" id="btn-nuovo-paziente" style="margin-bottom:16px;">+ Nuovo paziente</button>
+      ${PAZIENTI_PROF.length === 0 ? `
+        <div class="empty">Non hai ancora pazienti. Creane uno con il pulsante qui sopra.</div>
+      ` : `
+        <div class="lista-pazienti">
+          ${PAZIENTI_PROF.map((p) => `
+            <button type="button" class="paziente-card" data-id="${p.id}">
+              <span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span>
+              <span class="paziente-card__email">${escapeHTML(p.pazienteEmail || "")}</span>
+              ${p.paziente && p.paziente.obiettivo ? `<span class="paziente-card__obiettivo">${escapeHTML(p.paziente.obiettivo)}</span>` : ""}
+            </button>
+          `).join("")}
+        </div>
+      `}
+    `;
+
+    document.getElementById("btn-nuovo-paziente").addEventListener("click", renderFormNuovoPaziente);
+    document.querySelectorAll(".paziente-card").forEach((btn) => {
+      btn.addEventListener("click", () => apriEditorPaziente(btn.dataset.id));
+    });
+  }
+
+  function apriEditorPaziente(id) {
+    pazienteSelezionatoId = id;
+    PIANO_ATTIVO_PROF = PAZIENTI_PROF.find((p) => p.id === id);
+    EDITOR_PROF.settSel = null;
+    EDITOR_PROF.giornoSel = null;
+    renderEditorProfessionista();
+  }
+
+  function renderEditorProfessionista() {
+    vistaProfCorrente = "editor";
+    const piano = PIANO_ATTIVO_PROF;
+    if (!piano) { renderListaPazienti(); return; }
+
+    document.getElementById("prof-header-titolo").textContent = piano.pazienteNome || "Paziente";
+
+    const disponibili = [1, 2, 3, 4, 5].filter((n) => Array.isArray(piano.settimane[n]));
+    if (typeof EDITOR_PROF.settSel !== "number" || !disponibili.includes(EDITOR_PROF.settSel)) {
+      EDITOR_PROF.settSel = disponibili[0] || 1;
+    }
+    if (typeof EDITOR_PROF.giornoSel !== "number") EDITOR_PROF.giornoSel = 0;
+
+    const pz = piano.paziente || {};
+
+    profRoot.innerHTML = `
+      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+
+      <section class="settings-section">
+        <h2>Dati paziente</h2>
+        <div class="card-info">
+          <dl>
+            <dt>Nome</dt><dd>${escapeHTML(piano.pazienteNome || "—")}</dd>
+            <dt>Email di accesso</dt><dd>${escapeHTML(piano.pazienteEmail || "—")}</dd>
+            <dt>Obiettivo</dt><dd>${escapeHTML(pz.obiettivo || "—")}</dd>
+            <dt>Target giornaliero</dt><dd>${pz.targetKcal != null ? "~" + pz.targetKcal + " kcal" : "—"}</dd>
+            <dt>Nutrizionista</dt><dd>${escapeHTML(pz.nutrizionista || "—")}</dd>
+          </dl>
+        </div>
+        <p class="hint" style="margin-top:10px;">La modifica di questi campi anagrafici e delle regole generali del piano arriva nel prossimo aggiornamento — qui sotto si modificano già i pasti giorno per giorno, sincronizzati subito col paziente.</p>
+      </section>
+
+      ${renderEditorPastoHTML(piano, EDITOR_PROF.settSel, EDITOR_PROF.giornoSel, disponibili)}
+
+      <section class="settings-section">
+        <h2>Importa / sostituisci l'intero piano</h2>
+        <p class="hint">Per un piano tutto nuovo dalla nutrizionista, puoi caricare un file .json in un colpo solo, nello stesso formato scaricabile qui come modello.</p>
+        <div class="import-actions">
+          <button type="button" class="btn btn--ghost" id="btn-esporta-piano-prof">Scarica questo piano come modello (.json)</button>
+          <label class="btn" for="input-importa-piano-prof">Importa piano da file…</label>
+          <input type="file" id="input-importa-piano-prof" accept="application/json,.json" hidden>
+        </div>
+      </section>
+    `;
+
+    document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    collegaEditorPastoProfessionista();
+    document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));
+    document.getElementById("input-importa-piano-prof").addEventListener("change", onFileImportPianoProf);
+  }
+
+  /** Markup dell'editor "Modifica un pasto": generico, lavora su un piano/settimana/giorno passati esplicitamente. */
+  function renderEditorPastoHTML(piano, settSel, giornoSel, disponibili) {
+    const giornoEdit = (piano.settimane[settSel] && piano.settimane[settSel][giornoSel]) || {};
+    return `
+      <section class="settings-section">
+        <h2>Modifica un pasto</h2>
+        <p class="hint">Scegli settimana e giorno, cambia il testo dei pasti e salva: si sincronizza subito con l'app del paziente.</p>
+        <div class="field-row">
+          <span class="field-row__label">Settimana</span>
+          <select id="sel-edit-settimana">
+            ${disponibili.map((n) => `<option value="${n}" ${n === settSel ? "selected" : ""}>Settimana ${n}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field-row">
+          <span class="field-row__label">Giorno</span>
+          <select id="sel-edit-giorno">
+            ${window.weekLogic.GIORNI.map((g, i) => `<option value="${i}" ${i === giornoSel ? "selected" : ""}>${g}</option>`).join("")}
+          </select>
+        </div>
+        <div class="editor-pasti" id="editor-pasti-form">
+          ${MEAL_KEYS.map((key) => `
+            <label class="editor-campo">
+              <span>${MEAL_META[key].label}</span>
+              <textarea data-campo="${key}" rows="2">${escapeHTML(giornoEdit[key] || "")}</textarea>
+            </label>
+          `).join("")}
+          <label class="editor-campo">
+            <span>Coccola (facoltativa)</span>
+            <input type="text" data-campo="coccola" value="${escapeHTML(giornoEdit.coccola || "")}">
+          </label>
+          <label class="editor-campo">
+            <span>Kcal totali (facoltativo)</span>
+            <input type="number" data-campo="kcal" value="${giornoEdit.kcal != null ? giornoEdit.kcal : ""}">
+          </label>
+        </div>
+        <button type="button" class="btn" id="btn-salva-pasto" style="margin-top:14px;">Salva questo giorno</button>
+      </section>
+    `;
+  }
+
+  function collegaEditorPastoProfessionista() {
+    document.getElementById("sel-edit-settimana").addEventListener("change", (e) => {
+      EDITOR_PROF.settSel = Number(e.target.value);
+      EDITOR_PROF.giornoSel = 0;
+      renderEditorProfessionista();
+    });
+    document.getElementById("sel-edit-giorno").addEventListener("change", (e) => {
+      EDITOR_PROF.giornoSel = Number(e.target.value);
+      renderEditorProfessionista();
+    });
+    document.getElementById("btn-salva-pasto").addEventListener("click", salvaPastoModificatoProfessionista);
+  }
+
+  async function salvaPastoModificatoProfessionista() {
+    const piano = PIANO_ATTIVO_PROF;
+    const { settSel, giornoSel } = EDITOR_PROF;
+
+    const campi = {};
+    document.querySelectorAll("#editor-pasti-form [data-campo]").forEach((el) => {
+      campi[el.dataset.campo] = el.value;
+    });
+
+    const vuoti = MEAL_KEYS.filter((k) => !campi[k] || !campi[k].trim());
+    if (vuoti.length) {
+      mostraToast("Compila tutti i pasti prima di salvare — manca: " + vuoti.map((k) => MEAL_META[k].label).join(", "), 4200);
+      return;
+    }
+
+    const pianoModificato = JSON.parse(JSON.stringify(piano));
+    const giornoObj = pianoModificato.settimane[settSel][giornoSel];
+    MEAL_KEYS.forEach((k) => { giornoObj[k] = campi[k].trim(); });
+    giornoObj.coccola = (campi.coccola || "").trim();
+    const kcalNum = Number(campi.kcal);
+    giornoObj.kcal = (campi.kcal !== "" && !Number.isNaN(kcalNum)) ? kcalNum : null;
+
+    const risultato = validaPiano(pianoModificato);
+    if (!risultato.ok) {
+      mostraToast("Non salvato — " + risultato.errori[0], 4200);
+      return;
+    }
+
+    const btn = document.getElementById("btn-salva-pasto");
+    btn.disabled = true;
+    btn.textContent = "Salvataggio…";
+    try {
+      await window.cloud.salvaPiano(piano.id, risultato.piano);
+      mostraToast("Pasto salvato e sincronizzato col paziente");
+    } catch (e) {
+      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salva questo giorno";
+    }
+  }
+
   // ---------------------------------------------------------------------
-  // Service worker & utilità
+  // Nuovo paziente
+  // ---------------------------------------------------------------------
+  function renderFormNuovoPaziente() {
+    vistaProfCorrente = "nuovo";
+    document.getElementById("prof-header-titolo").textContent = "Nuovo paziente";
+    const passwordGenerata = generaPasswordProvvisoria();
+
+    profRoot.innerHTML = `
+      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <section class="settings-section">
+        <h2>Crea un nuovo paziente</h2>
+        <p class="hint">Viene creato subito l'accesso del paziente e un piano di partenza (schema di esempio a 5 settimane) che potrai modificare pasto per pasto qui dentro. Comunica tu stesso email e password provvisoria al paziente.</p>
+        <label class="editor-campo"><span>Nome e cognome paziente</span><input type="text" id="np-nome" required></label>
+        <label class="editor-campo"><span>Email di accesso</span><input type="email" id="np-email" required></label>
+        <label class="editor-campo"><span>Password provvisoria</span><input type="text" id="np-password" value="${passwordGenerata}"></label>
+        <p class="auth-error" id="np-error" hidden></p>
+        <button type="button" class="btn" id="btn-crea-paziente" style="margin-top:14px;">Crea paziente</button>
+      </section>
+    `;
+
+    document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    document.getElementById("btn-crea-paziente").addEventListener("click", onCreaPaziente);
+  }
+
+  function generaPasswordProvvisoria() {
+    const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let out = "";
+    for (let i = 0; i < 10; i++) out += alfabeto[Math.floor(Math.random() * alfabeto.length)];
+    return out;
+  }
+
+  async function onCreaPaziente() {
+    const nome = document.getElementById("np-nome").value.trim();
+    const email = document.getElementById("np-email").value.trim();
+    const password = document.getElementById("np-password").value;
+    const errEl = document.getElementById("np-error");
+    errEl.hidden = true;
+
+    if (!nome || !email || password.length < 6) {
+      mostraErroreIn("np-error", "Compila nome, email e una password di almeno 6 caratteri.");
+      return;
+    }
+
+    const btn = document.getElementById("btn-crea-paziente");
+    btn.disabled = true;
+    btn.textContent = "Creazione in corso…";
+
+    try {
+      const nuovoUid = await window.cloud.creaPaziente({ email, password, nome, professionistaUid: UID });
+      const pianoBase = JSON.parse(JSON.stringify(PIANO_TEMPLATE));
+      pianoBase.paziente.nome = nome;
+      await window.cloud.creaPiano(pianoBase, UID, nuovoUid, nome, email);
+      mostraToast("Paziente creato — comunicagli email e password");
+      renderListaPazienti();
+    } catch (e) {
+      mostraErroreIn("np-error", traduciErroreAuth(e));
+      btn.disabled = false;
+      btn.textContent = "Crea paziente";
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Import / export piano (professionista)
+  // ---------------------------------------------------------------------
+  function esportaPiano(piano) {
+    const blob = new Blob([JSON.stringify(piano, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "piano-nutrizionale.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    mostraToast("Modello scaricato");
+  }
+
+  function onFileImportPianoProf(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!/\.json$/i.test(file.name) && file.type && file.type !== "application/json") {
+      mostraToast("Il file deve essere in formato .json");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => mostraToast("Impossibile leggere il file");
+    reader.onload = async () => {
+      let json;
+      try {
+        json = JSON.parse(String(reader.result));
+      } catch (err) {
+        mostraToast("Il file non è un JSON valido: controlla la formattazione.", 5000);
+        return;
+      }
+      const risultato = validaPiano(json);
+      if (!risultato.ok) {
+        const primi = risultato.errori.slice(0, 4);
+        const extra = risultato.errori.length > 4 ? ` (+${risultato.errori.length - 4} altri problemi)` : "";
+        mostraToast("File non importato — " + primi.join(" · ") + extra, 6500);
+        return;
+      }
+      try {
+        await window.cloud.salvaPiano(PIANO_ATTIVO_PROF.id, risultato.piano);
+        mostraToast("Piano importato e sincronizzato col paziente");
+      } catch (err) {
+        mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  /**
+   * Convalida un oggetto piano (importato o modificato) e lo normalizza nel
+   * formato standard. Usata sia dall'editor pasto sia dall'import file.
+   * Ritorna { ok:true, piano } oppure { ok:false, errori:[...] }.
+   */
+  function validaPiano(input) {
+    const errori = [];
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return { ok: false, errori: ["il file deve contenere un oggetto JSON"] };
+    }
+    if (!input.settimane || typeof input.settimane !== "object" || Array.isArray(input.settimane)) {
+      return { ok: false, errori: ["manca la sezione 'settimane'"] };
+    }
+
+    const chiaviTrovate = Object.keys(input.settimane).filter((k) => ["1", "2", "3", "4", "5"].includes(String(k)));
+    if (!chiaviTrovate.length) {
+      return { ok: false, errori: ["nessuna settimana valida (1-5) dentro 'settimane'"] };
+    }
+
+    const settimaneValide = {};
+    chiaviTrovate.forEach((chiave) => {
+      const giorni = input.settimane[chiave];
+      if (!Array.isArray(giorni) || giorni.length !== 7) {
+        errori.push(`Settimana ${chiave}: servono 7 giorni (trovati ${Array.isArray(giorni) ? giorni.length : 0})`);
+        return;
+      }
+      const giorniValidati = [];
+      giorni.forEach((giornoObj, i) => {
+        const nomeGiorno = window.weekLogic.GIORNI[i];
+        if (!giornoObj || typeof giornoObj !== "object") {
+          errori.push(`Sett. ${chiave}, ${nomeGiorno}: giorno non valido`);
+          return;
+        }
+        const out = { giorno: nomeGiorno };
+        let giornoOk = true;
+        MEAL_KEYS.forEach((key) => {
+          const v = giornoObj[key];
+          if (typeof v !== "string" || !v.trim()) {
+            errori.push(`Sett. ${chiave}, ${nomeGiorno}: manca '${MEAL_META[key].label}'`);
+            giornoOk = false;
+          } else {
+            out[key] = v.trim();
+          }
+        });
+        out.kcal = (typeof giornoObj.kcal === "number" && isFinite(giornoObj.kcal)) ? giornoObj.kcal : null;
+        out.coccola = (typeof giornoObj.coccola === "string" && giornoObj.coccola.trim()) ? giornoObj.coccola.trim() : "";
+        if (giornoOk) giorniValidati.push(out);
+      });
+      if (giorniValidati.length === 7) settimaneValide[chiave] = giorniValidati;
+    });
+
+    if (errori.length) return { ok: false, errori };
+
+    const pazienteIn = (input.paziente && typeof input.paziente === "object") ? input.paziente : {};
+    const orariDefaultIn = (input.orariDefault && typeof input.orariDefault === "object") ? input.orariDefault : {};
+
+    const piano = {
+      paziente: {
+        nome: typeof pazienteIn.nome === "string" ? pazienteIn.nome : "",
+        eta: typeof pazienteIn.eta === "number" ? pazienteIn.eta : null,
+        pesoKg: typeof pazienteIn.pesoKg === "number" ? pazienteIn.pesoKg : null,
+        altezzaM: typeof pazienteIn.altezzaM === "number" ? pazienteIn.altezzaM : null,
+        targetKcal: typeof pazienteIn.targetKcal === "number" ? pazienteIn.targetKcal : null,
+        obiettivo: typeof pazienteIn.obiettivo === "string" ? pazienteIn.obiettivo : "",
+        nutrizionista: typeof pazienteIn.nutrizionista === "string" ? pazienteIn.nutrizionista : "",
+      },
+      orariDefault: Object.assign({}, PIANO_TEMPLATE.orariDefault, orariDefaultIn),
+      normeGenerali: Array.isArray(input.normeGenerali) ? input.normeGenerali.filter((n) => typeof n === "string" && n.trim()) : [],
+      settimane: settimaneValide,
+    };
+
+    return { ok: true, piano };
+  }
+
+  // ---------------------------------------------------------------------
+  // Service worker & utilità comuni
   // ---------------------------------------------------------------------
   function registraServiceWorker() {
     if ("serviceWorker" in navigator) {
