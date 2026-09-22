@@ -7,7 +7,7 @@
  * refresh della cache sui dispositivi già installati.
  */
 
-const CACHE_VERSION = "v7";
+const CACHE_VERSION = "v8";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -18,6 +18,8 @@ const APP_SHELL = [
   "./css/style.css",
   "./js/data.js",
   "./js/week-logic.js",
+  "./js/firebase-config.js",
+  "./js/cloud.js",
   "./js/app.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -39,8 +41,13 @@ self.addEventListener("activate", (event) => {
 
 // Strategia: rete prima (per avere sempre dati/aspetto aggiornati quando
 // c'è connessione), con fallback alla cache quando offline.
+// Importante: si occupa SOLO delle richieste verso questo stesso sito.
+// Le chiamate verso Firebase (login, Firestore in tempo reale, i font Google)
+// vanno dritte in rete — intercettarle romperebbe l'autenticazione e la
+// sincronizzazione live del piano.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     fetch(event.request)
       .then((risposta) => {
