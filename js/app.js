@@ -1,4 +1,5 @@
 
+
 /**
  * app.js — logica dell'interfaccia.
  * Nessuna dipendenza di build: apre index.html via HTTPS/GitHub Pages e funziona.
@@ -31,7 +32,10 @@
     orari: "pnut:orari-override",
     tema: "pnut:tema",
     ultimoCheck: "pnut:ultimo-check",
+    anticipo: "pnut:anticipo-promemoria",
   };
+  const ANTICIPI_VALIDI = [10, 15, 20, 30];
+  const ANTICIPO_DEFAULT = 15;
 
   // Struttura di esempio (5 settimane) usata come punto di partenza quando il
   // professionista crea un nuovo paziente — resta comunque disponibile offline.
@@ -305,6 +309,12 @@
     return Object.assign({}, CONFIG.orari, override || {});
   }
 
+  /** Minuti di anticipo del promemoria rispetto all'orario del pasto (10/15/20/30, salvato per dispositivo). */
+  function anticipoMinutiEffettivo() {
+    const v = parseInt(localStorage.getItem(LS_KEYS.anticipo), 10);
+    return ANTICIPI_VALIDI.includes(v) ? v : ANTICIPO_DEFAULT;
+  }
+
   // ---------------------------------------------------------------------
   // Navigazione (tabbar paziente)
   // ---------------------------------------------------------------------
@@ -533,6 +543,12 @@
             <span class="track"></span><span class="thumb"></span>
           </label>
         </div>
+        <div class="field-row">
+          <span class="field-row__label">Anticipo promemoria</span>
+          <select id="sel-anticipo">
+            ${ANTICIPI_VALIDI.map((n) => `<option value="${n}" ${n === anticipoMinutiEffettivo() ? "selected" : ""}>${n} minuti prima</option>`).join("")}
+          </select>
+        </div>
         ${MEAL_KEYS.map((key) => `
           <div class="field-row">
             <span class="field-row__label">${MEAL_META[key].label}</span>
@@ -570,6 +586,11 @@
     `;
 
     document.getElementById("chk-notifiche").addEventListener("change", onToggleNotificheDettaglio);
+    document.getElementById("sel-anticipo").addEventListener("change", (e) => {
+      localStorage.setItem(LS_KEYS.anticipo, e.target.value);
+      if (notificheAttive()) pianificaNotificheOggi();
+      mostraToast("Anticipo aggiornato");
+    });
     document.getElementById("sel-tema").value = localStorage.getItem(LS_KEYS.tema) || "sistema";
     document.getElementById("sel-tema").addEventListener("change", (e) => {
       localStorage.setItem(LS_KEYS.tema, e.target.value);
@@ -660,6 +681,7 @@
     const { giorno } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
     if (!giorno) return;
     const orari = orariEffettivi();
+    const anticipo = anticipoMinutiEffettivo();
 
     MEAL_KEYS.forEach((key) => {
       const orario = orari[key];
@@ -667,10 +689,11 @@
       const [h, m] = orario.split(":").map(Number);
       const quando = new Date(oggi);
       quando.setHours(h, m, 0, 0);
+      quando.setMinutes(quando.getMinutes() - anticipo);
       const attesa = quando.getTime() - Date.now();
       if (attesa <= 0) return;
       const id = setTimeout(() => {
-        mostraNotifica(MEAL_META[key].label, giorno[key]);
+        mostraNotifica(`${MEAL_META[key].label} tra ${anticipo} minuti`, giorno[key]);
       }, attesa);
       timersProgrammati.push(id);
     });
@@ -801,14 +824,24 @@
         <h2>Dati paziente</h2>
         <div class="card-info">
           <dl>
-            <dt>Nome</dt><dd>${escapeHTML(piano.pazienteNome || "—")}</dd>
             <dt>Email di accesso</dt><dd>${escapeHTML(piano.pazienteEmail || "—")}</dd>
-            <dt>Obiettivo</dt><dd>${escapeHTML(pz.obiettivo || "—")}</dd>
-            <dt>Target giornaliero</dt><dd>${pz.targetKcal != null ? "~" + pz.targetKcal + " kcal" : "—"}</dd>
-            <dt>Nutrizionista</dt><dd>${escapeHTML(pz.nutrizionista || "—")}</dd>
           </dl>
         </div>
-        <p class="hint" style="margin-top:10px;">La modifica di questi campi anagrafici e delle regole generali del piano arriva nel prossimo aggiornamento — qui sotto si modificano già i pasti giorno per giorno, sincronizzati subito col paziente.</p>
+        <p class="hint" style="margin-top:8px;">L'email di accesso serve per il login e non si modifica da qui.</p>
+        <div class="editor-pasti" id="editor-dati-form" style="margin-top:14px;">
+          <label class="editor-campo"><span>Nome paziente</span><input type="text" data-campo="nome" value="${escapeHTML(pz.nome || piano.pazienteNome || "")}"></label>
+          <label class="editor-campo"><span>Obiettivo</span><input type="text" data-campo="obiettivo" value="${escapeHTML(pz.obiettivo || "")}"></label>
+          <label class="editor-campo"><span>Target giornaliero (kcal)</span><input type="number" data-campo="targetKcal" value="${pz.targetKcal != null ? pz.targetKcal : ""}"></label>
+          <label class="editor-campo"><span>Nutrizionista</span><input type="text" data-campo="nutrizionista" value="${escapeHTML(pz.nutrizionista || "")}"></label>
+        </div>
+        <button type="button" class="btn" id="btn-salva-dati-paziente" style="margin-top:14px;">Salva dati paziente</button>
+      </section>
+
+      <section class="settings-section">
+        <h2>Regole generali del piano</h2>
+        <p class="hint">Una regola per riga — compaiono nella vista "Oggi" del paziente, sotto "Regole generali del piano". Lascia il campo vuoto se non vuoi mostrarne nessuna.</p>
+        <textarea id="editor-norme" rows="6" style="width:100%; box-sizing:border-box; font-family:var(--font-body); font-size:14.5px; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius-s); padding:10px 12px; resize:vertical;">${(piano.normeGenerali || []).map(escapeHTML).join("\n")}</textarea>
+        <button type="button" class="btn" id="btn-salva-norme" style="margin-top:10px;">Salva regole</button>
       </section>
 
       ${renderEditorPastoHTML(piano, EDITOR_PROF.settSel, EDITOR_PROF.giornoSel, disponibili)}
@@ -825,6 +858,8 @@
     `;
 
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    document.getElementById("btn-salva-dati-paziente").addEventListener("click", salvaDatiPazienteProfessionista);
+    document.getElementById("btn-salva-norme").addEventListener("click", salvaNormeGeneraliProfessionista);
     collegaEditorPastoProfessionista();
     document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));
     document.getElementById("input-importa-piano-prof").addEventListener("change", onFileImportPianoProf);
@@ -922,6 +957,74 @@
     } finally {
       btn.disabled = false;
       btn.textContent = "Salva questo giorno";
+    }
+  }
+
+  /** Salva le "Regole generali del piano" (una per riga nella textarea) — passa comunque dal validatore per restare nel formato coerente. */
+  async function salvaNormeGeneraliProfessionista() {
+    const piano = PIANO_ATTIVO_PROF;
+    const testo = document.getElementById("editor-norme").value;
+    const norme = testo.split("\n").map((r) => r.trim()).filter((r) => r.length > 0);
+
+    const pianoModificato = JSON.parse(JSON.stringify(piano));
+    pianoModificato.normeGenerali = norme;
+
+    const risultato = validaPiano(pianoModificato);
+    if (!risultato.ok) {
+      mostraToast("Non salvato — " + risultato.errori[0], 4200);
+      return;
+    }
+
+    const btn = document.getElementById("btn-salva-norme");
+    btn.disabled = true;
+    btn.textContent = "Salvataggio…";
+    try {
+      await window.cloud.salvaPiano(piano.id, risultato.piano);
+      mostraToast("Regole salvate e sincronizzate col paziente");
+    } catch (e) {
+      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salva regole";
+    }
+  }
+
+  /** Salva nome/obiettivo/target kcal/nutrizionista — passa dal validatore e aggiorna anche il nome mostrato nella lista pazienti. */
+  async function salvaDatiPazienteProfessionista() {
+    const piano = PIANO_ATTIVO_PROF;
+    const campi = {};
+    document.querySelectorAll("#editor-dati-form [data-campo]").forEach((el) => {
+      campi[el.dataset.campo] = el.value;
+    });
+
+    const pianoModificato = JSON.parse(JSON.stringify(piano));
+    pianoModificato.paziente = pianoModificato.paziente || {};
+    pianoModificato.paziente.nome = campi.nome.trim();
+    pianoModificato.paziente.obiettivo = campi.obiettivo.trim();
+    const targetNum = Number(campi.targetKcal);
+    pianoModificato.paziente.targetKcal = (campi.targetKcal !== "" && !Number.isNaN(targetNum)) ? targetNum : null;
+    pianoModificato.paziente.nutrizionista = campi.nutrizionista.trim();
+
+    const risultato = validaPiano(pianoModificato);
+    if (!risultato.ok) {
+      mostraToast("Non salvato — " + risultato.errori[0], 4200);
+      return;
+    }
+
+    const nuovoPazienteNome = campi.nome.trim() || piano.pazienteNome;
+    const btn = document.getElementById("btn-salva-dati-paziente");
+    btn.disabled = true;
+    btn.textContent = "Salvataggio…";
+    try {
+      // pazienteNome è il nome "mostrato" nella lista pazienti: è un campo
+      // separato dal contenuto del piano validato, lo aggiungiamo qui.
+      await window.cloud.salvaPiano(piano.id, Object.assign({}, risultato.piano, { pazienteNome: nuovoPazienteNome }));
+      mostraToast("Dati paziente salvati e sincronizzati");
+    } catch (e) {
+      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salva dati paziente";
     }
   }
 
