@@ -19,16 +19,74 @@
 </head>
 <body>
 
-<div class="app">
+<!-- Schermata di caricamento iniziale, finché non sappiamo se sei già loggato -->
+<div class="auth-loading" id="auth-loading">
+  <div class="auth-loading__spinner"></div>
+</div>
+
+<!-- Schermata di accesso (login paziente/professionista + registrazione professionista) -->
+<div class="auth-screen" id="auth-screen" hidden>
+  <div class="auth-card">
+    <h1 class="auth-card__title">Il mio Piano</h1>
+    <p class="auth-card__sub" id="auth-sub">Accedi con le credenziali che ti ha fornito il tuo nutrizionista.</p>
+
+    <form id="form-login" class="auth-form">
+      <label class="auth-field">
+        <span>Email</span>
+        <input type="email" id="auth-email" required autocomplete="email">
+      </label>
+      <label class="auth-field">
+        <span>Password</span>
+        <input type="password" id="auth-password" required autocomplete="current-password">
+      </label>
+      <p class="auth-error" id="auth-error" hidden></p>
+      <button type="submit" class="btn" id="btn-auth-submit">Accedi</button>
+    </form>
+    <button type="button" class="link-btn" id="btn-password-dimenticata">Password dimenticata?</button>
+
+    <hr class="auth-sep">
+
+    <div id="blocco-signup-professionista">
+      <p class="hint">Sei un professionista (dietista/nutrizionista)?</p>
+      <button type="button" class="btn btn--ghost" id="btn-mostra-signup">Registrati come professionista</button>
+    </div>
+
+    <form id="form-signup" class="auth-form" hidden>
+      <label class="auth-field">
+        <span>Nome e cognome</span>
+        <input type="text" id="signup-nome" required autocomplete="name">
+      </label>
+      <label class="auth-field">
+        <span>Email</span>
+        <input type="email" id="signup-email" required autocomplete="email">
+      </label>
+      <label class="auth-field">
+        <span>Password (almeno 6 caratteri)</span>
+        <input type="password" id="signup-password" required minlength="6" autocomplete="new-password">
+      </label>
+      <p class="auth-error" id="signup-error" hidden></p>
+      <button type="submit" class="btn">Crea account professionista</button>
+      <button type="button" class="link-btn" id="btn-annulla-signup">Torna all'accesso</button>
+    </form>
+  </div>
+</div>
+
+<!-- App paziente -->
+<div class="app" id="app-paziente" hidden>
 
   <header class="topbar">
     <div class="topbar__title">
       <span class="topbar__eyebrow" id="data-oggi">—</span>
       <h1>Il mio Piano</h1>
     </div>
-    <button class="icon-btn" id="btn-notifiche" aria-label="Attiva promemoria" title="Attiva promemoria">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
-    </button>
+    <div class="topbar__azioni">
+      <button class="icon-btn" id="btn-notifiche" aria-label="Attiva promemoria" title="Attiva promemoria">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-logout-paziente" aria-label="Esci" title="Esci">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
   </header>
 
   <main id="view-root" class="view-root">
@@ -52,9 +110,32 @@
 
 </div>
 
+<!-- Pannello professionista -->
+<div class="app app--professionista" id="app-professionista" hidden>
+  <header class="topbar">
+    <div class="topbar__title">
+      <span class="topbar__eyebrow">Pannello professionista</span>
+      <h1 id="prof-header-titolo">I tuoi pazienti</h1>
+    </div>
+    <button class="icon-btn" id="btn-logout-prof" aria-label="Esci" title="Esci">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </button>
+  </header>
+  <main id="prof-root" class="view-root">
+    <!-- renderizzato da app.js -->
+  </main>
+</div>
+
 <template id="tpl-toast">
   <div class="toast" role="status"></div>
 </template>
+
+<!-- Firebase (SDK "compat": nessun passaggio di build, si usa come script classico) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/cloud.js"></script>
 
 <script src="js/data.js"></script>
 <script src="js/week-logic.js"></script>
