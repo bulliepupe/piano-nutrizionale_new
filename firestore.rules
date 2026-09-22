@@ -1,0 +1,56 @@
+// Regole di sicurezza Firestore per "Il mio Piano".
+//
+// Come applicarle: Firebase Console → Firestore Database → scheda "Regole"
+// → incolla questo intero file al posto di quello presente → "Pubblica".
+//
+// Logica generale:
+// - ogni utente autenticato ha un documento in /users/{uid} con un campo
+//   "ruolo": "professionista" oppure "paziente";
+// - un piano nutrizionale (/piani/{id}) può essere SCRITTO solo dal
+//   professionista che lo possiede (professionistaUid); il paziente a cui è
+//   assegnato (pazienteUid) può solo leggerlo, mai modificarlo — coerente con
+//   la regola dell'app: i dati del piano si modificano solo dal pannello
+//   professionista;
+// - le spunte "pasto fatto" del paziente vivono separate, sotto il suo stesso
+//   utente (/users/{uid}/pastiFatti/{giorno}): quelle sì può scriverle lui.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isProfessionista() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ruolo == "professionista";
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isProfessionista());
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      // Un utente può aggiornare i propri dati ma non auto-promuoversi di ruolo.
+      allow update: if isSignedIn() && request.auth.uid == userId
+                    && request.resource.data.ruolo == resource.data.ruolo;
+      allow delete: if false;
+
+      match /pastiFatti/{giorno} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    match /piani/{pianoId} {
+      // Lettura: il paziente a cui è assegnato il piano, o il professionista
+      // che lo possiede. Vale sia per il get() di un documento singolo sia
+      // per le query (es. "i miei pazienti", "il mio piano").
+      allow read: if isSignedIn() &&
+        (resource.data.pazienteUid == request.auth.uid || resource.data.professionistaUid == request.auth.uid);
+
+      // Scrittura: SOLO il professionista proprietario del piano. Il paziente
+      // non può mai modificare pasti, regole generali o dati anagrafici.
+      allow create: if isProfessionista() && request.resource.data.professionistaUid == request.auth.uid;
+      allow update, delete: if isProfessionista() && resource.data.professionistaUid == request.auth.uid;
+    }
+  }
+}
