@@ -5,6 +5,14 @@
    Font: Fraunces (titoli, con carattere) + Inter (testo e interfaccia).
    ========================================================================= */
 
+/* Le classi qui sotto (.auth-loading, .auth-screen, .app) impongono un
+   proprio "display", che altrimenti vincerebbe sulla regola nativa del
+   browser che nasconde un elemento con l'attributo hidden. Questa riga
+   garantisce che "hidden" abbia sempre la priorità assoluta: è così che
+   l'app alterna correttamente caricamento / accesso / vista paziente /
+   pannello professionista invece di mostrarli tutti impilati insieme. */
+[hidden] { display: none !important; }
+
 :root {
   /* Colori base */
   --bg: #EEF2E8;
