@@ -1,4 +1,5 @@
-[README (1).md](https://github.com/user-attachments/files/32515331/README.1.md)
+[README (2).md](https://github.com/user-attachments/files/32518230/README.2.md)
+
 [README.md](https://github.com/user-attachments/files/32471357/README.md)
 # Il mio Piano — app del piano nutrizionale
 
@@ -145,17 +146,18 @@ Da questo momento l'app si apre dall'icona sulla Home, senza barra del browser.
 1. Apri l'app e accedi.
 2. Vai su **Impostazioni** e attiva **Attiva promemoria**, oppure tocca la campanella in alto.
 3. Il telefono chiederà il permesso di mostrare notifiche: conferma.
-4. Da **Impostazioni** puoi anche modificare l'orario di ciascun pasto (solo su questo dispositivo).
+4. Da **Impostazioni** scegli anche **"Anticipo promemoria"** (10/15/20/30 minuti prima del pasto) e, se vuoi, modifica l'orario di ciascun pasto — entrambi solo su questo dispositivo.
 
 **Come funzionano, onestamente:** l'app programma il promemoria di ogni pasto
-mentre è aperta o rimane in background di recente; se la riapri entro 90
-minuti da un orario già passato, ti mostra comunque il promemoria di quel
-pasto ("recupero"). È un funzionamento locale al dispositivo: molto
-affidabile su Android se tieni l'app tra le app recenti, meno prevedibile se
-il telefono la chiude del tutto per ore, specialmente su iPhone. Notifiche
-vere anche ad app completamente chiusa per giorni sono tra i prossimi
-miglioramenti pianificati (richiedono Firebase Cloud Messaging, che si
-appoggia proprio al progetto Firebase già creato al punto 4).
+con l'anticipo scelto, mentre è aperta o rimane in background di recente; se
+la riapri entro 90 minuti dall'orario del pasto già passato, ti mostra
+comunque il promemoria di quel pasto ("recupero"). È un funzionamento locale
+al dispositivo: molto affidabile su Android se tieni l'app tra le app
+recenti, meno prevedibile se il telefono la chiude del tutto per ore,
+specialmente su iPhone. Notifiche vere anche ad app completamente chiusa per
+giorni sono tra i prossimi miglioramenti pianificati (richiedono Firebase
+Cloud Messaging, che si appoggia proprio al progetto Firebase già creato al
+punto 4).
 
 ---
 
