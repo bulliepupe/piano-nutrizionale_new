@@ -28,6 +28,13 @@
   const auth = app.auth();
   const secondaryAuth = secondaryApp.auth();
   const db = app.firestore();
+  // Firestore "legato" all'app secondaria: usato SOLO per scrivere il
+  // documento users/{uid} del nuovo paziente mentre è ancora autenticato
+  // come se stesso (subito dopo la creazione, prima del signOut). Le regole
+  // di sicurezza permettono a un utente di creare solo il proprio documento
+  // — passando dall'app secondaria questo resta vero anche quando è il
+  // professionista a creare l'account per lui.
+  const secondaryDb = secondaryApp.firestore();
 
   // Persistenza offline: letture disponibili anche senza connessione, con
   // sincronizzazione automatica al ritorno della rete. Fallisce silenziosamente
@@ -87,15 +94,20 @@
     async creaPaziente({ email, password, nome, professionistaUid }) {
       const cred = await secondaryAuth.createUserWithEmailAndPassword(email.trim(), password);
       const nuovoUid = cred.user.uid;
-      await secondaryAuth.signOut();
 
-      await db.collection("users").doc(nuovoUid).set({
+      // Scritto tramite secondaryDb MENTRE è ancora autenticato come il
+      // nuovo paziente (non ancora disconnesso): è l'unico modo per
+      // rispettare la regola "solo l'utente stesso può creare il proprio
+      // documento" anche quando è il professionista ad avviare la creazione.
+      await secondaryDb.collection("users").doc(nuovoUid).set({
         ruolo: "paziente",
         nome: (nome || "").trim(),
         email: email.trim(),
         professionistaUid,
         creato: FieldValue.serverTimestamp(),
       });
+
+      await secondaryAuth.signOut();
       return nuovoUid;
     },
 
