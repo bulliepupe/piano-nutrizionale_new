@@ -243,6 +243,7 @@
       "auth/weak-password": "Password troppo debole (minimo 6 caratteri).",
       "auth/too-many-requests": "Troppi tentativi, riprova tra qualche minuto.",
       "auth/network-request-failed": "Problema di connessione.",
+      "permission-denied": "Permesso negato da Firestore: controlla di aver pubblicato le regole di sicurezza corrette nella console Firebase.",
     };
     return (code && mappa[code]) || "Si è verificato un errore imprevisto. Riprova.";
   }
