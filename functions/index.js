@@ -1,3 +1,4 @@
+
 /**
  * functions/index.js
  * Cloud Function programmata: ogni 5 minuti controlla tutti i piani attivi
