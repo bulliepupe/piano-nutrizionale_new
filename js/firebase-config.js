@@ -29,4 +29,4 @@ window.FIREBASE_CONFIG = {
  * → scheda "Cloud Messaging" → sezione "Configurazione web push" →
  * "Genera coppia di chiavi" (se non esiste già una). Richiede il piano Blaze.
  */
-window.FIREBASE_VAPID_KEY = "INSERISCI_VAPID_KEY";
+window.FIREBASE_VAPID_KEY = "BGGiV2Vo6eDfeHzAylbMgodNeIly822CctM9QjPylsiD_yPytfxLWg1-ifz-D1BETiINk1O4Oxd73iyG2MLYbzI";
