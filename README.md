@@ -1,5 +1,4 @@
-[README (2).md](https://github.com/user-attachments/files/32518230/README.2.md)
-
+[README (3).md](https://github.com/user-attachments/files/32557719/README.3.md)
 [README.md](https://github.com/user-attachments/files/32471357/README.md)
 # Il mio Piano — app del piano nutrizionale
 
@@ -188,10 +187,20 @@ migliorie pianificate.
 
 ---
 
-## 9. Modificare i pasti di un paziente (pannello professionista)
+## 9. Il pannello professionista, sezione per sezione
 
 Da **"I tuoi pazienti"**, tocca il paziente: si apre l'editor.
 
+- **Dati paziente** — nome, obiettivo, target kcal giornaliero, nutrizionista: modificabili e sincronizzati subito. L'email di accesso resta di sola consultazione (serve per il login).
+- **Regole generali del piano** — una per riga, compaiono nella vista "Oggi" del paziente.
+- **Sostituzioni pasto** — gruppi di alimenti che consideri equivalenti tra loro (per calorie, macronutrienti, tipologia): **è una tua valutazione clinica, l'app non la genera da sola**. Un gruppo per riga, con questo formato:
+
+  ```
+  Fonti proteiche magre: Pollo 150g, Tacchino 150g, Merluzzo 200g, Albume 200g
+  Cereali integrali: Pane integrale 50g, Riso integrale 60g, Farro 60g
+  ```
+
+  Quando il testo di un pasto del paziente contiene il nome di un'opzione (es. "Pollo alla griglia 220g" contiene "Pollo"), nella sua app compare un pulsante **"Sostituisci"** che mostra le altre opzioni dello stesso gruppo.
 - **Modifica un pasto** — scegli settimana e giorno dai due menu a tendina,
   cambia il testo dei pasti (i 5 sono obbligatori; coccola e kcal
   facoltativi) e premi **"Salva questo giorno"**: si sincronizza subito con
@@ -202,12 +211,25 @@ Da **"I tuoi pazienti"**, tocca il paziente: si apre l'editor.
   ricaricarlo: sostituisce tutte le settimane in un colpo solo. L'app
   controlla il file prima di accettarlo (7 giorni per settimana, tutti i
   pasti compilati, ecc.) e segnala con precisione cosa manca, senza
-  applicare nulla di incompleto.
+  applicare nulla di incompleto. Il file scaricato include anche regole
+  generali e sostituzioni, quindi puoi modificarle in blocco da lì se preferisci.
 
-La modifica diretta di regole generali e dati anagrafici dal pannello arriva
-nel prossimo aggiornamento; per ora si possono includere nel file `.json`
-importato (campi `paziente` e `normeGenerali`, vedi lo schema scaricabile
-dall'editor).
+---
+
+## 9bis. La scheda "Spesa" (lato paziente)
+
+Genera automaticamente una lista della spesa aggregando gli ingredienti di
+tutti i pasti della settimana selezionata (menu a tendina in alto, come
+nella scheda Settimana). Ogni voce ha una spunta (si ricorda da un
+accesso all'altro, solo su questo dispositivo) e si possono aggiungere o
+togliere articoli a mano. Il pulsante **"Copia lista negli appunti"**
+prepara un testo semplice da incollare altrove (note, WhatsApp, ecc.).
+
+**Un limite onesto:** la lista viene estratta dal testo libero dei pasti con
+un'interpretazione automatica (riconosce quantità come "220g" o "1 uovo",
+scompone le parentesi tipo "Riso 70g, Robiola 25g"), non da un database
+alimentare strutturato — funziona bene nella maggior parte dei casi ma va
+sempre ricontrollata prima di uscire a fare la spesa.
 
 ---
 
