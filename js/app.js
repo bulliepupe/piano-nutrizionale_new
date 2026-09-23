@@ -271,9 +271,19 @@
     });
     collegaAscoltoPastiOggi();
 
+    // Notifiche push ricevute mentre l'app è aperta: quelle ad app chiusa le
+    // mostra invece il service worker (vedi service-worker.js).
+    window.cloud.onMessaggioPrimoPiano((payload) => {
+      const n = payload && payload.notification;
+      if (n) mostraNotifica(n.title || "Promemoria", n.body || "");
+    });
+
     if (notificheAttive()) {
       pianificaNotificheOggi();
       mostraPromemoriaPerso();
+      // Ri-registra il token a ogni avvio: su alcuni browser scade o cambia,
+      // e comunque un nuovo dispositivo deve comunque registrarsi.
+      sincronizzaPreferenzeNotifichePush().catch(() => {});
     }
     aggiornaIconaCampanella();
     render();
@@ -843,7 +853,10 @@
     document.getElementById("chk-notifiche").addEventListener("change", onToggleNotificheDettaglio);
     document.getElementById("sel-anticipo").addEventListener("change", (e) => {
       localStorage.setItem(LS_KEYS.anticipo, e.target.value);
-      if (notificheAttive()) pianificaNotificheOggi();
+      if (notificheAttive()) {
+        pianificaNotificheOggi();
+        sincronizzaPreferenzeNotifichePush().catch(() => {});
+      }
       mostraToast("Anticipo aggiornato");
     });
     document.getElementById("sel-tema").value = localStorage.getItem(LS_KEYS.tema) || "sistema";
@@ -856,7 +869,10 @@
         const override = JSON.parse(localStorage.getItem(LS_KEYS.orari) || "{}");
         override[inp.dataset.key] = inp.value;
         localStorage.setItem(LS_KEYS.orari, JSON.stringify(override));
-        if (notificheAttive()) pianificaNotificheOggi();
+        if (notificheAttive()) {
+          pianificaNotificheOggi();
+          sincronizzaPreferenzeNotifichePush().catch(() => {});
+        }
         mostraToast("Orario aggiornato");
       });
     });
@@ -883,10 +899,7 @@
 
   async function onToggleNotificheRapido() {
     if (notificheAttive()) {
-      localStorage.setItem(LS_KEYS.notifiche, "0");
-      aggiornaIconaCampanella();
-      mostraToast("Promemoria disattivati");
-      if (currentView === "impostazioni") render();
+      await disattivaNotifiche();
       return;
     }
     await attivaNotifiche();
@@ -897,9 +910,20 @@
       const ok = await attivaNotifiche();
       if (!ok) render();
     } else {
-      localStorage.setItem(LS_KEYS.notifiche, "0");
-      aggiornaIconaCampanella();
-      mostraToast("Promemoria disattivati");
+      await disattivaNotifiche();
+    }
+  }
+
+  async function disattivaNotifiche() {
+    localStorage.setItem(LS_KEYS.notifiche, "0");
+    aggiornaIconaCampanella();
+    mostraToast("Promemoria disattivati");
+    if (currentView === "impostazioni") render();
+    try {
+      await window.cloud.salvaPreferenzeNotifiche(UID, { notificheAttive: false });
+    } catch (e) {
+      // La disattivazione locale ha comunque effetto; la sincronizzazione
+      // col server (per le notifiche push) si aggiornerà al prossimo tentativo.
     }
   }
 
@@ -919,7 +943,28 @@
     aggiornaIconaCampanella();
     mostraToast("Promemoria attivati");
     if (currentView === "impostazioni") render();
+
+    // Promemoria veri anche ad app chiusa (se il progetto è configurato per
+    // il push): il fallimento qui non compromette i promemoria "locali"
+    // appena attivati sopra, che restano comunque il piano B.
+    try {
+      await sincronizzaPreferenzeNotifichePush();
+    } catch (e) {
+      console.warn("Notifiche push non attivate su questo dispositivo:", e);
+    }
     return true;
+  }
+
+  /** Registra il token del dispositivo e invia al server orari/anticipo correnti, per le notifiche ad app chiusa. */
+  async function sincronizzaPreferenzeNotifichePush() {
+    if (!window.cloud.pushSupportato) return;
+    await window.cloud.registraTokenPush(UID);
+    const override = JSON.parse(localStorage.getItem(LS_KEYS.orari) || "null");
+    await window.cloud.salvaPreferenzeNotifiche(UID, {
+      notificheAttive: true,
+      orariOverride: override || null,
+      anticipoMinuti: anticipoMinutiEffettivo(),
+    });
   }
 
   function aggiornaIconaCampanella() {
