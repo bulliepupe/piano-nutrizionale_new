@@ -1,3 +1,4 @@
+
 /**
  * service-worker.js
  * Cache "app shell" per il funzionamento offline (una volta aperta almeno
@@ -7,7 +8,7 @@
  * refresh della cache sui dispositivi già installati.
  */
 
-const CACHE_VERSION = "v12";
+const CACHE_VERSION = "v13";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
