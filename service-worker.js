@@ -2,13 +2,19 @@
 /**
  * service-worker.js
  * Cache "app shell" per il funzionamento offline (una volta aperta almeno
- * una volta con connessione) + gestione del tap sulle notifiche.
+ * una volta con connessione) + gestione del tap sulle notifiche + notifiche
+ * push ricevute mentre l'app è completamente chiusa (Firebase Cloud Messaging).
  *
  * Se aggiorni i file dell'app, alza CACHE_VERSION per forzare il
  * refresh della cache sui dispositivi già installati.
+ *
+ * IMPORTANTE: la configurazione Firebase qui sotto va tenuta allineata a
+ * quella in js/firebase-config.js — un service worker gira in un contesto
+ * separato dalla pagina e non può leggere window.FIREBASE_CONFIG, quindi
+ * questi valori vanno incollati anche qui (non sono comunque segreti).
  */
 
-const CACHE_VERSION = "v13";
+const CACHE_VERSION = "v14";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -72,3 +78,42 @@ self.addEventListener("notificationclick", (event) => {
     })
   );
 });
+
+// ---------------------------------------------------------------------
+// Notifiche push ad app chiusa (Firebase Cloud Messaging)
+// ---------------------------------------------------------------------
+try {
+  importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js");
+  importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js");
+
+  // Stessi valori di js/firebase-config.js — vedi nota in cima al file.
+  firebase.initializeApp({
+    apiKey: "INSERISCI_API_KEY",
+    authDomain: "INSERISCI_PROGETTO.firebaseapp.com",
+    projectId: "INSERISCI_PROGETTO",
+    storageBucket: "INSERISCI_PROGETTO.appspot.com",
+    messagingSenderId: "INSERISCI_SENDER_ID",
+    appId: "INSERISCI_APP_ID",
+  });
+
+  const messaging = firebase.messaging();
+
+  // Con "notification" payload (quello usato dalla funzione server) il
+  // browser mostra già da solo la notifica ad app chiusa: questo handler
+  // serve soprattutto da rete di sicurezza e per un eventuale payload "data".
+  if (messaging) {
+    messaging.onBackgroundMessage((payload) => {
+      const n = payload.notification || {};
+      self.registration.showNotification(n.title || "Promemoria", {
+        body: n.body || "",
+        icon: "./icons/icon-192.png",
+        badge: "./icons/icon-192.png",
+        tag: n.tag || "promemoria-pasto",
+      });
+    });
+  }
+} catch (e) {
+  // Se la configurazione Firebase non è ancora stata compilata qui sopra,
+  // o il browser non supporta il push, il resto dell'app (cache offline,
+  // promemoria "locali" pianificati da app.js) continua a funzionare lo stesso.
+}
