@@ -1,4 +1,5 @@
-[README (3).md](https://github.com/user-attachments/files/32557719/README.3.md)
+[README (4).md](https://github.com/user-attachments/files/32561121/README.4.md)
+
 [README.md](https://github.com/user-attachments/files/32471357/README.md)
 # Il mio Piano — app del piano nutrizionale
 
@@ -30,6 +31,7 @@ piano-nutrizionale/
 ├── js/firebase-config.js → i tuoi parametri del progetto Firebase (da compilare)
 ├── js/cloud.js           → tutte le chiamate a Firebase (accesso, Firestore)
 ├── js/app.js             → la logica dell'interfaccia, dei ruoli e delle notifiche
+├── functions/            → Cloud Function per le notifiche push ad app chiusa (facoltativa, punto 12)
 └── icons/                → le icone dell'app
 ```
 
@@ -145,18 +147,11 @@ Da questo momento l'app si apre dall'icona sulla Home, senza barra del browser.
 1. Apri l'app e accedi.
 2. Vai su **Impostazioni** e attiva **Attiva promemoria**, oppure tocca la campanella in alto.
 3. Il telefono chiederà il permesso di mostrare notifiche: conferma.
-4. Da **Impostazioni** scegli anche **"Anticipo promemoria"** (10/15/20/30 minuti prima del pasto) e, se vuoi, modifica l'orario di ciascun pasto — entrambi solo su questo dispositivo.
+4. Da **Impostazioni** scegli anche **"Anticipo promemoria"** (10/15/20/30 minuti prima del pasto) e, se vuoi, modifica l'orario di ciascun pasto — entrambi personali per dispositivo, ma sincronizzati anche sul server per le notifiche push (vedi sotto).
 
-**Come funzionano, onestamente:** l'app programma il promemoria di ogni pasto
-con l'anticipo scelto, mentre è aperta o rimane in background di recente; se
-la riapri entro 90 minuti dall'orario del pasto già passato, ti mostra
-comunque il promemoria di quel pasto ("recupero"). È un funzionamento locale
-al dispositivo: molto affidabile su Android se tieni l'app tra le app
-recenti, meno prevedibile se il telefono la chiude del tutto per ore,
-specialmente su iPhone. Notifiche vere anche ad app completamente chiusa per
-giorni sono tra i prossimi miglioramenti pianificati (richiedono Firebase
-Cloud Messaging, che si appoggia proprio al progetto Firebase già creato al
-punto 4).
+**Due livelli di promemoria, insieme:**
+- **Locale** (funziona sempre, nessuna configurazione aggiuntiva): l'app programma il promemoria di ogni pasto mentre è aperta o rimane in background di recente; se la riapri entro 90 minuti dall'orario del pasto già passato, ti mostra comunque il promemoria di quel pasto ("recupero").
+- **Push, anche ad app completamente chiusa** (richiede la Cloud Function — vedi punto 12): appena attivi i promemoria, l'app registra questo dispositivo per le notifiche push. Se la Cloud Function è stata pubblicata, il promemoria arriva anche con l'app chiusa da ore; altrimenti resta comunque il livello "locale" qui sopra, senza che nulla si rompa.
 
 ---
 
@@ -259,10 +254,97 @@ prossimo avvio dell'app.
 
 ---
 
-## 12. Domande frequenti
+## 12. Notifiche push anche ad app chiusa — pubblicare la Cloud Function
+
+Questo passaggio è **facoltativo**: senza, l'app funziona comunque, con i
+promemoria "locali" descritti al punto 7. Se vuoi anche quelli veri ad app
+chiusa, serve pubblicare un piccolo programma che gira sui server di
+Google (una "Cloud Function") — un passaggio più tecnico dei precedenti,
+perché richiede il terminale invece della sola Console web. Vai con calma,
+un passaggio alla volta.
+
+### 13.1 Passaggi in Firebase Console
+
+1. **Passa al piano Blaze.** Console Firebase → in basso a sinistra "Modifica piano" (o icona ingranaggio → "Utilizzo e fatturazione") → **Blaze (Pay as you go)** → segui la procedura, che chiede una carta di credito. Per i volumi di uno studio nutrizionale il costo reale resta €0 (vedi le stime discusse in chat) — l'unico vincolo è avere una carta collegata.
+2. **Imposta subito un avviso di budget** (consigliato, richiede due minuti): nella pagina di fatturazione di Google Cloud → "Budget e avvisi" → crea un budget, es. 1€, con avviso email al superamento. Non blocca la spesa da solo, ma ti avvisa subito se mai dovesse succedere qualcosa di anomalo.
+3. **Genera la chiave VAPID:** icona ingranaggio → "Impostazioni progetto" → scheda **Cloud Messaging** → sezione "Configurazione web push" → **Genera coppia di chiavi**. Copia la chiave.
+4. Apri `js/firebase-config.js` e incolla la chiave al posto di `INSERISCI_VAPID_KEY` in `window.FIREBASE_VAPID_KEY`.
+5. Apri `service-worker.js` e incolla LA STESSA configurazione che hai già in `js/firebase-config.js` (i 6 valori `apiKey`, `authDomain`, ecc.) al posto dei segnaposto `INSERISCI_...`, nel blocco `firebase.initializeApp({...})` verso la fine del file.
+6. Carica su GitHub entrambi i file modificati (`js/firebase-config.js` e `service-worker.js`).
+
+### 13.2 Installare gli strumenti sul computer (una tantum)
+
+1. **Node.js** — se non l'hai già, scaricalo da [nodejs.org](https://nodejs.org) (versione "LTS") e installalo come un programma qualsiasi. Per controllare se ce l'hai già: apri il terminale (su Windows "Prompt dei comandi" o "PowerShell", su Mac "Terminale") e digita:
+   ```bash
+   node -v
+   ```
+   Se stampa un numero di versione (es. `v20.x.x`), ce l'hai già.
+2. **Firebase CLI** — nello stesso terminale:
+   ```bash
+   npm install -g firebase-tools
+   ```
+3. **Accedi con il tuo account Google:**
+   ```bash
+   firebase login
+   ```
+   Si apre il browser per il login, poi torna pure al terminale.
+
+### 13.3 Scaricare il progetto sul computer
+
+1. Sulla pagina GitHub del repository, pulsante verde **"Code"** → **"Download ZIP"**.
+2. Estrai lo ZIP in una cartella (es. sul Desktop).
+3. Apri il terminale in quella cartella: su Windows, dentro la cartella estratta tieni premuto Maiusc e tasto destro → "Apri finestra PowerShell qui"; su Mac, tasto destro sulla cartella nel Finder → "Nuovo terminale nella cartella" (se non compare, apri Terminale e scrivi `cd ` seguito da uno spazio, poi trascina la cartella nella finestra, poi Invio).
+
+### 13.4 Collegare il progetto e pubblicare la funzione
+
+Nel terminale, dentro la cartella del progetto:
+
+```bash
+firebase use --add
+```
+Scegli il tuo progetto Firebase dalla lista (quello creato al punto 4), dagli un alias qualsiasi quando richiesto (es. `default`).
+
+La cartella `functions/` con `index.js`, `package.json` e `week-logic.js` è già pronta dentro il progetto che hai scaricato — non serve ricrearla con `firebase init`. Basta installare le sue dipendenze:
+
+```bash
+cd functions
+npm install
+cd ..
+```
+
+E infine pubblicare:
+
+```bash
+firebase deploy --only functions
+```
+
+La prima pubblicazione richiede un paio di minuti. Alla fine il terminale mostra il nome della funzione (`controllaPromemoria`) con un segno di spunta verde: da quel momento gira automaticamente ogni 5 minuti sui server di Google, senza che tu debba lasciare nulla acceso.
+
+### 13.5 Verifica
+
+1. Da un dispositivo, accedi come paziente e attiva i promemoria in Impostazioni.
+2. Console Firebase → Firestore Database → collezione `users` → il documento di quel paziente dovrebbe avere un campo `fcmTokens` con un valore lungo (il token del dispositivo) e `notificheAttive: true`.
+3. Chiudi completamente l'app su quel dispositivo (non solo la scheda: rimuovila dalle app recenti). Al prossimo orario-pasto meno l'anticipo scelto, entro 5 minuti dovrebbe arrivare la notifica anche così.
+4. Se non arriva: Console Firebase → menu a sinistra → **Functions** → apri `controllaPromemoria` → scheda "Registri" (Logs), per vedere eventuali errori.
+
+### 13.6 Quando modifichi qualcosa
+
+- Se cambi `config.json` (il ciclo delle settimane), aggiorna anche gli stessi
+  valori in `functions/index.js` (costanti `CONFIG_BASE` e `ORARI_DEFAULT` in
+  cima al file) e ripubblica con `firebase deploy --only functions`.
+- Se in futuro aggiorno `js/week-logic.js`, copia il file anche dentro
+  `functions/week-logic.js` prima di ripubblicare — è un doppione voluto,
+  perché la Cloud Function viene pubblicata solo con i file dentro `functions/`.
+
+---
+
+## 13. Domande frequenti
 
 **Devo pagare qualcosa?** No: GitHub Pages e il piano gratuito di Firebase
-coprono comodamente uno studio con centinaia di pazienti (vedi punto 4).
+coprono comodamente uno studio con centinaia di pazienti (vedi punto 4). Il
+piano Blaze (punto 12, solo se vuoi le notifiche push vere) resta a sua
+volta gratuito nella pratica per questi volumi — richiede solo una carta
+collegata, non un costo mensile fisso.
 
 **I dati dei pazienti finiscono nel repository pubblico su GitHub?** No —
 è proprio il cambiamento di questa versione: il codice dell'app (uguale per
