@@ -58,9 +58,31 @@ function chiaveData(d) {
 }
 
 /**
+ * Il server (Cloud Functions) gira in UTC, non in ora italiana: senza questa
+ * conversione, un pasto delle 16:30 verrebbe confrontato con le 16:30 UTC,
+ * cioè le 18:30 in Italia (ora legale) — promemoria sistematicamente sfasati
+ * di 1-2 ore. Questa funzione costruisce un Date i cui "getter locali"
+ * (getHours, getDay, getDate, ecc.) restituiscono i valori dell'ora di Roma,
+ * qualunque sia il fuso orario reale del server: tutto il resto del file può
+ * quindi continuare a usare i normali getHours()/setHours() come se girasse
+ * su un computer impostato sull'ora italiana.
+ */
+function oraItaliana(adesso) {
+  const parti = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Rome",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(adesso);
+  const get = (tipo) => Number(parti.find((p) => p.type === tipo).value);
+  return new Date(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+}
+
+/**
  * Vero se "adesso" cade nella finestra [orario-anticipo, orario-anticipo+finestra)
  * per un pasto — cioè se è il momento di inviare il promemoria. Funzione pura,
- * testabile da sola senza bisogno di Firestore/FCM veri.
+ * testabile da sola senza bisogno di Firestore/FCM veri. Richiede che
+ * `oraCorrente` sia già in ora italiana (vedi oraItaliana sopra).
  */
 function pastoDaNotificareOra(oraCorrente, orarioPastoStr, anticipoMinuti, finestraMinuti) {
   if (!orarioPastoStr) return false;
@@ -76,7 +98,7 @@ function pastoDaNotificareOra(oraCorrente, orarioPastoStr, anticipoMinuti, fines
 exports.controllaPromemoria = onSchedule(
   { schedule: "every 5 minutes", timeZone: "Europe/Rome" },
   async () => {
-    const ora = new Date();
+    const ora = oraItaliana(new Date());
     const dateKey = chiaveData(ora);
 
     const pianiSnap = await db.collection("piani").get();
@@ -148,5 +170,5 @@ exports.controllaPromemoria = onSchedule(
 
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.
 if (typeof module !== "undefined") {
-  module.exports._test = { pastoDaNotificareOra, chiaveData };
+  module.exports._test = { pastoDaNotificareOra, chiaveData, oraItaliana };
 }
