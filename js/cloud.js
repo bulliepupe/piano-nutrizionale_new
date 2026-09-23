@@ -1,3 +1,4 @@
+
 /**
  * cloud.js
  * Livello di accesso a Firebase (Auth + Firestore). Nessun altro file
@@ -41,10 +42,22 @@
   // se l'app è aperta in più schede contemporaneamente (limite noto di Firestore).
   db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
 
+  // Firebase Messaging (notifiche push): non tutti i browser lo supportano
+  // (es. Safari su iOS prima della 16.4) — se l'inizializzazione fallisce,
+  // le notifiche push restano semplicemente non disponibili su quel
+  // dispositivo, senza bloccare il resto dell'app.
+  let messaging = null;
+  try {
+    messaging = app.messaging();
+  } catch (e) {
+    console.warn("Firebase Messaging non disponibile su questo browser:", e);
+  }
+
   const FieldValue = firebase.firestore.FieldValue;
 
   window.cloud = {
     configurato: CONFIGURATO,
+    pushSupportato: !!messaging,
     auth,
     db,
 
@@ -170,6 +183,59 @@
           (doc) => cb(doc.exists ? doc.data() : {}),
           (err) => { console.error("Errore ascolto spunte:", err); cb({}); }
         );
+    },
+
+    // ---------------------------------------------------------------
+    // Notifiche push (Firebase Cloud Messaging)
+    // ---------------------------------------------------------------
+    /**
+     * Chiede il "token" di questo dispositivo/browser e lo salva sul
+     * documento utente (in un array: un paziente può avere più dispositivi).
+     * Va chiamata SOLO dopo che il permesso di notifica è già stato concesso.
+     * Ritorna il token salvato, o null se il push non è supportato/configurato.
+     */
+    async registraTokenPush(uid) {
+      if (!messaging) return null;
+      if (!window.FIREBASE_VAPID_KEY || window.FIREBASE_VAPID_KEY === "INSERISCI_VAPID_KEY") {
+        console.warn("Chiave VAPID non configurata: le notifiche push restano disattivate.");
+        return null;
+      }
+      const registrazioneSW = await navigator.serviceWorker.ready;
+      const token = await messaging.getToken({
+        vapidKey: window.FIREBASE_VAPID_KEY,
+        serviceWorkerRegistration: registrazioneSW,
+      });
+      if (!token) return null;
+      await db.collection("users").doc(uid).update({
+        fcmTokens: FieldValue.arrayUnion(token),
+      });
+      return token;
+    },
+
+    /** Rimuove il token di questo dispositivo (es. quando l'utente disattiva i promemoria). */
+    async rimuoviTokenPush(uid, token) {
+      if (!token) return;
+      await db.collection("users").doc(uid).update({
+        fcmTokens: FieldValue.arrayRemove(token),
+      });
+    },
+
+    /** Notifica ricevuta mentre l'app è aperta in primo piano (a differenza di quelle ad app chiusa, gestite dal service worker). */
+    onMessaggioPrimoPiano(cb) {
+      if (!messaging) return () => {};
+      return messaging.onMessage(cb);
+    },
+
+    /**
+     * Salva su Firestore gli orari dei pasti (se personalizzati) e l'anticipo
+     * del promemoria: la funzione server-side che invia le notifiche push
+     * legge da qui, perché non ha accesso al localStorage del telefono.
+     */
+    async salvaPreferenzeNotifiche(uid, { orariOverride, anticipoMinuti, notificheAttive }) {
+      const campi = { notificheAttive: !!notificheAttive };
+      if (orariOverride !== undefined) campi.orariOverride = orariOverride;
+      if (anticipoMinuti !== undefined) campi.anticipoMinuti = anticipoMinuti;
+      await db.collection("users").doc(uid).update(campi);
     },
   };
 })();
