@@ -332,6 +332,7 @@
   function render() {
     if (currentView === "oggi") renderOggi();
     else if (currentView === "settimana") renderSettimana();
+    else if (currentView === "spesa") renderSpesa();
     else renderImpostazioni();
   }
 
@@ -387,6 +388,7 @@
     return MEAL_KEYS.map((key) => {
       const meta = MEAL_META[key];
       const isDone = !!fatti[key];
+      const sost = trovaSostituzioneMeal(giorno[key]);
       return `
         <article class="meal ${meta.classe} ${isDone ? "is-done" : ""}">
           <div class="meal__head">
@@ -400,9 +402,39 @@
               <span>${isDone ? "Fatto" : "Segna come fatto"}</span>
             </button>
           ` : ""}
+          ${sost ? `
+            <details class="meal__sostituzioni">
+              <summary>Sostituisci (${escapeHTML(sost.nome)})</summary>
+              <ul>${sost.alternative.map((o) => `<li>${escapeHTML(o)}</li>`).join("")}</ul>
+              <p class="meal__sostituzioni-nota">Alternative equivalenti indicate dal tuo nutrizionista.</p>
+            </details>
+          ` : ""}
         </article>
       `;
     }).join("");
+  }
+
+  /**
+   * Cerca, nella tabella sostituzioni del piano, un gruppo la cui opzione
+   * compare (per nome) nel testo del pasto — restituisce il gruppo e fino a
+   * 3 alternative diverse da quella già presente. Le opzioni e l'equivalenza
+   * nutrizionale sono quelle scritte dal professionista, non generate qui.
+   */
+  function trovaSostituzioneMeal(testoPasto) {
+    const sostituzioni = (PIANO_ATTIVO && PIANO_ATTIVO.sostituzioni) || [];
+    if (!sostituzioni.length || !testoPasto) return null;
+    const testoLower = testoPasto.toLowerCase();
+    for (const gruppo of sostituzioni) {
+      const opzioneCorrispondente = gruppo.opzioni.find((o) => {
+        const base = o.replace(/\s*\d.*$/, "").trim().toLowerCase();
+        return base && testoLower.includes(base);
+      });
+      if (opzioneCorrispondente) {
+        const alternative = gruppo.opzioni.filter((o) => o !== opzioneCorrispondente).slice(0, 3);
+        if (alternative.length) return { nome: gruppo.nome, alternative };
+      }
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------
@@ -517,7 +549,230 @@
     });
 
     const pillAttiva = document.querySelector(".day-pill.is-active");
-    if (pillAttiva) pillAttiva.scrollIntoView({ inline: "center", block: "nearest" });
+    if (pillAttiva && typeof pillAttiva.scrollIntoView === "function") pillAttiva.scrollIntoView({ inline: "center", block: "nearest" });
+  }
+
+  // ---------------------------------------------------------------------
+  // Vista "Spesa" — lista della spesa generata dai pasti della settimana
+  // ---------------------------------------------------------------------
+  let spesaSettimanaSelezionata = null; // null = usa la settimana corrente calcolata
+
+  /**
+   * Divide il testo di un pasto sul separatore " + ", MA senza spezzare un "+"
+   * che si trova dentro una parentesi (es. "Omelette (1 uovo + 150g albumi)"
+   * deve restare un unico segmento da scomporre poi al suo interno).
+   */
+  function dividiRispettandoParentesi(testo) {
+    const segmenti = [];
+    let corrente = "";
+    let profondita = 0;
+    for (let i = 0; i < testo.length; i++) {
+      const ch = testo[i];
+      if (ch === "(") profondita++;
+      if (ch === ")") profondita = Math.max(0, profondita - 1);
+      if (ch === "+" && profondita === 0 && testo[i - 1] === " " && testo[i + 1] === " ") {
+        segmenti.push(corrente.trim());
+        corrente = "";
+      } else {
+        corrente += ch;
+      }
+    }
+    if (corrente.trim()) segmenti.push(corrente.trim());
+    return segmenti;
+  }
+
+  /** Estrae una o più voci {nome, quantita, unita} da UN segmento (senza "+" fuori parentesi). */
+  function estraiVociSegmento(testoSegmento) {
+    const out = [];
+    const matchParen = testoSegmento.match(/\(([^)]*)\)/);
+    const base = testoSegmento.replace(/\([^)]*\)/g, "").trim();
+    const parenContenuto = matchParen ? matchParen[1].trim() : "";
+
+    const parenSembraIngredienti = parenContenuto
+      && (parenContenuto.includes(",") || parenContenuto.includes("+") || /\d/.test(parenContenuto))
+      && !/^(no |senza )/i.test(parenContenuto)
+      && parenContenuto.length < 80;
+
+    if (parenSembraIngredienti && (parenContenuto.includes(",") || parenContenuto.includes("+"))) {
+      // Il nome del piatto (es. "Omelette", "Risotto alla robiola") non è di per
+      // sé un ingrediente da comprare: contano i componenti tra parentesi.
+      parenContenuto.split(/,|\+/).forEach((p) => out.push(...parseVoceSingola(p.trim())));
+    } else if (base) {
+      out.push(...parseVoceSingola(base));
+    } else if (parenContenuto) {
+      out.push(...parseVoceSingola(parenContenuto));
+    }
+    return out;
+  }
+
+  function parseVoceSingola(testo) {
+    testo = testo.trim();
+    if (!testo) return [];
+    if (/^(NO |SENZA )/i.test(testo)) return []; // note come "NO PANE"
+
+    // "3 fette biscottate integrali" / "1 uovo"
+    let m = testo.match(/^(\d+)\s+(.+)$/);
+    if (m) return [{ nome: capitalizzaVoce(m[2].trim()), quantita: Number(m[1]), unita: "pz" }];
+
+    // "Pollo alla griglia 220g" / "Latte p.s. 200ml"
+    m = testo.match(/^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(g|kg|ml|l)\b\.?\s*$/i);
+    if (m) return [{ nome: capitalizzaVoce(m[1].trim()), quantita: Number(m[2].replace(",", ".")), unita: m[3].toLowerCase() }];
+
+    // "150g albumi" (quantità prima del nome)
+    m = testo.match(/^(\d+(?:[.,]\d+)?)\s*(g|kg|ml|l)\s+(.+)$/i);
+    if (m) return [{ nome: capitalizzaVoce(m[3].trim()), quantita: Number(m[1].replace(",", ".")), unita: m[2].toLowerCase() }];
+
+    return [{ nome: capitalizzaVoce(testo), quantita: null, unita: null }];
+  }
+
+  function capitalizzaVoce(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  function estraiVociDaPasto(testoPasto) {
+    return dividiRispettandoParentesi(testoPasto).flatMap(estraiVociSegmento);
+  }
+
+  /** Aggrega gli ingredienti di tutti i pasti dei 7 giorni di una settimana, sommando le quantità con la stessa unità. */
+  function aggregaIngredientiSettimana(giorni) {
+    const mappa = new Map();
+    giorni.forEach((g) => {
+      MEAL_KEYS.forEach((k) => {
+        estraiVociDaPasto(g[k] || "").forEach((v) => {
+          const chiave = v.nome.toLowerCase() + "|" + (v.unita || "");
+          if (!mappa.has(chiave)) {
+            mappa.set(chiave, { nome: v.nome, quantita: v.quantita, unita: v.unita, occorrenze: 1 });
+          } else {
+            const voce = mappa.get(chiave);
+            voce.occorrenze += 1;
+            if (v.quantita != null && voce.quantita != null) voce.quantita += v.quantita;
+            else if (v.quantita != null) voce.quantita = v.quantita;
+          }
+        });
+      });
+    });
+    return Array.from(mappa.values()).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
+  }
+
+  function chiaveSpunteSpesa(settimana) { return "pnut:spesa-spuntate:" + settimana; }
+  function chiaveExtraSpesa(settimana) { return "pnut:spesa-extra:" + settimana; }
+
+  function renderSpesa() {
+    if (!PIANO_ATTIVO) {
+      root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
+      return;
+    }
+    const oggi = new Date();
+    const { settimana: settimanaCorrente } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG);
+    const settimanaMostrata = spesaSettimanaSelezionata || settimanaCorrente;
+    const giorni = PIANO_ATTIVO.settimane[settimanaMostrata];
+
+    if (!giorni) {
+      root.innerHTML = `<div class="empty">La settimana ${settimanaMostrata} non è presente nel piano caricato.</div>`;
+      return;
+    }
+
+    const opzioniSettimana = [1, 2, 3, 4, 5]
+      .filter((n) => Array.isArray(PIANO_ATTIVO.settimane[n]))
+      .map((n) => `<option value="${n}" ${n === settimanaMostrata ? "selected" : ""}>Settimana ${n}${n === settimanaCorrente ? " (attuale)" : ""}</option>`)
+      .join("");
+
+    const voci = aggregaIngredientiSettimana(giorni);
+    const spuntate = JSON.parse(localStorage.getItem(chiaveSpunteSpesa(settimanaMostrata)) || "[]");
+    const extra = JSON.parse(localStorage.getItem(chiaveExtraSpesa(settimanaMostrata)) || "[]");
+    const spuntateSet = new Set(spuntate);
+
+    function rigaHTML(testo, chiaveSpunta, extra) {
+      const isSpuntata = spuntateSet.has(chiaveSpunta);
+      return `
+        <li class="spesa-riga ${isSpuntata ? "is-spuntata" : ""}">
+          <label>
+            <input type="checkbox" data-spunta="${escapeHTML(chiaveSpunta)}" ${isSpuntata ? "checked" : ""}>
+            <span>${escapeHTML(testo)}</span>
+          </label>
+          ${extra ? `<button type="button" class="spesa-rimuovi" data-rimuovi-extra="${escapeHTML(chiaveSpunta)}" aria-label="Rimuovi">✕</button>` : ""}
+        </li>
+      `;
+    }
+
+    root.innerHTML = `
+      <section class="hero" style="border-bottom:none; margin-bottom:8px; padding-bottom:6px;">
+        <div class="hero__eyebrow"><span class="dot"></span> Lista della spesa</div>
+        <div class="hero__meta" style="margin-top:10px;">
+          <select id="sel-settimana-spesa" aria-label="Settimana">${opzioniSettimana}</select>
+        </div>
+      </section>
+      <p class="hint" style="margin:0 0 14px;">Generata automaticamente dai pasti della settimana — il testo libero dei menu non sempre si presta a un'estrazione perfetta, controllala prima di uscire a fare la spesa.</p>
+
+      <ul class="spesa-lista" id="spesa-lista">
+        ${voci.map((v) => {
+          const testo = v.quantita != null ? `${v.nome} — ${arrotondaQuantita(v.quantita)}${v.unita}` : `${v.nome}${v.occorrenze > 1 ? " ×" + v.occorrenze : ""}`;
+          return rigaHTML(testo, "auto:" + v.nome.toLowerCase() + "|" + (v.unita || ""), false);
+        }).join("")}
+        ${extra.map((testo) => rigaHTML(testo, "extra:" + testo.toLowerCase(), true)).join("")}
+      </ul>
+
+      <div class="import-actions" style="margin-top:16px;">
+        <div class="editor-campo" style="flex-direction:row; gap:8px; align-items:stretch;">
+          <input type="text" id="input-spesa-extra" placeholder="Aggiungi un articolo…" style="flex:1;">
+          <button type="button" class="btn" id="btn-aggiungi-spesa" style="width:auto; padding:0 16px;">Aggiungi</button>
+        </div>
+        <button type="button" class="btn btn--ghost" id="btn-copia-spesa">Copia lista negli appunti</button>
+      </div>
+    `;
+
+    document.getElementById("sel-settimana-spesa").addEventListener("change", (e) => {
+      const v = Number(e.target.value);
+      spesaSettimanaSelezionata = v === settimanaCorrente ? null : v;
+      renderSpesa();
+    });
+
+    root.querySelectorAll("[data-spunta]").forEach((chk) => {
+      chk.addEventListener("change", () => {
+        const chiave = chk.dataset.spunta;
+        const stato = new Set(JSON.parse(localStorage.getItem(chiaveSpunteSpesa(settimanaMostrata)) || "[]"));
+        if (chk.checked) stato.add(chiave); else stato.delete(chiave);
+        localStorage.setItem(chiaveSpunteSpesa(settimanaMostrata), JSON.stringify(Array.from(stato)));
+        chk.closest(".spesa-riga").classList.toggle("is-spuntata", chk.checked);
+      });
+    });
+
+    root.querySelectorAll("[data-rimuovi-extra]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const testoDaRimuovere = btn.dataset.rimuoviExtra.slice("extra:".length);
+        const listaExtra = JSON.parse(localStorage.getItem(chiaveExtraSpesa(settimanaMostrata)) || "[]");
+        const nuovaLista = listaExtra.filter((t) => t.toLowerCase() !== testoDaRimuovere);
+        localStorage.setItem(chiaveExtraSpesa(settimanaMostrata), JSON.stringify(nuovaLista));
+        renderSpesa();
+      });
+    });
+
+    document.getElementById("btn-aggiungi-spesa").addEventListener("click", () => {
+      const input = document.getElementById("input-spesa-extra");
+      const testo = input.value.trim();
+      if (!testo) return;
+      const listaExtra = JSON.parse(localStorage.getItem(chiaveExtraSpesa(settimanaMostrata)) || "[]");
+      listaExtra.push(testo);
+      localStorage.setItem(chiaveExtraSpesa(settimanaMostrata), JSON.stringify(listaExtra));
+      renderSpesa();
+    });
+    document.getElementById("input-spesa-extra").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); document.getElementById("btn-aggiungi-spesa").click(); }
+    });
+
+    document.getElementById("btn-copia-spesa").addEventListener("click", async () => {
+      const righe = voci.map((v) => v.quantita != null ? `- ${v.nome} — ${arrotondaQuantita(v.quantita)}${v.unita}` : `- ${v.nome}${v.occorrenze > 1 ? " ×" + v.occorrenze : ""}`)
+        .concat(extra.map((t) => `- ${t}`));
+      const testoCompleto = `Lista della spesa — Settimana ${settimanaMostrata}\n\n` + righe.join("\n");
+      try {
+        await navigator.clipboard.writeText(testoCompleto);
+        mostraToast("Lista copiata negli appunti");
+      } catch (e) {
+        mostraToast("Impossibile copiare automaticamente su questo browser");
+      }
+    });
+  }
+
+  function arrotondaQuantita(n) {
+    return Number.isInteger(n) ? n : Math.round(n * 10) / 10;
   }
 
   // ---------------------------------------------------------------------
@@ -844,6 +1099,13 @@
         <button type="button" class="btn" id="btn-salva-norme" style="margin-top:10px;">Salva regole</button>
       </section>
 
+      <section class="settings-section">
+        <h2>Sostituzioni pasto</h2>
+        <p class="hint">Gruppi di alimenti che consideri equivalenti (per calorie, macronutrienti e tipologia) — decisione clinica tua, l'app non la genera da sola. Un gruppo per riga, così: <code class="inline">Nome gruppo: opzione 1, opzione 2, opzione 3</code>. Quando il testo di un pasto del paziente contiene il nome di un'opzione, compare un pulsante "Sostituisci" con le altre opzioni dello stesso gruppo.</p>
+        <textarea id="editor-sostituzioni" rows="6" style="width:100%; box-sizing:border-box; font-family:var(--font-body); font-size:14.5px; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius-s); padding:10px 12px; resize:vertical;" placeholder="Fonti proteiche magre: Pollo 150g, Tacchino 150g, Merluzzo 200g, Albume 200g">${(piano.sostituzioni || []).map((g) => escapeHTML(g.nome + ": " + g.opzioni.join(", "))).join("\n")}</textarea>
+        <button type="button" class="btn" id="btn-salva-sostituzioni" style="margin-top:10px;">Salva sostituzioni</button>
+      </section>
+
       ${renderEditorPastoHTML(piano, EDITOR_PROF.settSel, EDITOR_PROF.giornoSel, disponibili)}
 
       <section class="settings-section">
@@ -860,6 +1122,7 @@
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-salva-dati-paziente").addEventListener("click", salvaDatiPazienteProfessionista);
     document.getElementById("btn-salva-norme").addEventListener("click", salvaNormeGeneraliProfessionista);
+    document.getElementById("btn-salva-sostituzioni").addEventListener("click", salvaSostituzioniProfessionista);
     collegaEditorPastoProfessionista();
     document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));
     document.getElementById("input-importa-piano-prof").addEventListener("change", onFileImportPianoProf);
@@ -986,6 +1249,50 @@
     } finally {
       btn.disabled = false;
       btn.textContent = "Salva regole";
+    }
+  }
+
+  /** Interpreta "Nome gruppo: opzione1, opzione2" per riga e salva la tabella sostituzioni. */
+  async function salvaSostituzioniProfessionista() {
+    const piano = PIANO_ATTIVO_PROF;
+    const testo = document.getElementById("editor-sostituzioni").value;
+    const righe = testo.split("\n").map((r) => r.trim()).filter((r) => r.length > 0);
+
+    const gruppiConErrori = [];
+    const sostituzioni = righe.map((riga) => {
+      const idx = riga.indexOf(":");
+      if (idx === -1) { gruppiConErrori.push(riga); return null; }
+      const nome = riga.slice(0, idx).trim();
+      const opzioni = riga.slice(idx + 1).split(",").map((o) => o.trim()).filter(Boolean);
+      if (!nome || opzioni.length < 2) { gruppiConErrori.push(riga); return null; }
+      return { nome, opzioni };
+    }).filter(Boolean);
+
+    if (gruppiConErrori.length) {
+      mostraToast("Non salvato — riga non valida (serve \"Nome: opzione1, opzione2\", almeno 2 opzioni): " + gruppiConErrori[0], 5000);
+      return;
+    }
+
+    const pianoModificato = JSON.parse(JSON.stringify(piano));
+    pianoModificato.sostituzioni = sostituzioni;
+
+    const risultato = validaPiano(pianoModificato);
+    if (!risultato.ok) {
+      mostraToast("Non salvato — " + risultato.errori[0], 4200);
+      return;
+    }
+
+    const btn = document.getElementById("btn-salva-sostituzioni");
+    btn.disabled = true;
+    btn.textContent = "Salvataggio…";
+    try {
+      await window.cloud.salvaPiano(piano.id, risultato.piano);
+      mostraToast("Sostituzioni salvate e sincronizzate col paziente");
+    } catch (e) {
+      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salva sostituzioni";
     }
   }
 
@@ -1209,10 +1516,25 @@
       },
       orariDefault: Object.assign({}, PIANO_TEMPLATE.orariDefault, orariDefaultIn),
       normeGenerali: Array.isArray(input.normeGenerali) ? input.normeGenerali.filter((n) => typeof n === "string" && n.trim()) : [],
+      sostituzioni: normalizzaSostituzioni(input.sostituzioni),
       settimane: settimaneValide,
     };
 
     return { ok: true, piano };
+  }
+
+  /** Normalizza la tabella delle sostituzioni pasto: array di {nome, opzioni:[...]}, scartando gruppi senza nome o con meno di 2 opzioni. */
+  function normalizzaSostituzioni(input) {
+    if (!Array.isArray(input)) return [];
+    return input
+      .map((g) => {
+        if (!g || typeof g !== "object") return null;
+        const nome = typeof g.nome === "string" ? g.nome.trim() : "";
+        const opzioni = Array.isArray(g.opzioni) ? g.opzioni.filter((o) => typeof o === "string" && o.trim()).map((o) => o.trim()) : [];
+        if (!nome || opzioni.length < 2) return null;
+        return { nome, opzioni };
+      })
+      .filter(Boolean);
   }
 
   // ---------------------------------------------------------------------
