@@ -1,3 +1,4 @@
+
 /**
  * firebase-config.js
  *
@@ -14,10 +15,18 @@
  * accesso ma non riuscirà a effettuare il login: è il comportamento atteso.
  */
 window.FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDOKZuOxYlEIPPfqOIQ6rkz9jzFI8vsu2I",
-  authDomain: "piano-nutrizionale---app.firebaseapp.com",
-  projectId: "piano-nutrizionale---app",
-  storageBucket: "piano-nutrizionale---app.firebasestorage.app",
-  messagingSenderId: "797276922843",
-  appId: "1:797276922843:web:29d4022af94e1c897dbdfe",
+  apiKey: "INSERISCI_API_KEY",
+  authDomain: "INSERISCI_PROGETTO.firebaseapp.com",
+  projectId: "INSERISCI_PROGETTO",
+  storageBucket: "INSERISCI_PROGETTO.appspot.com",
+  messagingSenderId: "INSERISCI_SENDER_ID",
+  appId: "INSERISCI_APP_ID",
 };
+
+/**
+ * Chiave VAPID per le notifiche push (Firebase Cloud Messaging).
+ * La trovi in: Firebase Console → icona ingranaggio → "Impostazioni progetto"
+ * → scheda "Cloud Messaging" → sezione "Configurazione web push" →
+ * "Genera coppia di chiavi" (se non esiste già una). Richiede il piano Blaze.
+ */
+window.FIREBASE_VAPID_KEY = "INSERISCI_VAPID_KEY";
