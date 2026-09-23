@@ -885,9 +885,15 @@
     return "Disattivati";
   }
 
+  /**
+   * Il menu a tendina usa valori in italiano ("chiaro"/"scuro"), ma il CSS
+   * (per convenzione più comune) controlla l'attributo in inglese
+   * (data-theme="light"/"dark") — questa mappa li fa incontrare.
+   */
   function applyTema(v) {
-    if (v === "sistema") document.documentElement.removeAttribute("data-theme");
-    else document.documentElement.setAttribute("data-theme", v);
+    const mappa = { chiaro: "light", scuro: "dark" };
+    if (v === "sistema" || !mappa[v]) document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", mappa[v]);
   }
 
   // ---------------------------------------------------------------------
