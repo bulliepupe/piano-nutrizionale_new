@@ -14,7 +14,7 @@
  * questi valori vanno incollati anche qui (non sono comunque segreti).
  */
 
-const CACHE_VERSION = "v14";
+const CACHE_VERSION = "v15";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -88,12 +88,12 @@ try {
 
   // Stessi valori di js/firebase-config.js — vedi nota in cima al file.
   firebase.initializeApp({
-    apiKey: "AIzaSyDOKZuOxYlEIPPfqOIQ6rkz9jzFI8vsu2I",
-  authDomain: "piano-nutrizionale---app.firebaseapp.com",
-  projectId: "piano-nutrizionale---app",
-  storageBucket: "piano-nutrizionale---app.firebasestorage.app",
-  messagingSenderId: "797276922843",
-  appId: "1:797276922843:web:29d4022af94e1c897dbdfe",
+    apiKey: "INSERISCI_API_KEY",
+    authDomain: "INSERISCI_PROGETTO.firebaseapp.com",
+    projectId: "INSERISCI_PROGETTO",
+    storageBucket: "INSERISCI_PROGETTO.appspot.com",
+    messagingSenderId: "INSERISCI_SENDER_ID",
+    appId: "INSERISCI_APP_ID",
   });
 
   const messaging = firebase.messaging();
