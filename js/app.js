@@ -1365,7 +1365,9 @@
     const scaduta = scad && scad.getTime() < Date.now();
     const attiva = l.stato === "attiva" && !scaduta;
     const max = Number(l.maxPazienti) || 0;
+    const fine = l.fineAbbonamento && typeof l.fineAbbonamento.toDate === "function" ? l.fineAbbonamento.toDate() : null;
     return {
+      disdetto: !!l.disdetto, fine,
       attiva, nome: NOMI_PIANO[l.piano] || l.piano || "—", piano: l.piano,
       usati, max, scadenza: scad, pieno: usati >= max,
       motivo: attiva ? (usati >= max ? "pieno" : "ok") : "scaduta",
@@ -1400,6 +1402,7 @@
     if (st.motivo === "assente") testo = "Il tuo account non ha una licenza attiva: puoi consultare i piani ma non crearne o modificarli.";
     else if (!st.attiva) testo = `La tua licenza ${st.nome} è scaduta${st.scadenza ? " il " + st.scadenza.toLocaleDateString("it-IT") : ""}. I tuoi pazienti continuano a vedere il loro piano, ma per modificarlo o aggiungere pazienti serve un abbonamento attivo.`;
     else if (st.pieno) testo = `Hai raggiunto il limite del piano ${st.nome} (${st.max} pazienti). Per aggiungerne altri passa a un piano superiore o elimina un paziente che non segui più.`;
+    else if (st.disdetto) testo = `${st.usati} di ${st.max} pazienti · abbonamento disdetto: attivo fino al ${(st.fine || st.scadenza).toLocaleDateString("it-IT")}. Puoi riattivarlo da "Gestisci abbonamento e fatture".`;
     else testo = `${st.usati} di ${st.max} pazienti${st.scadenza ? " · " + (st.piano === "prova" ? "prova valida fino al " : "rinnovo il ") + st.scadenza.toLocaleDateString("it-IT") : ""}`;
     const classe = (!st.attiva || st.pieno) ? "licenza licenza--avviso" : "licenza";
     return `<section class="${classe}">

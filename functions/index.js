@@ -321,6 +321,11 @@ function licenzaDaAbbonamento(sub) {
     scadenza: fine
       ? admin.firestore.Timestamp.fromMillis((fine + GIORNI_TOLLERANZA * 86400) * 1000)
       : null,
+    // Disdetta programmata: l'abbonamento resta attivo fino a questa data, poi non si rinnova.
+    disdetto: !!(sub.cancel_at || sub.cancel_at_period_end),
+    fineAbbonamento: sub.cancel_at
+      ? admin.firestore.Timestamp.fromMillis(sub.cancel_at * 1000)
+      : (sub.cancel_at_period_end && fine ? admin.firestore.Timestamp.fromMillis(fine * 1000) : null),
     stripeCustomerId: typeof sub.customer === "string" ? sub.customer : sub.customer.id,
     stripeSubscriptionId: sub.id,
     statoStripe: sub.status,
