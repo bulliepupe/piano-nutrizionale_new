@@ -1,3 +1,4 @@
+
 {
   "_leggimi": "Questo file è l'unica fonte di verità usata sia dall'app sia dalle notifiche automatiche di GitHub Actions. Modificalo e fai commit/push per applicare i cambiamenti (vedi README, sezione 'Configurare il piano').",
 
@@ -9,6 +10,13 @@
 
   "overrideWeek": null,
   "_overrideWeek_spiegazione": "Se vuoi forzare manualmente una settimana specifica (1-5) per tutti i giorni, indipendentemente dalla data, scrivi il numero qui (es. 3). Altrimenti lascia null.",
+
+  "linkAcquisto": "https://ilmiopiano.it/#prezzi",
+  "linkPortaleClienti": "",
+  "linkPrivacy": "https://ilmiopiano.it/privacy.html",
+  "linkTermini": "https://ilmiopiano.it/termini.html",
+  "linkAccordoDati": "https://ilmiopiano.it/accordo-trattamento-dati.html",
+  "_link_spiegazione": "Indirizzi del sito commerciale. linkPortaleClienti è il link del Customer Portal di Stripe (Impostazioni → Portale clienti → link di accesso): permette al professionista di disdire, cambiare piano e scaricare le fatture.",
 
   "orari": {
     "colazione": "08:00",
