@@ -11,10 +11,16 @@
  * Firestore (file firestore.rules) e nell'autenticazione. È normale e sicuro
  * che compaiano nel codice pubblico dell'app, anche su un repository GitHub.
  *
+ * NOTA: si scrive "self." invece di "window." perché questo stesso file
+ * viene letto anche dal service worker (service-worker.js), dove "window"
+ * non esiste. Nella pagina "self" e "window" sono la stessa cosa. Così la
+ * configurazione Firebase va scritta UNA SOLA VOLTA, qui, e non più anche
+ * nel service worker.
+ *
  * Finché non li sostituisci con quelli reali, l'app mostra la schermata di
  * accesso ma non riuscirà a effettuare il login: è il comportamento atteso.
  */
-window.FIREBASE_CONFIG = {
+self.FIREBASE_CONFIG = {
   apiKey: "AIzaSyDOKZuOxYlEIPPfqOIQ6rkz9jzFI8vsu2I",
   authDomain: "piano-nutrizionale---app.firebaseapp.com",
   projectId: "piano-nutrizionale---app",
@@ -29,4 +35,4 @@ window.FIREBASE_CONFIG = {
  * → scheda "Cloud Messaging" → sezione "Configurazione web push" →
  * "Genera coppia di chiavi" (se non esiste già una). Richiede il piano Blaze.
  */
-window.FIREBASE_VAPID_KEY = "BGGiV2Vo6eDfeHzAylbMgodNeIly822CctM9QjPylsiD_yPytfxLWg1-ifz-D1BETiINk1O4Oxd73iyG2MLYbzI";
+self.FIREBASE_VAPID_KEY = "BGGiV2Vo6eDfeHzAylbMgodNeIly822CctM9QjPylsiD_yPytfxLWg1-ifz-D1BETiINk1O4Oxd73iyG2MLYbzI";
