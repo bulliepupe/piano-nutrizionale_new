@@ -41,15 +41,46 @@ function ordinaleLunediNelMese(lunedi) {
  *  - altrimenti il piano ruota ciclicamente 1→2→3→4 a partire da config.startDate
  *    (il lunedì della "Settimana 1" di riferimento).
  */
-function calcolaSettimanaGiorno(date, config) {
+/**
+ * Settimane effettivamente presenti nel piano (1-5), in ordine.
+ */
+function settimaneDisponibili(piano) {
+  const s = (piano && piano.settimane) || {};
+  return [1, 2, 3, 4, 5].filter((n) => Array.isArray(s[n]) || Array.isArray(s[String(n)]));
+}
+
+/**
+ * Data di inizio del piano del SINGOLO paziente (campo piano.dataInizio,
+ * formato "YYYY-MM-DD", impostato dal professionista). Se presente, il ciclo
+ * parte da lì: la settimana di quella data è la "Settimana 1" e poi si ruota
+ * su tutte le settimane compilate nel piano (1→2→…→N→1). Se manca (piani
+ * creati prima di questa versione) si usa la regola generale di config.json.
+ */
+function settimanaDaDataInizio(lunedi, piano) {
+  const disp = settimaneDisponibili(piano);
+  if (!disp.length) return { settimana: 1, pianoIniziato: true };
+  const [a, m, g] = String(piano.dataInizio).split("-").map(Number);
+  const lunediStart = lunediDellaSettimana(new Date(a, m - 1, g));
+  const msPerSettimana = 7 * 24 * 60 * 60 * 1000;
+  const trascorse = Math.round((lunedi.getTime() - lunediStart.getTime()) / msPerSettimana);
+  if (trascorse < 0) return { settimana: disp[0], pianoIniziato: false };
+  return { settimana: disp[trascorse % disp.length], pianoIniziato: true };
+}
+
+function calcolaSettimanaGiorno(date, config, piano) {
   const d = new Date(date);
   const giornoIndex = (d.getDay() + 6) % 7;
   const giornoNome = GIORNI[giornoIndex];
   const lunedi = lunediDellaSettimana(d);
 
   let settimana;
+  let pianoIniziato = true;
 
-  if (config.overrideWeek) {
+  if (piano && typeof piano.dataInizio === "string" && /^\d{4}-\d{2}-\d{2}$/.test(piano.dataInizio)) {
+    const r = settimanaDaDataInizio(lunedi, piano);
+    settimana = r.settimana;
+    pianoIniziato = r.pianoIniziato;
+  } else if (config.overrideWeek) {
     settimana = config.overrideWeek;
   } else {
     const meseChiave = `${lunedi.getFullYear()}-${String(lunedi.getMonth() + 1).padStart(2, "0")}`;
@@ -66,7 +97,7 @@ function calcolaSettimanaGiorno(date, config) {
     }
   }
 
-  return { settimana, giornoIndex, giornoNome };
+  return { settimana, giornoIndex, giornoNome, pianoIniziato };
 }
 
 /**
@@ -78,7 +109,7 @@ function calcolaSettimanaGiorno(date, config) {
  * un messaggio invece di rompersi.
  */
 function menuDelGiorno(date, config, piano) {
-  const { settimana, giornoIndex, giornoNome } = calcolaSettimanaGiorno(date, config);
+  const { settimana, giornoIndex, giornoNome, pianoIniziato } = calcolaSettimanaGiorno(date, config, piano);
   const settimane = (piano && piano.settimane) || {};
   let settimanaDati = settimane[settimana] || settimane[((settimana - 1) % 4) + 1];
   if (!settimanaDati) {
@@ -86,9 +117,9 @@ function menuDelGiorno(date, config, piano) {
     if (chiaviDisponibili.length) settimanaDati = settimane[chiaviDisponibili[0]];
   }
   const giorno = (settimanaDati && settimanaDati[giornoIndex]) || null;
-  return { settimana, giornoNome, giorno };
+  return { settimana, giornoNome, giorno, pianoIniziato };
 }
 
-const api = { GIORNI, calcolaSettimanaGiorno, menuDelGiorno, lunediDellaSettimana };
+const api = { GIORNI, calcolaSettimanaGiorno, menuDelGiorno, lunediDellaSettimana, settimaneDisponibili };
 if (typeof window !== "undefined") window.weekLogic = api;
 if (typeof module !== "undefined") module.exports = api;
