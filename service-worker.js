@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v16";
+const CACHE_VERSION = "v17";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -34,7 +34,12 @@ const APP_SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    // File salvati uno per uno: se ne manca uno (es. caricato con il nome
+    // sbagliato), l'aggiornamento dell'app va avanti lo stesso invece di
+    // bloccarsi del tutto come succede con cache.addAll.
+    caches.open(CACHE_NAME)
+      .then((cache) => Promise.all(APP_SHELL.map((url) => cache.add(url).catch(() => {}))))
+      .then(() => self.skipWaiting())
   );
 });
 
