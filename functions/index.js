@@ -1,4 +1,5 @@
 
+
 /**
  * functions/index.js
  * Cloud Function programmata: ogni 5 minuti controlla tutti i piani attivi
@@ -17,6 +18,7 @@
  */
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const weekLogic = require("./week-logic.js");
@@ -183,6 +185,79 @@ exports.controllaPromemoria = onSchedule(
     }
   }
 );
+
+/**
+ * Eliminazione definitiva di un paziente, chiamata dal pannello professionista.
+ *
+ * Serve una funzione "server" perché dall'app non si può cancellare l'account
+ * di accesso di un'altra persona, né i suoi dati privati (spunte dei pasti,
+ * dispositivi registrati): solo il server, con i permessi di amministratore,
+ * può farlo. Prima di cancellare qualunque cosa verifica che:
+ *  - chi chiama sia un professionista autenticato;
+ *  - il piano indicato appartenga proprio a quel professionista;
+ *  - l'account da cancellare sia davvero un paziente (mai un professionista).
+ *
+ * Cancella: account di accesso, documento utente con tutte le spunte dei
+ * pasti, registro delle notifiche inviate e infine il piano. L'ordine è
+ * voluto: il piano va via per ultimo, così se qualcosa si interrompe a metà
+ * basta ripetere l'eliminazione dall'app e il lavoro viene completato.
+ */
+exports.eliminaPaziente = onCall(async (request) => {
+  const uidChiamante = request.auth && request.auth.uid;
+  if (!uidChiamante) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+
+  const pianoId = request.data && request.data.pianoId;
+  if (typeof pianoId !== "string" || !pianoId || pianoId.includes("/")) {
+    throw new HttpsError("invalid-argument", "Paziente non indicato correttamente.");
+  }
+
+  const chiamante = await db.collection("users").doc(uidChiamante).get();
+  if (!chiamante.exists || chiamante.data().ruolo !== "professionista") {
+    throw new HttpsError("permission-denied", "Solo un professionista può eliminare un paziente.");
+  }
+
+  const pianoRef = db.collection("piani").doc(pianoId);
+  const piano = await pianoRef.get();
+  if (!piano.exists) throw new HttpsError("not-found", "Paziente già eliminato o inesistente.");
+  const { professionistaUid, pazienteUid } = piano.data();
+  if (professionistaUid !== uidChiamante) {
+    throw new HttpsError("permission-denied", "Questo paziente non è tra i tuoi.");
+  }
+
+  if (pazienteUid) {
+    const utenteRef = db.collection("users").doc(pazienteUid);
+    const utente = await utenteRef.get();
+    if (utente.exists && utente.data().ruolo !== "paziente") {
+      throw new HttpsError("permission-denied", "L'account collegato non è un paziente: eliminazione bloccata.");
+    }
+
+    // 1) Account di accesso (se era già stato cancellato, si prosegue).
+    try {
+      await admin.auth().deleteUser(pazienteUid);
+    } catch (e) {
+      if (e.code !== "auth/user-not-found") throw new HttpsError("internal", "Impossibile eliminare l'account di accesso.");
+    }
+
+    // 2) Documento utente + sottoraccolte (spunte "pasto fatto").
+    if (utente.exists) await db.recursiveDelete(utenteRef);
+
+    // 3) Registro dei promemoria inviati (documenti "<uid>_<data>").
+    const registro = await db.collection("notificheInviate")
+      .orderBy(admin.firestore.FieldPath.documentId())
+      .startAt(pazienteUid + "_")
+      .endAt(pazienteUid + "_\uf8ff")
+      .get();
+    for (let i = 0; i < registro.docs.length; i += 400) {
+      const batch = db.batch();
+      registro.docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+  }
+
+  // 4) Il piano, per ultimo.
+  await pianoRef.delete();
+  return { ok: true };
+});
 
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.
 if (typeof module !== "undefined") {
