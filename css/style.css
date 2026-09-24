@@ -1,5 +1,6 @@
 
 
+
 /* =========================================================================
    Il mio Piano — identità visiva
    Un "quaderno da cucina" digitale: carta chiara, verde salvia, accenti di
@@ -954,3 +955,9 @@ code.inline {
 @supports (-webkit-touch-callout: none) {
   input, select, textarea { font-size: 16px !important; }
 }
+
+/* ---------- Eliminazione paziente ---------- */
+.zona-elimina { border-top: 1px solid var(--border-soft); padding-top: 18px; }
+.btn.btn--pericolo { background: #B3432F; color: #FFFFFF; }
+.btn.btn--pericolo:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled { cursor: not-allowed; }
