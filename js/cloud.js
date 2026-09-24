@@ -1,6 +1,7 @@
 
 
 
+
 /**
  * cloud.js
  * Livello di accesso a Firebase (Auth + Firestore). Nessun altro file
@@ -93,13 +94,31 @@
     /** Registrazione self-service per il professionista (dietista/nutrizionista). */
     async registraProfessionista(email, password, nome) {
       const cred = await auth.createUserWithEmailAndPassword(email.trim(), password);
+      // Prova gratuita: 30 giorni, fino a 3 pazienti. È l'unica licenza che
+      // l'app può scrivere da sola (lo impongono le regole Firestore); gli
+      // abbonamenti pagati li scrive il server quando Stripe conferma il pagamento.
+      const scadenzaProva = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       await db.collection("users").doc(cred.user.uid).set({
         ruolo: "professionista",
         nome: (nome || "").trim(),
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         creato: FieldValue.serverTimestamp(),
+        licenza: {
+          piano: "prova",
+          maxPazienti: 3,
+          stato: "attiva",
+          scadenza: firebase.firestore.Timestamp.fromDate(scadenzaProva),
+        },
       });
       return cred.user;
+    },
+
+    /** Ascolta in tempo reale il documento utente (per vedere subito una licenza appena pagata). */
+    ascoltaUtente(uid, cb) {
+      return db.collection("users").doc(uid).onSnapshot(
+        (doc) => cb(doc.exists ? doc.data() : null),
+        (err) => { console.error("Errore ascolto utente:", err); }
+      );
     },
 
     /** Legge il record utente (ruolo, nome, ecc.) dato l'uid. */
