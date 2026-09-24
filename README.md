@@ -1,8 +1,4 @@
-[README (5).md](https://github.com/user-attachments/files/32606579/README.5.md)
-
-[README (4).md](https://github.com/user-attachments/files/32561121/README.4.md)
-
-[README.md](https://github.com/user-attachments/files/32471357/README.md)
+[README (6).md](https://github.com/user-attachments/files/32608008/README.6.md)
 # Il mio Piano — app del piano nutrizionale
 
 App per telefono (installabile come una vera app, senza passare dagli store)
@@ -213,6 +209,12 @@ Da **"I tuoi pazienti"**, tocca il paziente: si apre l'editor.
   delle settimane in cui incollarla (anche la 5, se non esiste ancora). Se
   una settimana di destinazione ha già dei pasti, l'app chiede conferma
   prima di sostituirli.
+- **Elimina paziente** (in fondo all'editor) — cancella per sempre account di
+  accesso, piano, spunte dei pasti e promemoria del paziente. Per sicurezza
+  chiede di scrivere "elimina". L'operazione passa dalla Cloud Function
+  `eliminaPaziente` (vedi punto 12), che controlla che il paziente sia davvero
+  tuo prima di cancellare qualunque cosa. Dopo l'eliminazione la stessa email
+  può essere riusata per un nuovo paziente.
 - **Importa / sostituisci l'intero piano** — per un cambio grosso (piano
   completamente nuovo) puoi scaricare il piano attuale come modello `.json`,
   modificarlo con un editor di testo mantenendo la struttura dei campi, e
