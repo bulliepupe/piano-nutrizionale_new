@@ -38,8 +38,11 @@ const MEAL_LABELS = {
 };
 
 // Stessi valori di config.json (vedi nota in cima al file).
+// ATTENZIONE: prima c'era "2026-09-14" mentre config.json dice "2026-08-31":
+// due settimane di differenza, quindi i promemoria push potevano mostrare il
+// menu di un'altra settimana rispetto a quello visto nell'app. Ora allineati.
 const CONFIG_BASE = {
-  startDate: "2026-09-14",
+  startDate: "2026-08-31",
   week5Months: [],
   overrideWeek: null,
 };
@@ -135,11 +138,24 @@ exports.controllaPromemoria = onSchedule(
         if (!testo) continue;
 
         try {
+          const titolo = `${MEAL_LABELS[key]} tra ${anticipo} minuti`;
           const risultato = await messaging.sendEachForMulticast({
             tokens,
-            notification: {
-              title: `${MEAL_LABELS[key]} tra ${anticipo} minuti`,
-              body: testo,
+            notification: { title: titolo, body: testo },
+            // Opzioni specifiche per le notifiche web (Android e iPhone):
+            //  - Urgency "high": iOS e Android la consegnano subito anche col
+            //    telefono in risparmio energetico, invece di rimandarla;
+            //  - TTL: se il telefono è spento/offline, dopo 30 minuti il
+            //    promemoria non ha più senso e viene scartato;
+            //  - tag: lo stesso usato dai promemoria locali dell'app, così
+            //    eventuali doppioni si sostituiscono invece di sommarsi.
+            webpush: {
+              headers: { Urgency: "high", TTL: "1800" },
+              notification: {
+                icon: "icons/icon-192.png",
+                badge: "icons/icon-192.png",
+                tag: "pasto-" + titolo,
+              },
             },
           });
 
