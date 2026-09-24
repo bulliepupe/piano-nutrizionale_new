@@ -1,4 +1,5 @@
 
+
 /**
  * cloud.js
  * Livello di accesso a Firebase (Auth + Firestore). Nessun altro file
@@ -46,9 +47,13 @@
   // (es. Safari su iOS prima della 16.4) — se l'inizializzazione fallisce,
   // le notifiche push restano semplicemente non disponibili su quel
   // dispositivo, senza bloccare il resto dell'app.
+  // Su iPhone il push esiste solo con iOS 16.4+ e SOLO quando l'app è aperta
+  // dall'icona sulla schermata Home (non da una scheda di Safari): in tutti
+  // gli altri casi isSupported() risponde false e il push resta spento.
   let messaging = null;
   try {
-    messaging = app.messaging();
+    const supportato = typeof firebase.messaging.isSupported === "function" ? firebase.messaging.isSupported() : true;
+    if (supportato) messaging = app.messaging();
   } catch (e) {
     console.warn("Firebase Messaging non disponibile su questo browser:", e);
   }
@@ -122,6 +127,25 @@
 
       await secondaryAuth.signOut();
       return nuovoUid;
+    },
+
+    /**
+     * Salva i dati di contatto del professionista sul suo profilo e li copia
+     * su tutti i piani dei suoi pazienti (campo contattiNutrizionista): il
+     * paziente non può leggere il profilo del professionista (regole di
+     * sicurezza), ma può leggere il proprio piano — così vede sempre i
+     * contatti aggiornati senza toccare le regole Firestore.
+     */
+    async salvaProfiloProfessionista(uid, contatti) {
+      await db.collection("users").doc(uid).update({ contatti, nome: contatti.nome || "" });
+      const snap = await db.collection("piani").where("professionistaUid", "==", uid).get();
+      // Scritture a blocchi (limite Firestore: 500 operazioni per batch).
+      for (let i = 0; i < snap.docs.length; i += 400) {
+        const batch = db.batch();
+        snap.docs.slice(i, i + 400).forEach((d) => batch.update(d.ref, { contattiNutrizionista: contatti }));
+        await batch.commit();
+      }
+      return snap.docs.length;
     },
 
     // ---------------------------------------------------------------
