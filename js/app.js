@@ -1,5 +1,6 @@
 
 
+
 /**
  * app.js — logica dell'interfaccia.
  * Nessuna dipendenza di build: apre index.html via HTTPS/GitHub Pages e funziona.
@@ -33,6 +34,8 @@
     tema: "pnut:tema",
     ultimoCheck: "pnut:ultimo-check",
     anticipo: "pnut:anticipo-promemoria",
+    pushOk: "pnut:push-ok",               // "1" se questo dispositivo è registrato per il push dal server
+    bannerIosChiuso: "pnut:banner-ios-chiuso",
   };
   const ANTICIPI_VALIDI = [10, 15, 20, 30];
   const ANTICIPO_DEFAULT = 15;
@@ -70,6 +73,7 @@
   let vistaProfCorrente = "lista"; // "lista" | "editor" | "nuovo"
   let pazienteSelezionatoId = null;
   let PIANO_ATTIVO_PROF = null;
+  let PROFILO_PROF = {}; // documento users/{uid} del professionista (nome, contatti)
   const EDITOR_PROF = { settSel: null, giornoSel: null };
 
   const elAuthLoading = document.getElementById("auth-loading");
@@ -288,15 +292,29 @@
     aggiornaIconaCampanella();
     render();
 
-    setInterval(() => {
-      const oggi = new Date().toDateString();
-      if (oggi !== ultimoGiornoRenderizzato) {
-        ultimoGiornoRenderizzato = oggi;
-        collegaAscoltoPastiOggi();
-        render();
-        if (notificheAttive()) pianificaNotificheOggi();
+    setInterval(controllaCambioGiorno, 60 * 1000);
+
+    // Su iPhone un'app in background viene "congelata": timer e intervalli si
+    // fermano. Quando torna in primo piano ricontrolliamo giorno e promemoria.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible" || RUOLO !== "paziente") return;
+      controllaCambioGiorno();
+      if (notificheAttive()) {
+        pianificaNotificheOggi();
+        mostraPromemoriaPerso();
       }
-    }, 60 * 1000);
+    });
+  }
+
+  function controllaCambioGiorno() {
+    const oggi = new Date().toDateString();
+    if (oggi !== ultimoGiornoRenderizzato) {
+      ultimoGiornoRenderizzato = oggi;
+      aggiornaEyebrowData();
+      collegaAscoltoPastiOggi();
+      render();
+      if (notificheAttive()) pianificaNotificheOggi();
+    }
   }
 
   let ultimoGiornoRenderizzato = new Date().toDateString();
@@ -373,7 +391,9 @@
     const numFatti = MEAL_KEYS.filter((k) => fatti[k]).length;
 
     root.innerHTML = `
+      ${renderBannerIosHTML()}
       <section class="hero">
+        <div class="hero__foto" role="img" aria-label="Piatto con verdure fresche, cereali e agrumi"></div>
         <div class="hero__eyebrow"><span class="dot"></span> Settimana ${settimana} del piano</div>
         <h2 class="hero__title">${giornoNome}</h2>
         <div class="hero__meta">
@@ -385,11 +405,14 @@
       <div class="timeline">${renderTimelineHTML(giorno, orari, { checkable: true, fatti })}</div>
       ${renderCoccolaHTML(giorno)}
       ${renderNormeHTML()}
+      ${renderContattoNutrizionistaHTML()}
     `;
 
     root.querySelectorAll("[data-meal-check]").forEach((btn) => {
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));
     });
+    collegaBannerIos();
+    collegaContattoNutrizionista();
   }
 
   function renderTimelineHTML(giorno, orari, opts) {
@@ -797,7 +820,12 @@
     root.innerHTML = `
       <section class="settings-section">
         <h2>Promemoria pasti</h2>
-        <p class="hint">Un avviso sul telefono quando è il momento di mangiare, con il menu del momento. Funziona mentre l'app è aperta o recentemente usata; per il funzionamento anche ad app chiusa vedi il file README del progetto.</p>
+        <p class="hint">Un avviso sul telefono prima di ogni pasto, con il menu del momento — anche ad app chiusa.</p>
+        ${serveGuidaIOS() ? `
+          <div class="avviso-ios">
+            <p>Su iPhone i promemoria arrivano solo se l'app è installata sulla schermata Home.</p>
+            <button type="button" class="btn btn--ghost" data-apri-guida-ios>Come installarla</button>
+          </div>` : ""}
         <div class="field-row">
           <div>
             <div class="field-row__label">Attiva promemoria</div>
@@ -842,15 +870,17 @@
               <dt>Paziente</dt><dd>${escapeHTML(p.nome || "—")}</dd>
               <dt>Obiettivo</dt><dd>${escapeHTML(p.obiettivo || "—")}</dd>
               <dt>Target giornaliero</dt><dd>${p.targetKcal != null ? "~" + p.targetKcal + " kcal" : "—"}</dd>
-              <dt>Nutrizionista</dt><dd>${escapeHTML(p.nutrizionista || "—")}</dd>
             </dl>
           </div>
+          ${renderContattoNutrizionistaHTML()}
         ` : `<p class="hint">Nessun piano assegnato ancora.</p>`}
         <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
       </section>
     `;
 
     document.getElementById("chk-notifiche").addEventListener("change", onToggleNotificheDettaglio);
+    root.querySelectorAll("[data-apri-guida-ios]").forEach((b) => b.addEventListener("click", apriGuidaIOS));
+    collegaContattoNutrizionista();
     document.getElementById("sel-anticipo").addEventListener("change", (e) => {
       localStorage.setItem(LS_KEYS.anticipo, e.target.value);
       if (notificheAttive()) {
@@ -879,8 +909,16 @@
   }
 
   function statoNotificheTesto(permesso, attive) {
-    if (permesso === "unsupported") return "Non supportate su questo browser";
-    if (permesso === "denied") return "Bloccate nelle impostazioni del browser/telefono";
+    if (permesso === "unsupported") {
+      if (eIOS() && !eStandalone()) return "Prima installa l'app sulla schermata Home";
+      if (eIOS() && !iosSupportaPush()) return "Serve iOS 16.4 o successivo";
+      return "Non supportate su questo browser";
+    }
+    if (permesso === "denied") {
+      return eIOS()
+        ? "Bloccate: su iPhone vai in Impostazioni → Notifiche → Il mio Piano"
+        : "Bloccate nelle impostazioni del browser/telefono";
+    }
     if (attive && permesso === "granted") return "Attivi su questo dispositivo";
     return "Disattivati";
   }
@@ -934,8 +972,9 @@
   }
 
   async function attivaNotifiche() {
-    if (!("Notification" in window)) {
-      mostraToast("Il browser non supporta le notifiche");
+    if (!("Notification" in window) || (eIOS() && !eStandalone())) {
+      if (eIOS()) apriGuidaIOS();
+      else mostraToast("Questo browser non supporta le notifiche");
       return false;
     }
     let permesso = Notification.permission;
@@ -963,8 +1002,16 @@
 
   /** Registra il token del dispositivo e invia al server orari/anticipo correnti, per le notifiche ad app chiusa. */
   async function sincronizzaPreferenzeNotifichePush() {
-    if (!window.cloud.pushSupportato) return;
-    await window.cloud.registraTokenPush(UID);
+    if (!window.cloud.pushSupportato) { localStorage.removeItem(LS_KEYS.pushOk); return; }
+    let token = null;
+    try {
+      token = await window.cloud.registraTokenPush(UID);
+    } catch (e) {
+      localStorage.removeItem(LS_KEYS.pushOk);
+      throw e;
+    }
+    if (token) localStorage.setItem(LS_KEYS.pushOk, "1");
+    else localStorage.removeItem(LS_KEYS.pushOk);
     const override = JSON.parse(localStorage.getItem(LS_KEYS.orari) || "null");
     await window.cloud.salvaPreferenzeNotifiche(UID, {
       notificheAttive: true,
@@ -1006,6 +1053,8 @@
   }
 
   function mostraNotifica(titolo, corpo) {
+    // Lo stesso tag usato dalla Cloud Function: se promemoria locale e push
+    // arrivano insieme, il secondo sostituisce il primo invece di duplicarlo.
     const opts = { body: corpo, icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: "pasto-" + titolo };
     if (navigator.serviceWorker && navigator.serviceWorker.ready) {
       navigator.serviceWorker.ready.then((reg) => reg.showNotification(titolo, opts)).catch(() => {
@@ -1016,7 +1065,15 @@
     }
   }
 
+  /** Vero se questo dispositivo riceve i promemoria direttamente dal server (push). */
+  function pushAttivoSuDispositivo() {
+    return localStorage.getItem(LS_KEYS.pushOk) === "1";
+  }
+
   function mostraPromemoriaPerso() {
+    // Con il push attivo il promemoria è già arrivato dal server: riproporlo
+    // alla riapertura dell'app sarebbe un doppione.
+    if (pushAttivoSuDispositivo()) return;
     const oggiStr = new Date().toDateString();
     const ultimo = JSON.parse(localStorage.getItem(LS_KEYS.ultimoCheck) || "{}");
     if (ultimo.giorno !== oggiStr) {
@@ -1046,6 +1103,193 @@
     localStorage.setItem(LS_KEYS.ultimoCheck, JSON.stringify({ giorno: oggiStr, mostrati: Array.from(mostrati) }));
   }
 
+  // ---------------------------------------------------------------------
+  // iPhone / iPad: rilevamento e guida all'installazione
+  // ---------------------------------------------------------------------
+  function eIOS() {
+    // Gli iPad recenti si presentano come "Mac": li riconosciamo dal touch.
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }
+
+  function eStandalone() {
+    return window.navigator.standalone === true ||
+      (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  }
+
+  /** Le notifiche web su iPhone esistono da iOS 16.4 in poi. */
+  function iosSupportaPush() {
+    const m = navigator.userAgent.match(/OS (\d+)_(\d+)/);
+    if (!m) return true; // versione non leggibile (es. iPad in modalità desktop): proviamo comunque
+    const maggiore = Number(m[1]), minore = Number(m[2]);
+    return maggiore > 16 || (maggiore === 16 && minore >= 4);
+  }
+
+  /** Vero su iPhone/iPad quando l'app è aperta da Safari invece che dall'icona sulla Home. */
+  function serveGuidaIOS() {
+    return eIOS() && !eStandalone();
+  }
+
+  function renderBannerIosHTML() {
+    if (!serveGuidaIOS() || localStorage.getItem(LS_KEYS.bannerIosChiuso) === "1") return "";
+    return `
+      <div class="banner-ios" id="banner-ios">
+        <div class="banner-ios__testo">
+          <strong>Installa l'app sull'iPhone</strong>
+          <span>Così ricevi i promemoria dei pasti anche ad app chiusa.</span>
+        </div>
+        <button type="button" class="banner-ios__azione" data-apri-guida-ios>Come fare</button>
+        <button type="button" class="banner-ios__chiudi" id="btn-chiudi-banner-ios" aria-label="Nascondi">×</button>
+      </div>`;
+  }
+
+  function collegaBannerIos() {
+    root.querySelectorAll("[data-apri-guida-ios]").forEach((b) => b.addEventListener("click", apriGuidaIOS));
+    const chiudi = document.getElementById("btn-chiudi-banner-ios");
+    if (chiudi) chiudi.addEventListener("click", () => {
+      localStorage.setItem(LS_KEYS.bannerIosChiuso, "1");
+      const b = document.getElementById("banner-ios");
+      if (b) b.remove();
+    });
+  }
+
+  function apriGuidaIOS() {
+    const iconaCondividi = `<svg class="guida-ios__icona" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 7 4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>`;
+    const versioneVecchia = !iosSupportaPush();
+    apriSheet(`
+      <h2 class="sheet__titolo">Promemoria su iPhone</h2>
+      ${versioneVecchia ? `
+        <p class="sheet__nota sheet__nota--attenzione">Questo iPhone ha una versione di iOS precedente alla 16.4, che non supporta le notifiche delle app web. Aggiornalo da Impostazioni → Generali → Aggiornamento software, poi segui i passaggi qui sotto.</p>` : ""}
+      <ol class="guida-ios">
+        <li>Apri questa pagina in <strong>Safari</strong>.</li>
+        <li>Tocca <strong>Condividi</strong> ${iconaCondividi} nella barra in basso (o in alto su iPad).</li>
+        <li>Scorri e scegli <strong>Aggiungi alla schermata Home</strong>, poi <strong>Aggiungi</strong>.</li>
+        <li>Chiudi Safari e apri <strong>Il mio Piano</strong> dall'icona sulla Home. Ti verrà chiesto di accedere di nuovo: è normale, l'app installata è separata da Safari.</li>
+        <li>Vai su <strong>Impostazioni</strong>, attiva <strong>Promemoria pasti</strong> e tocca <strong>Consenti</strong>.</li>
+      </ol>
+      <button type="button" class="btn" data-chiudi-sheet>Ho capito</button>
+    `);
+  }
+
+  // ---------------------------------------------------------------------
+  // Pannello a scomparsa dal basso ("sheet"), riutilizzabile
+  // ---------------------------------------------------------------------
+  function apriSheet(html) {
+    chiudiSheet();
+    const overlay = document.createElement("div");
+    overlay.className = "sheet-overlay";
+    overlay.id = "sheet-overlay";
+    overlay.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay || e.target.closest("[data-chiudi-sheet]")) chiudiSheet();
+    });
+    document.body.appendChild(overlay);
+    const primo = overlay.querySelector("a, button");
+    if (primo) primo.focus({ preventScroll: true });
+    return overlay;
+  }
+
+  function chiudiSheet() {
+    const o = document.getElementById("sheet-overlay");
+    if (o) o.remove();
+  }
+
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") chiudiSheet(); });
+
+  // ---------------------------------------------------------------------
+  // Contatto del nutrizionista (lato paziente)
+  // ---------------------------------------------------------------------
+  /**
+   * Trasforma un numero scritto in qualunque modo ("+39 333 123 4567",
+   * "0039 333...", "333 1234567") nel formato richiesto da WhatsApp: solo
+   * cifre, con prefisso internazionale. Senza prefisso si assume l'Italia.
+   */
+  function numeroPerWhatsApp(numero) {
+    let cifre = String(numero || "").trim();
+    const internazionale = cifre.startsWith("+") || cifre.startsWith("00");
+    cifre = cifre.replace(/\D/g, "");
+    if (cifre.startsWith("00")) cifre = cifre.slice(2);
+    if (!internazionale && !cifre.startsWith("39")) cifre = "39" + cifre;
+    return cifre.length >= 8 ? cifre : "";
+  }
+
+  function numeroPerChiamata(numero) {
+    const s = String(numero || "").trim();
+    return s.replace(/(?!^\+)[^\d]/g, "");
+  }
+
+  /** Dati di contatto del nutrizionista visti dal paziente (dal piano, con ripiego sul vecchio campo di testo). */
+  function contattiNutrizionistaCorrenti() {
+    const c = (PIANO_ATTIVO && PIANO_ATTIVO.contattiNutrizionista) || {};
+    const nomeVecchio = (PIANO_ATTIVO && PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.nutrizionista) || "";
+    return {
+      nome: c.nome || nomeVecchio,
+      qualifica: c.qualifica || "",
+      studio: c.studio || "",
+      note: c.note || "",
+      email: c.email || "",
+      telefono: c.telefono || "",
+      whatsapp: c.whatsapp !== false && !!c.telefono,
+    };
+  }
+
+  function renderContattoNutrizionistaHTML() {
+    if (!PIANO_ATTIVO) return "";
+    const c = contattiNutrizionistaCorrenti();
+    if (!c.nome && !c.email && !c.telefono) return "";
+    const haCanali = !!(c.email || c.telefono);
+    const iniziali = (c.nome || "?").replace(/^(dott\.?ssa|dott\.?|dr\.?)\s+/i, "").split(/\s+/).slice(0, 2).map((p) => p.charAt(0).toUpperCase()).join("");
+    return `
+      <section class="contatto-nutri">
+        <div class="contatto-nutri__testa">
+          <span class="contatto-nutri__avatar" aria-hidden="true">${escapeHTML(iniziali)}</span>
+          <div>
+            <span class="contatto-nutri__etichetta">Il tuo nutrizionista</span>
+            <strong class="contatto-nutri__nome">${escapeHTML(c.nome || "—")}</strong>
+            ${c.qualifica ? `<span class="contatto-nutri__qualifica">${escapeHTML(c.qualifica)}</span>` : ""}
+          </div>
+        </div>
+        ${c.studio ? `<p class="contatto-nutri__riga">${escapeHTML(c.studio)}</p>` : ""}
+        ${c.note ? `<p class="contatto-nutri__riga contatto-nutri__riga--nota">${escapeHTML(c.note)}</p>` : ""}
+        ${haCanali ? `<button type="button" class="btn" data-contatta-nutrizionista>Contatta</button>` : ""}
+      </section>`;
+  }
+
+  function collegaContattoNutrizionista() {
+    root.querySelectorAll("[data-contatta-nutrizionista]").forEach((b) => b.addEventListener("click", apriSceltaContatto));
+  }
+
+  function apriSceltaContatto() {
+    const c = contattiNutrizionistaCorrenti();
+    const nomePaziente = (PIANO_ATTIVO && PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.nome) || "";
+    const saluto = `Buongiorno${c.nome ? " " + c.nome : ""}, sono ${nomePaziente || "un suo paziente"}. Le scrivo dall'app Il mio Piano: `;
+    const azioni = [];
+
+    if (c.telefono && c.whatsapp) {
+      const n = numeroPerWhatsApp(c.telefono);
+      if (n) azioni.push(`<a class="azione-contatto azione-contatto--whatsapp" href="https://wa.me/${n}?text=${encodeURIComponent(saluto)}" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.1.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .1-1.2c0-.1-.2-.2-.4-.3Z"/></svg>
+        <span><strong>WhatsApp</strong><small>${escapeHTML(c.telefono)}</small></span></a>`);
+    }
+    if (c.email) {
+      const oggetto = "Domanda sul mio piano nutrizionale";
+      azioni.push(`<a class="azione-contatto" href="mailto:${encodeURIComponent(c.email).replace(/%40/g, "@")}?subject=${encodeURIComponent(oggetto)}&body=${encodeURIComponent(saluto)}">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+        <span><strong>Email</strong><small>${escapeHTML(c.email)}</small></span></a>`);
+    }
+    if (c.telefono) {
+      azioni.push(`<a class="azione-contatto" href="tel:${escapeHTML(numeroPerChiamata(c.telefono))}">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg>
+        <span><strong>Chiama</strong><small>${escapeHTML(c.telefono)}</small></span></a>`);
+    }
+
+    apriSheet(`
+      <h2 class="sheet__titolo">Contatta ${escapeHTML(c.nome || "il tuo nutrizionista")}</h2>
+      <div class="azioni-contatto">${azioni.join("")}</div>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+  }
+
   // =======================================================================
   // LATO PROFESSIONISTA
   // =======================================================================
@@ -1055,6 +1299,7 @@
     registraServiceWorker();
     vistaProfCorrente = "lista";
     pazienteSelezionatoId = null;
+    PROFILO_PROF = utenteDati || {};
 
     unsubPazienti = window.cloud.ascoltaPazientiProfessionista(UID, (pazienti) => {
       PAZIENTI_PROF = pazienti;
@@ -1077,8 +1322,11 @@
     pazienteSelezionatoId = null;
     document.getElementById("prof-header-titolo").textContent = "I tuoi pazienti";
 
+    const contattiMancanti = !(PROFILO_PROF.contatti && (PROFILO_PROF.contatti.email || PROFILO_PROF.contatti.telefono));
     profRoot.innerHTML = `
-      <button type="button" class="btn" id="btn-nuovo-paziente" style="margin-bottom:16px;">+ Nuovo paziente</button>
+      <button type="button" class="btn" id="btn-nuovo-paziente" style="margin-bottom:10px;">+ Nuovo paziente</button>
+      <button type="button" class="btn btn--ghost" id="btn-profilo-prof" style="margin-bottom:16px;">I miei dati di contatto</button>
+      ${contattiMancanti ? `<p class="hint avviso-profilo">Aggiungi email e telefono in "I miei dati di contatto": i tuoi pazienti vedranno il pulsante Contatta.</p>` : ""}
       ${PAZIENTI_PROF.length === 0 ? `
         <div class="empty">Non hai ancora pazienti. Creane uno con il pulsante qui sopra.</div>
       ` : `
@@ -1095,6 +1343,7 @@
     `;
 
     document.getElementById("btn-nuovo-paziente").addEventListener("click", renderFormNuovoPaziente);
+    document.getElementById("btn-profilo-prof").addEventListener("click", renderProfiloProfessionista);
     document.querySelectorAll(".paziente-card").forEach((btn) => {
       btn.addEventListener("click", () => apriEditorPaziente(btn.dataset.id));
     });
@@ -1138,7 +1387,7 @@
           <label class="editor-campo"><span>Nome paziente</span><input type="text" data-campo="nome" value="${escapeHTML(pz.nome || piano.pazienteNome || "")}"></label>
           <label class="editor-campo"><span>Obiettivo</span><input type="text" data-campo="obiettivo" value="${escapeHTML(pz.obiettivo || "")}"></label>
           <label class="editor-campo"><span>Target giornaliero (kcal)</span><input type="number" data-campo="targetKcal" value="${pz.targetKcal != null ? pz.targetKcal : ""}"></label>
-          <label class="editor-campo"><span>Nutrizionista</span><input type="text" data-campo="nutrizionista" value="${escapeHTML(pz.nutrizionista || "")}"></label>
+          <label class="editor-campo"><span>Nutrizionista (usato solo se non hai compilato "I miei dati di contatto")</span><input type="text" data-campo="nutrizionista" value="${escapeHTML(pz.nutrizionista || "")}"></label>
         </div>
         <button type="button" class="btn" id="btn-salva-dati-paziente" style="margin-top:14px;">Salva dati paziente</button>
       </section>
@@ -1159,6 +1408,8 @@
 
       ${renderEditorPastoHTML(piano, EDITOR_PROF.settSel, EDITOR_PROF.giornoSel, disponibili)}
 
+      ${renderCopiaSettimanaHTML(disponibili)}
+
       <section class="settings-section">
         <h2>Importa / sostituisci l'intero piano</h2>
         <p class="hint">Per un piano tutto nuovo dalla nutrizionista, puoi caricare un file .json in un colpo solo, nello stesso formato scaricabile qui come modello.</p>
@@ -1175,6 +1426,7 @@
     document.getElementById("btn-salva-norme").addEventListener("click", salvaNormeGeneraliProfessionista);
     document.getElementById("btn-salva-sostituzioni").addEventListener("click", salvaSostituzioniProfessionista);
     collegaEditorPastoProfessionista();
+    collegaCopiaSettimana();
     document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));
     document.getElementById("input-importa-piano-prof").addEventListener("change", onFileImportPianoProf);
   }
@@ -1387,6 +1639,177 @@
   }
 
   // ---------------------------------------------------------------------
+  // Copia di una settimana su altre settimane
+  // ---------------------------------------------------------------------
+  function renderCopiaSettimanaHTML(disponibili) {
+    const origine = disponibili.includes(EDITOR_PROF.settSel) ? EDITOR_PROF.settSel : disponibili[0];
+    return `
+      <section class="settings-section">
+        <h2>Copia una settimana</h2>
+        <p class="hint">Se più settimane sono uguali, compilane una e copiala nelle altre. Poi puoi ritoccare i singoli giorni da "Modifica un pasto".</p>
+        <div class="field-row">
+          <span class="field-row__label">Copia la</span>
+          <select id="sel-copia-origine">
+            ${disponibili.map((n) => `<option value="${n}" ${n === origine ? "selected" : ""}>Settimana ${n}</option>`).join("")}
+          </select>
+        </div>
+        <div class="copia-dest" id="copia-dest">
+          <span class="copia-dest__label">nelle settimane</span>
+          <div class="copia-dest__scelte">
+            ${[1, 2, 3, 4, 5].map((n) => `
+              <label class="chip-check ${n === origine ? "is-disabled" : ""}">
+                <input type="checkbox" value="${n}" ${n === origine ? "disabled" : ""}>
+                <span>${n}${disponibili.includes(n) ? "" : "<small>nuova</small>"}</span>
+              </label>`).join("")}
+          </div>
+        </div>
+        <button type="button" class="btn" id="btn-copia-settimana" style="margin-top:14px;">Copia settimana</button>
+      </section>
+    `;
+  }
+
+  function collegaCopiaSettimana() {
+    const sel = document.getElementById("sel-copia-origine");
+    if (!sel) return;
+    sel.addEventListener("change", () => {
+      const origine = Number(sel.value);
+      document.querySelectorAll("#copia-dest input[type=checkbox]").forEach((cb) => {
+        const n = Number(cb.value);
+        cb.disabled = n === origine;
+        if (n === origine) cb.checked = false;
+        cb.closest(".chip-check").classList.toggle("is-disabled", n === origine);
+      });
+    });
+    document.getElementById("btn-copia-settimana").addEventListener("click", copiaSettimanaProfessionista);
+  }
+
+  async function copiaSettimanaProfessionista() {
+    const piano = PIANO_ATTIVO_PROF;
+    const origine = Number(document.getElementById("sel-copia-origine").value);
+    const destinazioni = Array.from(document.querySelectorAll("#copia-dest input[type=checkbox]:checked"))
+      .map((cb) => Number(cb.value))
+      .filter((n) => n !== origine);
+
+    if (!destinazioni.length) {
+      mostraToast("Scegli almeno una settimana in cui copiare");
+      return;
+    }
+    const sorgente = piano.settimane[origine];
+    if (!Array.isArray(sorgente) || sorgente.length !== 7) {
+      mostraToast("La settimana " + origine + " non è completa: non si può copiare", 4000);
+      return;
+    }
+
+    const daSovrascrivere = destinazioni.filter((n) => Array.isArray(piano.settimane[n]));
+    if (daSovrascrivere.length) {
+      const frase = daSovrascrivere.length === 1
+        ? `La settimana ${daSovrascrivere[0]} verrà sostituita`
+        : `Le settimane ${daSovrascrivere.join(", ")} verranno sostituite`;
+      const ok = window.confirm(`${frase} dalla settimana ${origine}. Continuare?`);
+      if (!ok) return;
+    }
+
+    const pianoModificato = JSON.parse(JSON.stringify(piano));
+    destinazioni.forEach((n) => {
+      pianoModificato.settimane[n] = JSON.parse(JSON.stringify(sorgente));
+    });
+
+    const risultato = validaPiano(pianoModificato);
+    if (!risultato.ok) {
+      mostraToast("Non copiato — " + risultato.errori[0], 4200);
+      return;
+    }
+
+    const btn = document.getElementById("btn-copia-settimana");
+    btn.disabled = true;
+    btn.textContent = "Copia in corso…";
+    try {
+      await window.cloud.salvaPiano(piano.id, risultato.piano);
+      const elenco = destinazioni.sort((a, b) => a - b).join(", ");
+      mostraToast(`Settimana ${origine} copiata in: ${elenco}`);
+    } catch (e) {
+      mostraToast("Copia non riuscita: controlla la connessione", 4000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Copia settimana";
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Profilo e dati di contatto del professionista
+  // ---------------------------------------------------------------------
+  function renderProfiloProfessionista() {
+    vistaProfCorrente = "profilo";
+    pazienteSelezionatoId = null;
+    document.getElementById("prof-header-titolo").textContent = "I miei dati di contatto";
+    const c = PROFILO_PROF.contatti || {};
+    const nome = c.nome || PROFILO_PROF.nome || "";
+    const whatsapp = c.whatsapp !== false;
+
+    profRoot.innerHTML = `
+      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <section class="settings-section">
+        <h2>Come ti vedono i pazienti</h2>
+        <p class="hint">Questi dati compaiono nell'app di tutti i tuoi pazienti, con il pulsante Contatta. Quando li salvi si aggiornano ovunque.</p>
+        <div class="editor-pasti" id="form-profilo">
+          <label class="editor-campo"><span>Nome e cognome</span><input type="text" data-campo="nome" value="${escapeHTML(nome)}" placeholder="Dott.ssa Maria Rossi" autocomplete="name"></label>
+          <label class="editor-campo"><span>Qualifica</span><input type="text" data-campo="qualifica" value="${escapeHTML(c.qualifica || "")}" placeholder="Biologa nutrizionista"></label>
+          <label class="editor-campo"><span>Studio e indirizzo</span><input type="text" data-campo="studio" value="${escapeHTML(c.studio || "")}" placeholder="Studio Nutrizione, Via Roma 10, Milano"></label>
+          <label class="editor-campo"><span>Email</span><input type="email" data-campo="email" value="${escapeHTML(c.email || "")}" autocomplete="email" inputmode="email"></label>
+          <label class="editor-campo"><span>Telefono (con prefisso, es. +39 333 1234567)</span><input type="tel" data-campo="telefono" value="${escapeHTML(c.telefono || "")}" autocomplete="tel" inputmode="tel"></label>
+          <label class="check-riga"><input type="checkbox" data-campo="whatsapp" ${whatsapp ? "checked" : ""}> <span>Uso WhatsApp su questo numero</span></label>
+          <label class="editor-campo"><span>Nota per i pazienti (facoltativa)</span><input type="text" data-campo="note" value="${escapeHTML(c.note || "")}" placeholder="Rispondo dal lunedì al venerdì, 9–18"></label>
+        </div>
+        <button type="button" class="btn" id="btn-salva-profilo" style="margin-top:16px;">Salva dati di contatto</button>
+      </section>
+    `;
+    document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    document.getElementById("btn-salva-profilo").addEventListener("click", salvaProfiloProfessionista);
+  }
+
+  async function salvaProfiloProfessionista() {
+    const campi = {};
+    document.querySelectorAll("#form-profilo [data-campo]").forEach((el) => {
+      campi[el.dataset.campo] = el.type === "checkbox" ? el.checked : el.value.trim();
+    });
+    if (!campi.nome) {
+      mostraToast("Inserisci almeno nome e cognome");
+      return;
+    }
+    if (campi.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(campi.email)) {
+      mostraToast("L'email non sembra corretta: controllala", 3500);
+      return;
+    }
+    if (campi.telefono && numeroPerChiamata(campi.telefono).replace("+", "").length < 8) {
+      mostraToast("Il numero di telefono sembra incompleto", 3500);
+      return;
+    }
+    const contatti = {
+      nome: campi.nome,
+      qualifica: campi.qualifica,
+      studio: campi.studio,
+      email: campi.email,
+      telefono: campi.telefono,
+      whatsapp: !!campi.whatsapp,
+      note: campi.note,
+    };
+
+    const btn = document.getElementById("btn-salva-profilo");
+    btn.disabled = true;
+    btn.textContent = "Salvataggio…";
+    try {
+      const n = await window.cloud.salvaProfiloProfessionista(UID, contatti);
+      PROFILO_PROF = Object.assign({}, PROFILO_PROF, { contatti, nome: contatti.nome });
+      mostraToast(n === 1 ? "Dati salvati e aggiornati per 1 paziente" : `Dati salvati e aggiornati per ${n} pazienti`);
+    } catch (e) {
+      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salva dati di contatto";
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // Nuovo paziente
   // ---------------------------------------------------------------------
   function renderFormNuovoPaziente() {
@@ -1438,6 +1861,9 @@
       const nuovoUid = await window.cloud.creaPaziente({ email, password, nome, professionistaUid: UID });
       const pianoBase = JSON.parse(JSON.stringify(PIANO_TEMPLATE));
       pianoBase.paziente.nome = nome;
+      const contatti = PROFILO_PROF.contatti || null;
+      pianoBase.paziente.nutrizionista = (contatti && contatti.nome) || PROFILO_PROF.nome || "";
+      if (contatti) pianoBase.contattiNutrizionista = contatti;
       await window.cloud.creaPiano(pianoBase, UID, nuovoUid, nome, email);
       mostraToast("Paziente creato — comunicagli email e password");
       renderListaPazienti();
