@@ -1,5 +1,6 @@
 
 
+
 /**
  * functions/index.js
  * Cloud Function programmata: ogni 5 minuti controlla tutti i piani attivi
@@ -18,7 +19,9 @@
  */
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { defineSecret } = require("firebase-functions/params");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const weekLogic = require("./week-logic.js");
@@ -260,6 +263,150 @@ exports.eliminaPaziente = onCall(async (request) => {
 });
 
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.
+
+// =========================================================================
+// LICENZE E PAGAMENTI (Stripe)
+// =========================================================================
+/**
+ * Il sito vende gli abbonamenti con i "Link di pagamento" di Stripe. Quando
+ * Stripe conferma un pagamento, un rinnovo, un cambio di piano o una disdetta,
+ * chiama questo indirizzo (webhook). La funzione aggiorna la licenza del
+ * professionista in users/{uid}.licenza, che l'app e le regole Firestore
+ * usano per decidere cosa può fare.
+ *
+ * Il professionista viene riconosciuto dall'EMAIL usata per pagare. Se paga
+ * prima di essersi registrato nell'app, la licenza resta "in attesa"
+ * (collezione licenzeInAttesa) e viene applicata appena si registra con
+ * quella email (funzione applicaLicenzaInAttesa più sotto).
+ *
+ * Chiavi segrete (mai nel codice): si impostano una volta con
+ *   firebase functions:secrets:set STRIPE_SECRET_KEY
+ *   firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
+ */
+const STRIPE_SECRET_KEY = defineSecret("STRIPE_SECRET_KEY");
+const STRIPE_WEBHOOK_SECRET = defineSecret("STRIPE_WEBHOOK_SECRET");
+
+// Piani in vendita. La chiave è il "lookup key" del prezzo su Stripe; in
+// mancanza si riconosce il piano dall'importo mensile in centesimi.
+const PIANI = {
+  base:   { maxPazienti: 15, importo: 900 },
+  studio: { maxPazienti: 50, importo: 1900 },
+};
+const GIORNI_TOLLERANZA = 3; // margine dopo la data di rinnovo, per pagamenti in ritardo di qualche ora
+
+function pianoDaPrezzo(prezzo, metadati) {
+  const chiave = (metadati && metadati.piano) || (prezzo && prezzo.lookup_key) || "";
+  if (PIANI[chiave]) return chiave;
+  if (chiave === "oltre" && metadati && Number(metadati.maxPazienti) > 0) return "oltre";
+  const importo = prezzo && prezzo.unit_amount;
+  const trovato = Object.keys(PIANI).find((k) => PIANI[k].importo === importo);
+  return trovato || null;
+}
+
+/** Converte un abbonamento Stripe nella licenza da salvare su Firestore. */
+function licenzaDaAbbonamento(sub) {
+  const voce = sub.items && sub.items.data && sub.items.data[0];
+  const prezzo = voce && voce.price;
+  const metadati = Object.assign({}, prezzo && prezzo.metadata, sub.metadata);
+  const piano = pianoDaPrezzo(prezzo, metadati);
+  if (!piano) return null;
+  const maxPazienti = piano === "oltre" ? Number(metadati.maxPazienti) : PIANI[piano].maxPazienti;
+  const fine = (voce && voce.current_period_end) || sub.current_period_end;
+  const attivo = ["active", "trialing", "past_due"].includes(sub.status);
+  return {
+    piano,
+    maxPazienti,
+    stato: attivo ? "attiva" : "scaduta",
+    scadenza: fine
+      ? admin.firestore.Timestamp.fromMillis((fine + GIORNI_TOLLERANZA * 86400) * 1000)
+      : null,
+    stripeCustomerId: typeof sub.customer === "string" ? sub.customer : sub.customer.id,
+    stripeSubscriptionId: sub.id,
+    statoStripe: sub.status,
+    aggiornata: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+async function trovaProfessionista(email, customerId) {
+  if (customerId) {
+    const q = await db.collection("users").where("licenza.stripeCustomerId", "==", customerId).limit(1).get();
+    if (!q.empty) return q.docs[0].ref;
+  }
+  if (email) {
+    const q = await db.collection("users").where("email", "==", email.toLowerCase()).limit(5).get();
+    const doc = q.docs.find((d) => d.data().ruolo === "professionista");
+    if (doc) return doc.ref;
+  }
+  return null;
+}
+
+async function salvaLicenza(stripe, sub) {
+  const licenza = licenzaDaAbbonamento(sub);
+  if (!licenza) {
+    console.warn("Abbonamento con prezzo non riconosciuto:", sub.id);
+    return;
+  }
+  const customer = typeof sub.customer === "string" ? await stripe.customers.retrieve(sub.customer) : sub.customer;
+  const email = (customer && customer.email || "").toLowerCase();
+  const ref = await trovaProfessionista(email, licenza.stripeCustomerId);
+  if (ref) {
+    await ref.update({ licenza });
+    console.log("Licenza aggiornata:", ref.id, licenza.piano, licenza.stato);
+  } else if (email) {
+    await db.collection("licenzeInAttesa").doc(email).set({ licenza, email });
+    console.log("Licenza in attesa di registrazione per", email);
+  }
+}
+
+exports.stripeWebhook = onRequest(
+  { secrets: [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET], cors: false },
+  async (req, res) => {
+    const Stripe = require("stripe");
+    const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+    let evento;
+    try {
+      evento = stripe.webhooks.constructEvent(req.rawBody, req.headers["stripe-signature"], STRIPE_WEBHOOK_SECRET.value());
+    } catch (e) {
+      console.error("Firma webhook non valida:", e.message);
+      res.status(400).send("Firma non valida");
+      return;
+    }
+    try {
+      const o = evento.data.object;
+      switch (evento.type) {
+        case "checkout.session.completed":
+          if (o.mode === "subscription" && o.subscription) {
+            const sub = await stripe.subscriptions.retrieve(o.subscription, { expand: ["items.data.price"] });
+            await salvaLicenza(stripe, sub);
+          }
+          break;
+        case "customer.subscription.created":
+        case "customer.subscription.updated":
+        case "customer.subscription.deleted":
+          await salvaLicenza(stripe, o);
+          break;
+        default:
+          break; // altri eventi: ignorati
+      }
+      res.status(200).send("ok");
+    } catch (e) {
+      console.error("Errore gestione evento", evento.type, e);
+      res.status(500).send("errore"); // Stripe ritenterà in automatico
+    }
+  }
+);
+
+/** Applica una licenza pagata prima della registrazione, quando il professionista si registra. */
+exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) => {
+  const dati = event.data && event.data.data();
+  if (!dati || dati.ruolo !== "professionista" || !dati.email) return;
+  const attesaRef = db.collection("licenzeInAttesa").doc(dati.email.toLowerCase());
+  const attesa = await attesaRef.get();
+  if (!attesa.exists) return;
+  await event.data.ref.update({ licenza: attesa.data().licenza });
+  await attesaRef.delete();
+});
+
 if (typeof module !== "undefined") {
-  module.exports._test = { pastoDaNotificareOra, chiaveData, oraItaliana };
+  module.exports._test = { pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo };
 }
