@@ -307,7 +307,9 @@ function pianoDaPrezzo(prezzo, metadati) {
 function licenzaDaAbbonamento(sub) {
   const voce = sub.items && sub.items.data && sub.items.data[0];
   const prezzo = voce && voce.price;
-  const metadati = Object.assign({}, prezzo && prezzo.metadata, sub.metadata);
+  // Il prezzo ha la precedenza: dopo un cambio di piano dal portale clienti
+  // i metadati dell'abbonamento potrebbero riferirsi ancora al piano precedente.
+  const metadati = Object.assign({}, sub.metadata, prezzo && prezzo.metadata);
   const piano = pianoDaPrezzo(prezzo, metadati);
   if (!piano) return null;
   const maxPazienti = piano === "oltre" ? Number(metadati.maxPazienti) : PIANI[piano].maxPazienti;
