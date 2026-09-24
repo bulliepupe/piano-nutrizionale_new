@@ -1,5 +1,6 @@
 
 
+
 <!DOCTYPE html>
 <html lang="it">
 <head>
@@ -69,9 +70,12 @@
         <input type="password" id="signup-password" required minlength="6" autocomplete="new-password">
       </label>
       <p class="auth-error" id="signup-error" hidden></p>
+      <p class="hint">Include 30 giorni di prova gratuita, fino a 3 pazienti. Se hai già acquistato un abbonamento, usa la stessa email del pagamento: viene attivato in automatico.</p>
+      <label class="auth-check"><input type="checkbox" id="signup-termini" required> <span>Accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" data-link="termini">Termini di servizio</a> e l'<a href="https://ilmiopiano.it/accordo-trattamento-dati.html" target="_blank" rel="noopener" data-link="dpa">Accordo sul trattamento dei dati</a></span></label>
       <button type="submit" class="btn">Crea account professionista</button>
       <button type="button" class="link-btn" id="btn-annulla-signup">Torna all'accesso</button>
     </form>
+    <p class="auth-legal"><a href="https://ilmiopiano.it/privacy.html" target="_blank" rel="noopener" data-link="privacy">Informativa privacy</a></p>
   </div>
 </div>
 
