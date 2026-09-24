@@ -1,20 +1,18 @@
 
 /**
  * service-worker.js
- * Cache "app shell" per il funzionamento offline (una volta aperta almeno
- * una volta con connessione) + gestione del tap sulle notifiche + notifiche
- * push ricevute mentre l'app è completamente chiusa (Firebase Cloud Messaging).
+ * Cache "app shell" per il funzionamento offline + tap sulle notifiche +
+ * notifiche push ricevute ad app chiusa (Firebase Cloud Messaging), anche su
+ * iPhone (iOS 16.4 o successivo, app aggiunta alla schermata Home).
  *
  * Se aggiorni i file dell'app, alza CACHE_VERSION per forzare il
  * refresh della cache sui dispositivi già installati.
  *
- * IMPORTANTE: la configurazione Firebase qui sotto va tenuta allineata a
- * quella in js/firebase-config.js — un service worker gira in un contesto
- * separato dalla pagina e non può leggere window.FIREBASE_CONFIG, quindi
- * questi valori vanno incollati anche qui (non sono comunque segreti).
+ * La configurazione Firebase NON va più incollata qui: viene letta
+ * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v15";
+const CACHE_VERSION = "v16";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -28,8 +26,10 @@ const APP_SHELL = [
   "./js/firebase-config.js",
   "./js/cloud.js",
   "./js/app.js",
+  "./img/hero.svg",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/apple-touch-icon.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -46,27 +46,33 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Strategia: rete prima (per avere sempre dati/aspetto aggiornati quando
-// c'è connessione), con fallback alla cache quando offline.
-// Importante: si occupa SOLO delle richieste verso questo stesso sito.
-// Le chiamate verso Firebase (login, Firestore in tempo reale, i font Google)
-// vanno dritte in rete — intercettarle romperebbe l'autenticazione e la
-// sincronizzazione live del piano.
+// Rete prima (dati/aspetto sempre aggiornati), cache come riserva offline.
+// Solo richieste verso questo stesso sito: Firebase e i font vanno dritti in rete.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     fetch(event.request)
       .then((risposta) => {
-        const copia = risposta.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia));
+        if (risposta.ok) {
+          const copia = risposta.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia));
+        }
         return risposta;
       })
-      .catch(() => caches.match(event.request).then((r) => r || caches.match("./index.html")))
+      .catch(() =>
+        caches.match(event.request).then((r) => {
+          if (r) return r;
+          // La pagina di riserva solo per le navigazioni, non per immagini o script.
+          if (event.request.mode === "navigate") return caches.match("./index.html");
+          return Response.error();
+        })
+      )
   );
 });
 
-// Porta l'app in primo piano quando si tocca una notifica.
+// Tocco su una notifica: porta in primo piano l'app (o la apre).
+// È registrato PRIMA di Firebase apposta, così viene eseguito sempre per primo.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil(
@@ -83,37 +89,28 @@ self.addEventListener("notificationclick", (event) => {
 // Notifiche push ad app chiusa (Firebase Cloud Messaging)
 // ---------------------------------------------------------------------
 try {
+  importScripts("./js/firebase-config.js");
   importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js");
   importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js");
 
-  // Stessi valori di js/firebase-config.js — vedi nota in cima al file.
-  firebase.initializeApp({
-    apiKey: "INSERISCI_API_KEY",
-    authDomain: "INSERISCI_PROGETTO.firebaseapp.com",
-    projectId: "INSERISCI_PROGETTO",
-    storageBucket: "INSERISCI_PROGETTO.appspot.com",
-    messagingSenderId: "INSERISCI_SENDER_ID",
-    appId: "INSERISCI_APP_ID",
-  });
-
+  firebase.initializeApp(self.FIREBASE_CONFIG);
   const messaging = firebase.messaging();
 
-  // Con "notification" payload (quello usato dalla funzione server) il
-  // browser mostra già da solo la notifica ad app chiusa: questo handler
-  // serve soprattutto da rete di sicurezza e per un eventuale payload "data".
-  if (messaging) {
-    messaging.onBackgroundMessage((payload) => {
-      const n = payload.notification || {};
-      self.registration.showNotification(n.title || "Promemoria", {
-        body: n.body || "",
-        icon: "./icons/icon-192.png",
-        badge: "./icons/icon-192.png",
-        tag: n.tag || "promemoria-pasto",
-      });
+  // I promemoria inviati dal server contengono già il blocco "notification":
+  // in quel caso è Firebase stesso a mostrare la notifica, e mostrarla di
+  // nuovo qui creerebbe un doppione. Questo handler interviene solo per
+  // eventuali messaggi "solo dati", e li mostra sempre: su iPhone un push
+  // ricevuto senza notifica visibile porta iOS a revocare l'iscrizione.
+  messaging.onBackgroundMessage((payload) => {
+    if (payload && payload.notification) return;
+    const d = (payload && payload.data) || {};
+    return self.registration.showNotification(d.title || "Il mio Piano", {
+      body: d.body || "",
+      icon: "./icons/icon-192.png",
+      tag: d.tag || "promemoria-pasto",
     });
-  }
+  });
 } catch (e) {
-  // Se la configurazione Firebase non è ancora stata compilata qui sopra,
-  // o il browser non supporta il push, il resto dell'app (cache offline,
-  // promemoria "locali" pianificati da app.js) continua a funzionare lo stesso.
+  // Push non disponibile su questo browser: cache offline e promemoria
+  // "locali" gestiti da app.js continuano a funzionare lo stesso.
 }
