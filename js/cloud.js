@@ -1,7 +1,6 @@
 
 
 
-
 /**
  * cloud.js
  * Livello di accesso a Firebase (Auth + Firestore). Nessun altro file

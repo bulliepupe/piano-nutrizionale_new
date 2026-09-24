@@ -1,7 +1,6 @@
 
 
 
-
 /* =========================================================================
    Il mio Piano — identità visiva
    Un "quaderno da cucina" digitale: carta chiara, verde salvia, accenti di
@@ -904,7 +903,7 @@ code.inline {
 .azione-contatto--whatsapp svg { color: #1DA851; }
 
 /* ---------- Pannello professionista: profilo e copia settimane ---------- */
-.avviso-profilo { margin: -6px 0 16px; font-size: 14px; line-height: 1.45; color: var(--ink-soft); }
+.avviso-profilo { margin: -6px 0 16px; }
 .check-riga {
   display: flex;
   align-items: center;
@@ -961,7 +960,7 @@ code.inline {
 .zona-elimina { border-top: 1px solid var(--border-soft); padding-top: 18px; }
 .btn.btn--pericolo { background: #B3432F; color: #FFFFFF; }
 .btn.btn--pericolo:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn:disabled { cursor: not-allowed; opacity: 0.45; }
+.btn:disabled { cursor: not-allowed; }
 
 /* ---------- Licenza del professionista ---------- */
 .licenza { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-m); padding: 14px 16px; margin-bottom: 14px; }
@@ -978,4 +977,3 @@ code.inline {
 .auth-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink-soft); text-align: left; margin: 4px 0 6px; }
 .auth-check input { margin-top: 3px; accent-color: var(--accent); }
 .auth-check a { color: var(--accent); }
-.auth-form .hint { font-size: 13px; line-height: 1.45; color: var(--ink-soft); margin: 2px 0 4px; }

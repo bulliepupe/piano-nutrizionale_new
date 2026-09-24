@@ -2,7 +2,6 @@
 
 
 
-
 /**
  * app.js — logica dell'interfaccia.
  * Nessuna dipendenza di build: apre index.html via HTTPS/GitHub Pages e funziona.
@@ -199,20 +198,16 @@
       }
     });
 
-    // Passaggio tra "accesso" e "registrazione professionista": oltre ai due
-    // moduli cambiano anche il sottotitolo e il link "Password dimenticata?",
-    // che riguarda solo l'accesso.
-    const SUB_ACCESSO = "Accedi con le credenziali che ti ha fornito il tuo nutrizionista.";
-    const SUB_REGISTRAZIONE = "Crea il tuo account professionista: dopo potrai aggiungere i tuoi pazienti.";
-    function modalitaRegistrazione(attiva) {
-      document.getElementById("blocco-signup-professionista").hidden = attiva;
-      document.getElementById("form-login").hidden = attiva;
-      document.getElementById("btn-password-dimenticata").hidden = attiva;
-      document.getElementById("form-signup").hidden = !attiva;
-      document.getElementById("auth-sub").textContent = attiva ? SUB_REGISTRAZIONE : SUB_ACCESSO;
-    }
-    document.getElementById("btn-mostra-signup").addEventListener("click", () => modalitaRegistrazione(true));
-    document.getElementById("btn-annulla-signup").addEventListener("click", () => modalitaRegistrazione(false));
+    document.getElementById("btn-mostra-signup").addEventListener("click", () => {
+      document.getElementById("blocco-signup-professionista").hidden = true;
+      document.getElementById("form-login").hidden = true;
+      document.getElementById("form-signup").hidden = false;
+    });
+    document.getElementById("btn-annulla-signup").addEventListener("click", () => {
+      document.getElementById("form-signup").hidden = true;
+      document.getElementById("form-login").hidden = false;
+      document.getElementById("blocco-signup-professionista").hidden = false;
+    });
 
     // Link legali presi da config.json (così si cambiano in un posto solo)
     caricaConfig().then((c) => {
@@ -222,7 +217,9 @@
 
     // Link dal sito "Inizia la prova gratuita": index.html#registrati(&email=...)
     if (/^#registrati/.test(location.hash)) {
-      modalitaRegistrazione(true);
+      document.getElementById("blocco-signup-professionista").hidden = true;
+      document.getElementById("form-login").hidden = true;
+      document.getElementById("form-signup").hidden = false;
       const m = location.hash.match(/email=([^&]+)/);
       if (m) document.getElementById("signup-email").value = decodeURIComponent(m[1]);
     }

@@ -11,7 +11,7 @@
   "_overrideWeek_spiegazione": "Se vuoi forzare manualmente una settimana specifica (1-5) per tutti i giorni, indipendentemente dalla data, scrivi il numero qui (es. 3). Altrimenti lascia null.",
 
   "linkAcquisto": "https://ilmiopiano.it/#prezzi",
-  "linkPortaleClienti": "https://billing.stripe.com/p/login/test_cNi3cxaWK7pJaPF7YxeME00",
+  "linkPortaleClienti": "",
   "linkPrivacy": "https://ilmiopiano.it/privacy.html",
   "linkTermini": "https://ilmiopiano.it/termini.html",
   "linkAccordoDati": "https://ilmiopiano.it/accordo-trattamento-dati.html",
