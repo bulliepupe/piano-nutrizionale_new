@@ -1354,6 +1354,7 @@
   // ---------------------------------------------------------------------
   // Licenza del professionista (scritta dal server dopo il pagamento Stripe)
   // ---------------------------------------------------------------------
+  const ETICHETTA_PORTALE = "Cambia piano o gestisci abbonamento";
   const NOMI_PIANO = { prova: "Prova gratuita", base: "Base", studio: "Studio", oltre: "Su misura" };
 
   function statoLicenza() {
@@ -1395,14 +1396,20 @@
 
   function renderBoxLicenzaHTML() {
     const st = statoLicenza();
-    const acquista = CONFIG.linkAcquisto ? `<a class="btn btn--ghost" href="${escapeHTML(CONFIG.linkAcquisto)}" target="_blank" rel="noopener">${st.piano === "prova" || !st.attiva ? "Scegli un abbonamento" : "Cambia piano"}</a>` : "";
+    // Chi ha un abbonamento Stripe attivo cambia piano SOLO dal portale clienti:
+    // ricomprare dal sito creerebbe un secondo abbonamento con doppio addebito.
     const haAbbonamento = !!(PROFILO_PROF.licenza && PROFILO_PROF.licenza.stripeCustomerId);
-    const portale = haAbbonamento ? `<button type="button" class="link-btn" id="btn-portale-clienti">Gestisci abbonamento e fatture</button>` : "";
+    const abbonamentoInCorso = haAbbonamento && st.attiva;
+    const acquista = (!abbonamentoInCorso && CONFIG.linkAcquisto)
+      ? `<a class="btn btn--ghost" href="${escapeHTML(CONFIG.linkAcquisto)}" target="_blank" rel="noopener">${st.piano === "prova" || !st.attiva ? "Scegli un abbonamento" : "Cambia piano"}</a>` : "";
+    const portale = abbonamentoInCorso
+      ? `<button type="button" class="btn btn--ghost" id="btn-portale-clienti">${ETICHETTA_PORTALE}</button>`
+      : (haAbbonamento ? `<button type="button" class="link-btn" id="btn-portale-clienti">Fatture e dati di pagamento</button>` : "");
     let testo;
     if (st.motivo === "assente") testo = "Il tuo account non ha una licenza attiva: puoi consultare i piani ma non crearne o modificarli.";
     else if (!st.attiva) testo = `La tua licenza ${st.nome} è scaduta${st.scadenza ? " il " + st.scadenza.toLocaleDateString("it-IT") : ""}. I tuoi pazienti continuano a vedere il loro piano, ma per modificarlo o aggiungere pazienti serve un abbonamento attivo.`;
     else if (st.pieno) testo = `Hai raggiunto il limite del piano ${st.nome} (${st.max} pazienti). Per aggiungerne altri passa a un piano superiore o elimina un paziente che non segui più.`;
-    else if (st.disdetto) testo = `${st.usati} di ${st.max} pazienti · abbonamento disdetto: attivo fino al ${(st.fine || st.scadenza).toLocaleDateString("it-IT")}. Puoi riattivarlo da "Gestisci abbonamento e fatture".`;
+    else if (st.disdetto) testo = `${st.usati} di ${st.max} pazienti · abbonamento disdetto: attivo fino al ${(st.fine || st.scadenza).toLocaleDateString("it-IT")}. Puoi riattivarlo da "${ETICHETTA_PORTALE}".`;
     else testo = `${st.usati} di ${st.max} pazienti${st.scadenza ? " · " + (st.piano === "prova" ? "prova valida fino al " : "rinnovo il ") + st.scadenza.toLocaleDateString("it-IT") : ""}`;
     const classe = (!st.attiva || st.pieno) ? "licenza licenza--avviso" : "licenza";
     return `<section class="${classe}">
@@ -1428,7 +1435,7 @@
       } else {
         mostraToast("Impossibile aprire il portale: controlla la connessione e riprova.", 4000);
       }
-      if (btn) { btn.disabled = false; btn.textContent = "Gestisci abbonamento e fatture"; }
+      if (btn) { btn.disabled = false; btn.textContent = ETICHETTA_PORTALE; }
     }
   }
 
