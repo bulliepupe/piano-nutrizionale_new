@@ -1,5 +1,6 @@
 
 
+
 /**
  * cloud.js
  * Livello di accesso a Firebase (Auth + Firestore). Nessun altro file
@@ -59,6 +60,9 @@
   }
 
   const FieldValue = firebase.firestore.FieldValue;
+
+  // Funzioni server (Cloud Functions), stessa regione della funzione dei promemoria.
+  const funzioni = typeof app.functions === "function" ? app.functions("europe-west1") : null;
 
   window.cloud = {
     configurato: CONFIGURATO,
@@ -146,6 +150,17 @@
         await batch.commit();
       }
       return snap.docs.length;
+    },
+
+    /**
+     * Elimina definitivamente un paziente (account, dati, piano). Passa dal
+     * server: dall'app non si può cancellare l'account di un'altra persona.
+     */
+    async eliminaPaziente(pianoId) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const chiama = funzioni.httpsCallable("eliminaPaziente");
+      const risultato = await chiama({ pianoId });
+      return risultato.data;
     },
 
     // ---------------------------------------------------------------
