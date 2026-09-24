@@ -306,7 +306,9 @@ function pianoDaPrezzo(prezzo, metadati) {
 function licenzaDaAbbonamento(sub) {
   const voce = sub.items && sub.items.data && sub.items.data[0];
   const prezzo = voce && voce.price;
-  const metadati = Object.assign({}, prezzo && prezzo.metadata, sub.metadata);
+  // Il prezzo ha la precedenza: dopo un cambio di piano dal portale clienti
+  // i metadati dell'abbonamento potrebbero riferirsi ancora al piano precedente.
+  const metadati = Object.assign({}, sub.metadata, prezzo && prezzo.metadata);
   const piano = pianoDaPrezzo(prezzo, metadati);
   if (!piano) return null;
   const maxPazienti = piano === "oltre" ? Number(metadati.maxPazienti) : PIANI[piano].maxPazienti;
@@ -394,6 +396,36 @@ exports.stripeWebhook = onRequest(
     }
   }
 );
+
+/**
+ * Apre il portale clienti di Stripe direttamente dall'app, già autenticato:
+ * il professionista è già entrato con email e password, quindi non serve il
+ * link via email. Restituisce l'indirizzo della sessione del portale.
+ */
+const RITORNI_AMMESSI = ["https://bulliepupe.github.io/", "https://ilmiopiano.it/", "https://www.ilmiopiano.it/"];
+
+exports.apriPortaleClienti = onCall({ secrets: [STRIPE_SECRET_KEY] }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+
+  const utente = await db.collection("users").doc(uid).get();
+  const dati = utente.exists ? utente.data() : null;
+  if (!dati || dati.ruolo !== "professionista") {
+    throw new HttpsError("permission-denied", "Solo i professionisti hanno un abbonamento.");
+  }
+  const customerId = dati.licenza && dati.licenza.stripeCustomerId;
+  if (!customerId) {
+    throw new HttpsError("failed-precondition", "Nessun abbonamento a pagamento collegato a questo account.");
+  }
+
+  const richiesto = request.data && typeof request.data.ritorno === "string" ? request.data.ritorno : "";
+  const ritorno = RITORNI_AMMESSI.some((r) => richiesto.startsWith(r)) ? richiesto : RITORNI_AMMESSI[0] + "piano-nutrizionale_new/";
+
+  const Stripe = require("stripe");
+  const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+  const sessione = await stripe.billingPortal.sessions.create({ customer: customerId, return_url: ritorno, locale: "it" });
+  return { url: sessione.url };
+});
 
 /** Applica una licenza pagata prima della registrazione, quando il professionista si registra. */
 exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) => {

@@ -181,6 +181,14 @@
       return risultato.data;
     },
 
+    /** Apre il portale clienti Stripe (abbonamento, fatture, disdetta) già autenticato. Ritorna l'indirizzo. */
+    async apriPortaleClienti(ritorno) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const chiama = funzioni.httpsCallable("apriPortaleClienti");
+      const risultato = await chiama({ ritorno });
+      return risultato.data.url;
+    },
+
     // ---------------------------------------------------------------
     // Piani nutrizionali
     // ---------------------------------------------------------------

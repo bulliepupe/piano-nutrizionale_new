@@ -198,16 +198,20 @@
       }
     });
 
-    document.getElementById("btn-mostra-signup").addEventListener("click", () => {
-      document.getElementById("blocco-signup-professionista").hidden = true;
-      document.getElementById("form-login").hidden = true;
-      document.getElementById("form-signup").hidden = false;
-    });
-    document.getElementById("btn-annulla-signup").addEventListener("click", () => {
-      document.getElementById("form-signup").hidden = true;
-      document.getElementById("form-login").hidden = false;
-      document.getElementById("blocco-signup-professionista").hidden = false;
-    });
+    // Passaggio tra "accesso" e "registrazione professionista": oltre ai due
+    // moduli cambiano anche il sottotitolo e il link "Password dimenticata?",
+    // che riguarda solo l'accesso.
+    const SUB_ACCESSO = "Accedi con le credenziali che ti ha fornito il tuo nutrizionista.";
+    const SUB_REGISTRAZIONE = "Crea il tuo account professionista: dopo potrai aggiungere i tuoi pazienti.";
+    function modalitaRegistrazione(attiva) {
+      document.getElementById("blocco-signup-professionista").hidden = attiva;
+      document.getElementById("form-login").hidden = attiva;
+      document.getElementById("btn-password-dimenticata").hidden = attiva;
+      document.getElementById("form-signup").hidden = !attiva;
+      document.getElementById("auth-sub").textContent = attiva ? SUB_REGISTRAZIONE : SUB_ACCESSO;
+    }
+    document.getElementById("btn-mostra-signup").addEventListener("click", () => modalitaRegistrazione(true));
+    document.getElementById("btn-annulla-signup").addEventListener("click", () => modalitaRegistrazione(false));
 
     // Link legali presi da config.json (così si cambiano in un posto solo)
     caricaConfig().then((c) => {
@@ -217,9 +221,7 @@
 
     // Link dal sito "Inizia la prova gratuita": index.html#registrati(&email=...)
     if (/^#registrati/.test(location.hash)) {
-      document.getElementById("blocco-signup-professionista").hidden = true;
-      document.getElementById("form-login").hidden = true;
-      document.getElementById("form-signup").hidden = false;
+      modalitaRegistrazione(true);
       const m = location.hash.match(/email=([^&]+)/);
       if (m) document.getElementById("signup-email").value = decodeURIComponent(m[1]);
     }
@@ -1392,7 +1394,8 @@
   function renderBoxLicenzaHTML() {
     const st = statoLicenza();
     const acquista = CONFIG.linkAcquisto ? `<a class="btn btn--ghost" href="${escapeHTML(CONFIG.linkAcquisto)}" target="_blank" rel="noopener">${st.piano === "prova" || !st.attiva ? "Scegli un abbonamento" : "Cambia piano"}</a>` : "";
-    const portale = (CONFIG.linkPortaleClienti && st.piano && st.piano !== "prova") ? `<a class="link-btn" href="${escapeHTML(CONFIG.linkPortaleClienti)}" target="_blank" rel="noopener">Gestisci abbonamento e fatture</a>` : "";
+    const haAbbonamento = !!(PROFILO_PROF.licenza && PROFILO_PROF.licenza.stripeCustomerId);
+    const portale = haAbbonamento ? `<button type="button" class="link-btn" id="btn-portale-clienti">Gestisci abbonamento e fatture</button>` : "";
     let testo;
     if (st.motivo === "assente") testo = "Il tuo account non ha una licenza attiva: puoi consultare i piani ma non crearne o modificarli.";
     else if (!st.attiva) testo = `La tua licenza ${st.nome} è scaduta${st.scadenza ? " il " + st.scadenza.toLocaleDateString("it-IT") : ""}. I tuoi pazienti continuano a vedere il loro piano, ma per modificarlo o aggiungere pazienti serve un abbonamento attivo.`;
@@ -1404,6 +1407,26 @@
         <p class="licenza__testo">${escapeHTML(testo)}</p>
         ${(acquista || portale) ? `<div class="licenza__azioni">${acquista}${portale}</div>` : ""}
       </section>`;
+  }
+
+  /** Porta il professionista al portale Stripe già autenticato (nessuna email da attendere). */
+  async function apriPortaleClienti(e) {
+    const btn = e && e.currentTarget;
+    if (btn) { btn.disabled = true; btn.textContent = "Apertura in corso…"; }
+    try {
+      const ritorno = location.origin + location.pathname;
+      const url = await window.cloud.apriPortaleClienti(ritorno);
+      location.href = url;
+    } catch (err) {
+      console.error("Portale clienti:", err);
+      if (CONFIG.linkPortaleClienti) {
+        mostraToast("Apertura diretta non riuscita: ti porto alla pagina di accesso del portale.", 4000);
+        setTimeout(() => window.open(CONFIG.linkPortaleClienti, "_blank", "noopener"), 800);
+      } else {
+        mostraToast("Impossibile aprire il portale: controlla la connessione e riprova.", 4000);
+      }
+      if (btn) { btn.disabled = false; btn.textContent = "Gestisci abbonamento e fatture"; }
+    }
   }
 
   function renderListaPazienti() {
@@ -1433,6 +1456,8 @@
     `;
 
     document.getElementById("btn-nuovo-paziente").addEventListener("click", renderFormNuovoPaziente);
+    const btnPortale = document.getElementById("btn-portale-clienti");
+    if (btnPortale) btnPortale.addEventListener("click", apriPortaleClienti);
     document.getElementById("btn-profilo-prof").addEventListener("click", renderProfiloProfessionista);
     document.querySelectorAll(".paziente-card").forEach((btn) => {
       btn.addEventListener("click", () => apriEditorPaziente(btn.dataset.id));
