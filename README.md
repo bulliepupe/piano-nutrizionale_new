@@ -1,3 +1,5 @@
+[README (5).md](https://github.com/user-attachments/files/32606579/README.5.md)
+
 [README (4).md](https://github.com/user-attachments/files/32561121/README.4.md)
 
 [README.md](https://github.com/user-attachments/files/32471357/README.md)
@@ -133,12 +135,15 @@ sicurezza in `firestore.rules`, non solo l'interfaccia).
 2. Tocca il menu ⋮ in alto a destra → **Aggiungi a schermata Home** (o comparirà un banner automatico "Installa app").
 3. Conferma: l'icona comparirà tra le tue app, e si aprirà a schermo intero come un'app vera.
 
-**iPhone (Safari):**
-1. Apri l'indirizzo GitHub Pages in **Safari** (deve essere Safari, non Chrome, perché su iOS solo Safari può installare app web).
+**iPhone (Safari) — serve iOS 16.4 o successivo per i promemoria:**
+1. Apri l'indirizzo GitHub Pages in **Safari**.
 2. Tocca l'icona **Condividi** (il quadrato con la freccia verso l'alto).
 3. Scorri e tocca **Aggiungi alla schermata Home** → **Aggiungi**.
+4. Apri l'app **dall'icona sulla Home** e accedi di nuovo (l'app installata ha un accesso separato da Safari: è normale).
 
-Da questo momento l'app si apre dall'icona sulla Home, senza barra del browser.
+Su iPhone **le notifiche funzionano solo nell'app installata**, mai in una
+scheda di Safari: è una regola di Apple. L'app lo sa e, se viene aperta da
+Safari, mostra un avviso "Installa l'app sull'iPhone" con questi passaggi.
 
 ---
 
@@ -186,7 +191,11 @@ migliorie pianificate.
 
 Da **"I tuoi pazienti"**, tocca il paziente: si apre l'editor.
 
-- **Dati paziente** — nome, obiettivo, target kcal giornaliero, nutrizionista: modificabili e sincronizzati subito. L'email di accesso resta di sola consultazione (serve per il login).
+- **I miei dati di contatto** (pulsante nella lista pazienti) — nome, qualifica,
+  studio, email, telefono, se usi WhatsApp e una nota per i pazienti. Compaiono
+  nell'app di tutti i tuoi pazienti con il pulsante **Contatta** (WhatsApp,
+  email, chiamata). Quando li modifichi si aggiornano su tutti i pazienti.
+- **Dati paziente** — nome, obiettivo, target kcal giornaliero, nutrizionista (usato solo se i dati di contatto non sono compilati): modificabili e sincronizzati subito. L'email di accesso resta di sola consultazione (serve per il login).
 - **Regole generali del piano** — una per riga, compaiono nella vista "Oggi" del paziente.
 - **Sostituzioni pasto** — gruppi di alimenti che consideri equivalenti tra loro (per calorie, macronutrienti, tipologia): **è una tua valutazione clinica, l'app non la genera da sola**. Un gruppo per riga, con questo formato:
 
@@ -200,6 +209,10 @@ Da **"I tuoi pazienti"**, tocca il paziente: si apre l'editor.
   cambia il testo dei pasti (i 5 sono obbligatori; coccola e kcal
   facoltativi) e premi **"Salva questo giorno"**: si sincronizza subito con
   l'app del paziente, ovunque si trovi.
+- **Copia una settimana** — scegli la settimana da copiare e tocca i numeri
+  delle settimane in cui incollarla (anche la 5, se non esiste ancora). Se
+  una settimana di destinazione ha già dei pasti, l'app chiede conferma
+  prima di sostituirli.
 - **Importa / sostituisci l'intero piano** — per un cambio grosso (piano
   completamente nuovo) puoi scaricare il piano attuale come modello `.json`,
   modificarlo con un editor di testo mantenendo la struttura dei campi, e
@@ -328,6 +341,9 @@ La prima pubblicazione richiede un paio di minuti. Alla fine il terminale mostra
 4. Se non arriva: Console Firebase → menu a sinistra → **Functions** → apri `controllaPromemoria` → scheda "Registri" (Logs), per vedere eventuali errori.
 
 ### 13.6 Quando modifichi qualcosa
+
+- La configurazione Firebase si scrive **solo** in `js/firebase-config.js`: il
+  service worker la legge da lì. Non serve più copiarla in `service-worker.js`.
 
 - Se cambi `config.json` (il ciclo delle settimane), aggiorna anche gli stessi
   valori in `functions/index.js` (costanti `CONFIG_BASE` e `ORARI_DEFAULT` in
