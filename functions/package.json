@@ -1,4 +1,3 @@
-
 {
   "name": "piano-nutrizionale-functions",
   "description": "Cloud Functions: promemoria pasto push, eliminazione pazienti, licenze e pagamenti Stripe",
