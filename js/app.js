@@ -1,6 +1,7 @@
 
 
 
+
 /**
  * app.js — logica dell'interfaccia.
  * Nessuna dipendenza di build: apre index.html via HTTPS/GitHub Pages e funziona.
@@ -1310,6 +1311,9 @@
         if (aggiornato) {
           PIANO_ATTIVO_PROF = aggiornato;
           renderEditorProfessionista();
+        } else {
+          // Il paziente non esiste più (eliminato, anche da un altro dispositivo).
+          renderListaPazienti();
         }
       }
     });
@@ -1419,6 +1423,12 @@
           <input type="file" id="input-importa-piano-prof" accept="application/json,.json" hidden>
         </div>
       </section>
+
+      <section class="settings-section zona-elimina">
+        <h2>Elimina paziente</h2>
+        <p class="hint">Cancella per sempre l'account di accesso di ${escapeHTML(piano.pazienteNome || "questo paziente")}, il suo piano e lo storico dei pasti. Non si può annullare: se ti serve, scarica prima il piano come modello qui sopra.</p>
+        <button type="button" class="btn btn--pericolo" id="btn-elimina-paziente">Elimina paziente</button>
+      </section>
     `;
 
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
@@ -1429,6 +1439,7 @@
     collegaCopiaSettimana();
     document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));
     document.getElementById("input-importa-piano-prof").addEventListener("change", onFileImportPianoProf);
+    document.getElementById("btn-elimina-paziente").addEventListener("click", apriConfermaEliminazione);
   }
 
   /** Markup dell'editor "Modifica un pasto": generico, lavora su un piano/settimana/giorno passati esplicitamente. */
@@ -1807,6 +1818,66 @@
       btn.disabled = false;
       btn.textContent = "Salva dati di contatto";
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Eliminazione di un paziente
+  // ---------------------------------------------------------------------
+  const PAROLA_CONFERMA = "elimina";
+
+  function apriConfermaEliminazione() {
+    const piano = PIANO_ATTIVO_PROF;
+    if (!piano) return;
+    const nome = piano.pazienteNome || "questo paziente";
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">Eliminare ${escapeHTML(nome)}?</h2>
+      <p class="sheet__nota sheet__nota--attenzione">Verranno cancellati per sempre: l'account di accesso (${escapeHTML(piano.pazienteEmail || "email non indicata")}), il piano nutrizionale, le spunte dei pasti e i promemoria. Il paziente non potrà più entrare nell'app.</p>
+      <label class="editor-campo">
+        <span>Per confermare scrivi <strong>${PAROLA_CONFERMA}</strong></span>
+        <input type="text" id="input-conferma-elimina" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <p class="auth-error" id="errore-elimina" hidden></p>
+      <button type="button" class="btn btn--pericolo" id="btn-conferma-elimina" disabled>Elimina definitivamente</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    const input = overlay.querySelector("#input-conferma-elimina");
+    const btn = overlay.querySelector("#btn-conferma-elimina");
+    input.addEventListener("input", () => {
+      btn.disabled = input.value.trim().toLowerCase() !== PAROLA_CONFERMA;
+    });
+    btn.addEventListener("click", () => eseguiEliminazionePaziente(piano, btn));
+    input.focus();
+  }
+
+  async function eseguiEliminazionePaziente(piano, btn) {
+    const errEl = document.getElementById("errore-elimina");
+    errEl.hidden = true;
+    btn.disabled = true;
+    btn.textContent = "Eliminazione in corso…";
+    // Blocca anche "Annulla" mentre il server lavora, per non lasciare dubbi sull'esito.
+    document.querySelectorAll("#sheet-overlay [data-chiudi-sheet]").forEach((b) => (b.disabled = true));
+    try {
+      await window.cloud.eliminaPaziente(piano.id);
+      chiudiSheet();
+      mostraToast(`${piano.pazienteNome || "Paziente"} eliminato`);
+      renderListaPazienti();
+    } catch (e) {
+      errEl.textContent = traduciErroreEliminazione(e);
+      errEl.hidden = false;
+      btn.disabled = false;
+      btn.textContent = "Elimina definitivamente";
+      document.querySelectorAll("#sheet-overlay [data-chiudi-sheet]").forEach((b) => (b.disabled = false));
+    }
+  }
+
+  function traduciErroreEliminazione(e) {
+    const codice = String((e && e.code) || "").replace(/^functions\//, "");
+    if (codice === "permission-denied") return (e && e.message) || "Non hai i permessi per eliminare questo paziente.";
+    if (codice === "not-found" && e.message && /eliminato/.test(e.message)) return e.message;
+    if (codice === "unavailable" || codice === "deadline-exceeded") return "Connessione assente o lenta: riprova tra poco.";
+    if (codice === "unauthenticated") return "Sessione scaduta: esci e accedi di nuovo.";
+    // "not-found"/"internal" senza messaggio nostro = funzione non ancora pubblicata sul server.
+    return "Eliminazione non riuscita. Se è la prima volta, la funzione sul server va ancora pubblicata (firebase deploy --only functions). Dettaglio: " + (codice || "sconosciuto");
   }
 
   // ---------------------------------------------------------------------
