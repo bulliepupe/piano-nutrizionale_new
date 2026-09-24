@@ -2,6 +2,7 @@
 
 
 
+
 /**
  * app.js — logica dell'interfaccia.
  * Nessuna dipendenza di build: apre index.html via HTTPS/GitHub Pages e funziona.
@@ -74,6 +75,7 @@
   let vistaProfCorrente = "lista"; // "lista" | "editor" | "nuovo"
   let pazienteSelezionatoId = null;
   let PIANO_ATTIVO_PROF = null;
+  let unsubProfilo = null; // ascolto in tempo reale del profilo (licenza)
   let PROFILO_PROF = {}; // documento users/{uid} del professionista (nome, contatti)
   const EDITOR_PROF = { settSel: null, giornoSel: null };
 
@@ -208,6 +210,21 @@
       document.getElementById("blocco-signup-professionista").hidden = false;
     });
 
+    // Link legali presi da config.json (così si cambiano in un posto solo)
+    caricaConfig().then((c) => {
+      const mappa = { privacy: c.linkPrivacy, termini: c.linkTermini, dpa: c.linkAccordoDati };
+      document.querySelectorAll("[data-link]").forEach((a) => { if (mappa[a.dataset.link]) a.href = mappa[a.dataset.link]; });
+    });
+
+    // Link dal sito "Inizia la prova gratuita": index.html#registrati(&email=...)
+    if (/^#registrati/.test(location.hash)) {
+      document.getElementById("blocco-signup-professionista").hidden = true;
+      document.getElementById("form-login").hidden = true;
+      document.getElementById("form-signup").hidden = false;
+      const m = location.hash.match(/email=([^&]+)/);
+      if (m) document.getElementById("signup-email").value = decodeURIComponent(m[1]);
+    }
+
     document.getElementById("form-signup").addEventListener("submit", async (e) => {
       e.preventDefault();
       const nome = document.getElementById("signup-nome").value;
@@ -231,6 +248,7 @@
   }
 
   async function eseguiLogout() {
+    if (unsubProfilo) { unsubProfilo(); unsubProfilo = null; }
     pulisciListenerCloud();
     await window.cloud.logout();
   }
@@ -380,8 +398,11 @@
     }
 
     const oggi = new Date();
-    const { settimana, giornoNome, giorno } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
+    const { settimana, giornoNome, giorno, pianoIniziato } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
     const orari = orariEffettivi();
+    const avvisoInizio = (pianoIniziato === false && PIANO_ATTIVO.dataInizio)
+      ? `<p class="hint avviso-inizio">Il tuo piano inizia ${formattaDataIt(PIANO_ATTIVO.dataInizio)}. Intanto puoi dare un'occhiata alla prima settimana.</p>`
+      : "";
 
     if (!giorno) {
       root.innerHTML = `<div class="empty">Nessun dato disponibile per oggi nel piano caricato.</div>`;
@@ -393,6 +414,7 @@
 
     root.innerHTML = `
       ${renderBannerIosHTML()}
+      ${avvisoInizio}
       <section class="hero">
         <div class="hero__foto" role="img" aria-label="Piatto con verdure fresche, cereali e agrumi"></div>
         <div class="hero__eyebrow"><span class="dot"></span> Settimana ${settimana} del piano</div>
@@ -531,7 +553,7 @@
     }
 
     const oggi = new Date();
-    const { settimana: settimanaCorrente, giornoIndex: oggiIndex } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG);
+    const { settimana: settimanaCorrente, giornoIndex: oggiIndex } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG, PIANO_ATTIVO);
     const settimanaMostrata = settimanaAnteprima || settimanaCorrente;
     const giorni = PIANO_ATTIVO.settimane[settimanaMostrata];
     const orari = orariEffettivi();
@@ -695,7 +717,7 @@
       return;
     }
     const oggi = new Date();
-    const { settimana: settimanaCorrente } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG);
+    const { settimana: settimanaCorrente } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG, PIANO_ATTIVO);
     const settimanaMostrata = spesaSettimanaSelezionata || settimanaCorrente;
     const giorni = PIANO_ATTIVO.settimane[settimanaMostrata];
 
@@ -1301,6 +1323,13 @@
     vistaProfCorrente = "lista";
     pazienteSelezionatoId = null;
     PROFILO_PROF = utenteDati || {};
+    caricaConfig().then((c) => { CONFIG = c; if (vistaProfCorrente === "lista") renderListaPazienti(); });
+    if (unsubProfilo) unsubProfilo();
+    unsubProfilo = window.cloud.ascoltaUtente(UID, (dati) => {
+      if (!dati) return;
+      PROFILO_PROF = dati;
+      if (vistaProfCorrente === "lista") renderListaPazienti();
+    });
 
     unsubPazienti = window.cloud.ascoltaPazientiProfessionista(UID, (pazienti) => {
       PAZIENTI_PROF = pazienti;
@@ -1321,6 +1350,63 @@
     renderListaPazienti();
   }
 
+  // ---------------------------------------------------------------------
+  // Licenza del professionista (scritta dal server dopo il pagamento Stripe)
+  // ---------------------------------------------------------------------
+  const NOMI_PIANO = { prova: "Prova gratuita", base: "Base", studio: "Studio", oltre: "Su misura" };
+
+  function statoLicenza() {
+    const l = PROFILO_PROF.licenza || null;
+    const usati = PAZIENTI_PROF.length;
+    if (!l) return { attiva: false, nome: "Nessuna licenza", usati, max: 0, scadenza: null, motivo: "assente" };
+    const scad = l.scadenza && typeof l.scadenza.toDate === "function" ? l.scadenza.toDate()
+      : (l.scadenza ? new Date(l.scadenza) : null);
+    const scaduta = scad && scad.getTime() < Date.now();
+    const attiva = l.stato === "attiva" && !scaduta;
+    const max = Number(l.maxPazienti) || 0;
+    return {
+      attiva, nome: NOMI_PIANO[l.piano] || l.piano || "—", piano: l.piano,
+      usati, max, scadenza: scad, pieno: usati >= max,
+      motivo: attiva ? (usati >= max ? "pieno" : "ok") : "scaduta",
+    };
+  }
+
+  function formattaDataIt(d) {
+    if (!d) return "";
+    if (typeof d === "string") { const [a, m, g] = d.split("-").map(Number); d = new Date(a, m - 1, g); }
+    return d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  }
+
+  function oggiISO() {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
+  /** Messaggio chiaro quando una scrittura viene rifiutata per licenza non attiva. */
+  function msgErroreScrittura(e, fallback) {
+    if (e && (e.code === "permission-denied" || e.code === "firestore/permission-denied")) {
+      return "Non salvato: la tua licenza non è attiva. Rinnovala da \"I tuoi pazienti\".";
+    }
+    return fallback;
+  }
+
+  function renderBoxLicenzaHTML() {
+    const st = statoLicenza();
+    const acquista = CONFIG.linkAcquisto ? `<a class="btn btn--ghost" href="${escapeHTML(CONFIG.linkAcquisto)}" target="_blank" rel="noopener">${st.piano === "prova" || !st.attiva ? "Scegli un abbonamento" : "Cambia piano"}</a>` : "";
+    const portale = (CONFIG.linkPortaleClienti && st.piano && st.piano !== "prova") ? `<a class="link-btn" href="${escapeHTML(CONFIG.linkPortaleClienti)}" target="_blank" rel="noopener">Gestisci abbonamento e fatture</a>` : "";
+    let testo;
+    if (st.motivo === "assente") testo = "Il tuo account non ha una licenza attiva: puoi consultare i piani ma non crearne o modificarli.";
+    else if (!st.attiva) testo = `La tua licenza ${st.nome} è scaduta${st.scadenza ? " il " + st.scadenza.toLocaleDateString("it-IT") : ""}. I tuoi pazienti continuano a vedere il loro piano, ma per modificarlo o aggiungere pazienti serve un abbonamento attivo.`;
+    else if (st.pieno) testo = `Hai raggiunto il limite del piano ${st.nome} (${st.max} pazienti). Per aggiungerne altri passa a un piano superiore o elimina un paziente che non segui più.`;
+    else testo = `${st.usati} di ${st.max} pazienti${st.scadenza ? " · " + (st.piano === "prova" ? "prova valida fino al " : "rinnovo il ") + st.scadenza.toLocaleDateString("it-IT") : ""}`;
+    const classe = (!st.attiva || st.pieno) ? "licenza licenza--avviso" : "licenza";
+    return `<section class="${classe}">
+        <div class="licenza__testa"><span class="licenza__etichetta">La tua licenza</span><strong>${escapeHTML(st.nome)}</strong></div>
+        <p class="licenza__testo">${escapeHTML(testo)}</p>
+        ${(acquista || portale) ? `<div class="licenza__azioni">${acquista}${portale}</div>` : ""}
+      </section>`;
+  }
+
   function renderListaPazienti() {
     vistaProfCorrente = "lista";
     pazienteSelezionatoId = null;
@@ -1328,7 +1414,8 @@
 
     const contattiMancanti = !(PROFILO_PROF.contatti && (PROFILO_PROF.contatti.email || PROFILO_PROF.contatti.telefono));
     profRoot.innerHTML = `
-      <button type="button" class="btn" id="btn-nuovo-paziente" style="margin-bottom:10px;">+ Nuovo paziente</button>
+      ${renderBoxLicenzaHTML()}
+      <button type="button" class="btn" id="btn-nuovo-paziente" style="margin-bottom:10px;" ${(statoLicenza().attiva && !statoLicenza().pieno) ? "" : "disabled"}>+ Nuovo paziente</button>
       <button type="button" class="btn btn--ghost" id="btn-profilo-prof" style="margin-bottom:16px;">I miei dati di contatto</button>
       ${contattiMancanti ? `<p class="hint avviso-profilo">Aggiungi email e telefono in "I miei dati di contatto": i tuoi pazienti vedranno il pulsante Contatta.</p>` : ""}
       ${PAZIENTI_PROF.length === 0 ? `
@@ -1393,6 +1480,8 @@
           <label class="editor-campo"><span>Target giornaliero (kcal)</span><input type="number" data-campo="targetKcal" value="${pz.targetKcal != null ? pz.targetKcal : ""}"></label>
           <label class="editor-campo"><span>Nutrizionista (usato solo se non hai compilato "I miei dati di contatto")</span><input type="text" data-campo="nutrizionista" value="${escapeHTML(pz.nutrizionista || "")}"></label>
         </div>
+        <label class="editor-campo" style="margin-top:10px;"><span>Data di inizio del piano</span><input type="date" id="editor-data-inizio" value="${escapeHTML(piano.dataInizio || "")}"></label>
+        <p class="hint">La settimana di questa data è la Settimana 1; poi il ciclo passa alle settimane successive compilate e ricomincia. ${piano.dataInizio ? "" : "Se la lasci vuota vale il calendario generale dell'app."}</p>
         <button type="button" class="btn" id="btn-salva-dati-paziente" style="margin-top:14px;">Salva dati paziente</button>
       </section>
 
@@ -1530,7 +1619,7 @@
       await window.cloud.salvaPiano(piano.id, risultato.piano);
       mostraToast("Pasto salvato e sincronizzato col paziente");
     } catch (e) {
-      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+      mostraToast(msgErroreScrittura(e, "Salvataggio non riuscito: controlla la connessione"), 4000);
     } finally {
       btn.disabled = false;
       btn.textContent = "Salva questo giorno";
@@ -1559,7 +1648,7 @@
       await window.cloud.salvaPiano(piano.id, risultato.piano);
       mostraToast("Regole salvate e sincronizzate col paziente");
     } catch (e) {
-      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+      mostraToast(msgErroreScrittura(e, "Salvataggio non riuscito: controlla la connessione"), 4000);
     } finally {
       btn.disabled = false;
       btn.textContent = "Salva regole";
@@ -1603,7 +1692,7 @@
       await window.cloud.salvaPiano(piano.id, risultato.piano);
       mostraToast("Sostituzioni salvate e sincronizzate col paziente");
     } catch (e) {
-      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+      mostraToast(msgErroreScrittura(e, "Salvataggio non riuscito: controlla la connessione"), 4000);
     } finally {
       btn.disabled = false;
       btn.textContent = "Salva sostituzioni";
@@ -1639,10 +1728,13 @@
     try {
       // pazienteNome è il nome "mostrato" nella lista pazienti: è un campo
       // separato dal contenuto del piano validato, lo aggiungiamo qui.
-      await window.cloud.salvaPiano(piano.id, Object.assign({}, risultato.piano, { pazienteNome: nuovoPazienteNome }));
+      const extra = { pazienteNome: nuovoPazienteNome };
+      const di = (document.getElementById("editor-data-inizio") || {}).value;
+      if (di) extra.dataInizio = di;
+      await window.cloud.salvaPiano(piano.id, Object.assign({}, risultato.piano, extra));
       mostraToast("Dati paziente salvati e sincronizzati");
     } catch (e) {
-      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+      mostraToast(msgErroreScrittura(e, "Salvataggio non riuscito: controlla la connessione"), 4000);
     } finally {
       btn.disabled = false;
       btn.textContent = "Salva dati paziente";
@@ -1739,7 +1831,7 @@
       const elenco = destinazioni.sort((a, b) => a - b).join(", ");
       mostraToast(`Settimana ${origine} copiata in: ${elenco}`);
     } catch (e) {
-      mostraToast("Copia non riuscita: controlla la connessione", 4000);
+      mostraToast(msgErroreScrittura(e, "Copia non riuscita: controlla la connessione"), 4000);
     } finally {
       btn.disabled = false;
       btn.textContent = "Copia settimana";
@@ -1813,7 +1905,7 @@
       PROFILO_PROF = Object.assign({}, PROFILO_PROF, { contatti, nome: contatti.nome });
       mostraToast(n === 1 ? "Dati salvati e aggiornati per 1 paziente" : `Dati salvati e aggiornati per ${n} pazienti`);
     } catch (e) {
-      mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+      mostraToast(msgErroreScrittura(e, "Salvataggio non riuscito: controlla la connessione"), 4000);
     } finally {
       btn.disabled = false;
       btn.textContent = "Salva dati di contatto";
@@ -1896,6 +1988,8 @@
         <label class="editor-campo"><span>Nome e cognome paziente</span><input type="text" id="np-nome" required></label>
         <label class="editor-campo"><span>Email di accesso</span><input type="email" id="np-email" required></label>
         <label class="editor-campo"><span>Password provvisoria</span><input type="text" id="np-password" value="${passwordGenerata}"></label>
+        <label class="editor-campo"><span>Data di inizio del piano</span><input type="date" id="np-inizio" value="${oggiISO()}"></label>
+        <p class="hint">La settimana che contiene questa data è la Settimana 1 del piano; poi le settimane si alternano in ordine.</p>
         <p class="auth-error" id="np-error" hidden></p>
         <button type="button" class="btn" id="btn-crea-paziente" style="margin-top:14px;">Crea paziente</button>
       </section>
@@ -1924,6 +2018,11 @@
       return;
     }
 
+    const st = statoLicenza();
+    if (!st.attiva) { mostraErroreIn("np-error", "La tua licenza non è attiva: attiva un abbonamento per creare nuovi pazienti."); return; }
+    if (st.pieno) { mostraErroreIn("np-error", `Hai raggiunto il limite del tuo piano (${st.max} pazienti).`); return; }
+    const dataInizio = (document.getElementById("np-inizio") || {}).value || oggiISO();
+
     const btn = document.getElementById("btn-crea-paziente");
     btn.disabled = true;
     btn.textContent = "Creazione in corso…";
@@ -1935,6 +2034,7 @@
       const contatti = PROFILO_PROF.contatti || null;
       pianoBase.paziente.nutrizionista = (contatti && contatti.nome) || PROFILO_PROF.nome || "";
       if (contatti) pianoBase.contattiNutrizionista = contatti;
+      pianoBase.dataInizio = dataInizio;
       await window.cloud.creaPiano(pianoBase, UID, nuovoUid, nome, email);
       mostraToast("Paziente creato — comunicagli email e password");
       renderListaPazienti();
@@ -1990,7 +2090,7 @@
         await window.cloud.salvaPiano(PIANO_ATTIVO_PROF.id, risultato.piano);
         mostraToast("Piano importato e sincronizzato col paziente");
       } catch (err) {
-        mostraToast("Salvataggio non riuscito: controlla la connessione", 4000);
+        mostraToast(msgErroreScrittura(err, "Salvataggio non riuscito: controlla la connessione"), 4000);
       }
     };
     reader.readAsText(file);
