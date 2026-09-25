@@ -1298,3 +1298,166 @@ p.stat-motivi { padding-left: 0; }
 .auth-check input { margin-top: 3px; accent-color: var(--accent); }
 .auth-check a { color: var(--accent); }
 .auth-form .hint { font-size: 13px; line-height: 1.45; color: var(--ink-soft); margin: 2px 0 4px; }
+
+/* ---------- Ricette ---------- */
+.tabbar__btn { position: relative; }
+.tabbar__btn.ha-novita::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: calc(50% + 9px);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  border: 2px solid var(--surface);
+}
+.link-btn--sinistra { width: auto; text-align: left; padding: 4px 0 12px; }
+
+.ricette-cerca {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 10px 16px;
+  margin-bottom: 10px;
+}
+.ricette-filtri { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.chip-filtro {
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.chip-filtro[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+.ricette-griglia {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.ricette-griglia > .empty { grid-column: 1 / -1; }
+.ricetta-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  font-family: var(--font-body);
+  color: var(--ink);
+}
+.ricetta-card:active { opacity: 0.85; }
+.ricetta-card__foto {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface)) center / cover no-repeat;
+  font-size: 34px;
+}
+.ricetta-card__corpo { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px 12px; }
+.ricetta-card__nuova {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+}
+.ricetta-card__titolo { font-family: var(--font-display); font-size: 16px; font-weight: 600; line-height: 1.25; }
+.ricetta-card__meta { font-size: 12px; color: var(--ink-faint); }
+
+.ricetta__foto { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--radius-m); margin-bottom: 14px; }
+.ricetta__titolo { font-family: var(--font-display); font-size: 28px; font-weight: 600; line-height: 1.15; margin: 0 0 10px; }
+.ricetta__meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.ricetta__macro { font-size: 13.5px; color: var(--ink-soft); margin: 10px 0 0; }
+.ricetta__etichette { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+.ricetta__etichette span { font-size: 12px; color: var(--ink-soft); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
+.ricetta__sezione { font-family: var(--font-display); font-size: 19px; font-weight: 600; margin: 24px 0 8px; }
+.ricetta__ingredienti { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.7; }
+.ricetta__passi { margin: 0; padding-left: 22px; font-size: 15px; line-height: 1.6; }
+.ricetta__passi li { padding-left: 4px; margin-bottom: 10px; }
+.ricetta__passi li::marker { font-weight: 700; color: var(--accent); }
+.ricetta__note { font-size: 14.5px; line-height: 1.6; color: var(--ink-soft); margin: 0; white-space: pre-line; }
+.ricetta__azioni { display: flex; flex-direction: column; gap: 8px; margin-top: 26px; }
+.ricetta__azioni a.btn { text-align: center; text-decoration: none; }
+.ricetta__piede { display: none; }
+
+/* Ricettario del professionista */
+.ricetta-riga {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-card);
+  padding: 10px 14px 10px 10px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.ricetta-riga__foto {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-s);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface)) center / cover no-repeat;
+}
+.ricetta-riga__testo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ric-foto { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.ric-foto__anteprima {
+  width: 132px;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-m);
+  border: 1px dashed var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  background: var(--surface) center / cover no-repeat;
+}
+.ric-foto__azioni { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.ric-foto__azioni .link-btn { width: auto; padding: 4px 0; }
+.ric-file { display: inline-flex; align-items: center; justify-content: center; width: auto; padding: 11px 18px; cursor: pointer; }
+.ric-griglia { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 420px) { .ric-griglia { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ric-griglia input { width: 100%; }
+.editor-campo input[type="date"], .ric-griglia input[type="number"] {
+  font-family: var(--font-body); font-size: 15px; color: var(--ink);
+  border: 1px solid var(--border); border-radius: var(--radius-s); padding: 9px 11px; background: var(--surface);
+}
+.ric-scelta { display: flex; align-items: center; gap: 10px; font-size: 14.5px; color: var(--ink); padding: 7px 0; cursor: pointer; }
+.ric-scelta input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+.ric-destinatari { margin: 6px 0 0 28px; padding-left: 12px; border-left: 2px solid var(--border-soft); }
+
+/* Stampa della ricetta: si stampa solo l'area preparata apposta */
+#area-stampa { display: none; }
+@media print {
+  body > *:not(#area-stampa) { display: none !important; }
+  #area-stampa { display: block; }
+  body { background: #fff; color: #000; }
+  .ricetta--stampa { max-width: 17cm; margin: 0 auto; font-size: 11pt; }
+  .ricetta--stampa .ricetta__foto { max-height: 8cm; aspect-ratio: auto; object-fit: cover; }
+  .ricetta--stampa .pill { border: 1px solid #999; background: none; color: #000; }
+  .ricetta--stampa .ricetta__passi li::marker { color: #000; }
+  .ricetta--stampa .ricetta__piede { display: block; margin-top: 1cm; font-size: 9pt; color: #555; border-top: 1px solid #ccc; padding-top: 6px; }
+  .ricetta--stampa h3, .ricetta--stampa li { break-inside: avoid; }
+}

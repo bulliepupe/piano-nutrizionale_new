@@ -61,6 +61,11 @@
 
   const FieldValue = firebase.firestore.FieldValue;
 
+  // Firebase Storage: foto delle ricette e allegati (PDF o immagini) caricati
+  // dal professionista. Se lo script non è caricato, le ricette funzionano
+  // lo stesso ma senza file.
+  const storage = typeof firebase.storage === "function" ? app.storage() : null;
+
   // Funzioni server (Cloud Functions), stessa regione della funzione dei promemoria.
   const funzioni = typeof app.functions === "function" ? app.functions("europe-west1") : null;
 
@@ -289,6 +294,98 @@
     onMessaggioPrimoPiano(cb) {
       if (!messaging) return () => {};
       return messaging.onMessage(cb);
+    },
+
+    // ------------------------------------------------------------------
+    // Ricette del professionista
+    // Documento /ricette/{id}: professionistaUid, titolo, porzioni, tempoMin,
+    // kcal e macro per porzione, etichette, ingredienti [righe], procedimento
+    // [passaggi], foto {path,url}, allegato {path,url,nome,tipo}, visibilita
+    // ("tutti" | "selezionati") e destinatari [uid dei pazienti].
+    // I file stanno in Storage sotto ricette/{professionistaUid}/{id}/.
+    // ------------------------------------------------------------------
+    nuovoIdRicetta() {
+      return db.collection("ricette").doc().id;
+    },
+
+    ascoltaRicetteProfessionista(professionistaUid, cb) {
+      return db.collection("ricette").where("professionistaUid", "==", professionistaUid).onSnapshot(
+        (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
+        (err) => { console.error("Errore ascolto ricettario:", err); cb([]); }
+      );
+    },
+
+    /** Ricette visibili a un paziente: quelle per tutti + quelle scelte per lui. */
+    ascoltaRicettePaziente(professionistaUid, pazienteUid, cb) {
+      const perTutti = new Map(), perLui = new Map();
+      let pronte = 0;
+      const emetti = () => {
+        if (pronte < 2) return;
+        const tutte = new Map(perTutti);
+        perLui.forEach((v, k) => tutte.set(k, v));
+        cb(Array.from(tutte.values()));
+      };
+      const base = db.collection("ricette").where("professionistaUid", "==", professionistaUid);
+      const ascolta = (query, mappa) => query.onSnapshot(
+        (snap) => {
+          mappa.clear();
+          snap.docs.forEach((d) => mappa.set(d.id, Object.assign({ id: d.id }, d.data())));
+          if (!mappa.__pronta) { mappa.__pronta = true; pronte++; }
+          emetti();
+        },
+        (err) => { console.error("Errore ascolto ricette:", err); if (!mappa.__pronta) { mappa.__pronta = true; pronte++; } emetti(); }
+      );
+      const u1 = ascolta(base.where("visibilita", "==", "tutti"), perTutti);
+      const u2 = ascolta(base.where("destinatari", "array-contains", pazienteUid), perLui);
+      return () => { u1(); u2(); };
+    },
+
+    async salvaRicetta(id, dati, nuova) {
+      const ref = db.collection("ricette").doc(id);
+      if (nuova) {
+        await ref.set(Object.assign({}, dati, { creato: FieldValue.serverTimestamp(), aggiornato: FieldValue.serverTimestamp() }));
+      } else {
+        await ref.update(Object.assign({}, dati, { aggiornato: FieldValue.serverTimestamp() }));
+      }
+    },
+
+    async eliminaRicetta(id, percorsiFile) {
+      for (const p of percorsiFile || []) {
+        try { await storage.ref(p).delete(); } catch (e) { /* file già assente */ }
+      }
+      await db.collection("ricette").doc(id).delete();
+    },
+
+    /**
+     * Carica un file di una ricetta su Storage. Ritorna { path, url }: l'url
+     * è quello di download (con token), salvato nella ricetta e usato dai
+     * pazienti per vedere foto e allegati.
+     */
+    async caricaFileRicetta(professionistaUid, ricettaId, nome, blob, tipo, suAvanzamento) {
+      if (!storage) throw new Error("storage-non-disponibile");
+      const pulito = String(nome || "file").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^A-Za-z0-9._-]+/g, "-").slice(-60);
+      const path = `ricette/${professionistaUid}/${ricettaId}/${Date.now()}-${pulito}`;
+      const ref = storage.ref(path);
+      const task = ref.put(blob, { contentType: tipo, cacheControl: "public, max-age=31536000" });
+      await new Promise((ok, ko) => task.on("state_changed",
+        (s) => { if (suAvanzamento && s.totalBytes) suAvanzamento(s.bytesTransferred / s.totalBytes); },
+        ko, ok));
+      const url = await ref.getDownloadURL();
+      return { path, url };
+    },
+
+    async eliminaFileRicetta(path) {
+      if (!storage || !path) return;
+      try { await storage.ref(path).delete(); } catch (e) { /* già eliminato */ }
+    },
+
+    /** Aggiunge più articoli insieme alla lista della spesa di una settimana. */
+    async aggiungiArticoliSpesa(uid, docId, testi) {
+      if (!testi.length) return;
+      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+        extra: FieldValue.arrayUnion.apply(null, testi), aggiornato: FieldValue.serverTimestamp(),
+      }, { merge: true });
     },
 
     // ------------------------------------------------------------------

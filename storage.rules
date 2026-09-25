@@ -1,0 +1,29 @@
+// Regole di sicurezza di Firebase Storage per "Il mio Piano".
+//
+// Come applicarle: Firebase Console → Storage → scheda "Regole" → incolla
+// questo intero file al posto di quello presente → "Pubblica".
+//
+// Contenuto dello spazio: foto e allegati (PDF o immagini) delle ricette,
+// sotto ricette/{uid del professionista}/{id ricetta}/.
+// - Solo il professionista proprietario può caricare, sostituire o
+//   eliminare i file, entro 10 MB e solo immagini o PDF.
+// - I pazienti NON leggono i file direttamente da Storage: ricevono
+//   l'indirizzo di download dentro la ricetta, che a sua volta è protetta
+//   dalle regole di Firestore (la vedono solo i pazienti a cui è destinata).
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /ricette/{professionistaUid}/{ricettaId}/{nomeFile} {
+      allow read, delete: if request.auth != null && request.auth.uid == professionistaUid;
+      allow create, update: if request.auth != null && request.auth.uid == professionistaUid
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+    }
+
+    // Tutto il resto è chiuso.
+    match /{percorso=**} {
+      allow read, write: if false;
+    }
+  }
+}

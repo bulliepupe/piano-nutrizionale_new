@@ -97,6 +97,26 @@ service cloud.firestore {
       allow delete: if isProfessionista() && resource.data.professionistaUid == request.auth.uid;
     }
 
+    // Ricette del professionista. Le legge lui e i SUOI pazienti: tutti, se
+    // la ricetta è "per tutti", altrimenti solo quelli scelti (destinatari).
+    // Si pubblicano e si modificano solo con licenza attiva; eliminarle è
+    // sempre possibile.
+    match /ricette/{ricettaId} {
+      allow read: if isSignedIn() && (
+        resource.data.professionistaUid == request.auth.uid ||
+        (resource.data.professionistaUid == utente().get("professionistaUid", "") &&
+          (resource.data.visibilita == "tutti" || request.auth.uid in resource.data.destinatari))
+      );
+      allow create: if isProfessionista() && licenzaAttiva()
+        && request.resource.data.professionistaUid == request.auth.uid
+        && request.resource.data.destinatari is list;
+      allow update: if isProfessionista() && licenzaAttiva()
+        && resource.data.professionistaUid == request.auth.uid
+        && request.resource.data.professionistaUid == request.auth.uid
+        && request.resource.data.destinatari is list;
+      allow delete: if isProfessionista() && resource.data.professionistaUid == request.auth.uid;
+    }
+
     // Tutto il resto (licenze in attesa, registro notifiche) è solo per il server.
     match /{document=**} {
       allow read, write: if false;
