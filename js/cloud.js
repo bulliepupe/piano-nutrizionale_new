@@ -292,6 +292,32 @@
     },
 
     // ------------------------------------------------------------------
+    // Statistiche per il professionista
+    // ------------------------------------------------------------------
+    /** Il paziente registra l'ultima apertura dell'app (serve all'avviso di abbandono). */
+    async registraAccesso(uid) {
+      await db.collection("users").doc(uid).update({ ultimoAccesso: FieldValue.serverTimestamp() });
+    },
+
+    /**
+     * Dati di un paziente per le statistiche (letti dal professionista):
+     * il documento utente (ultimo accesso, notifiche, data di creazione) e le
+     * spunte dei pasti a partire dal giorno `daGiorno` ("YYYY-MM-DD").
+     */
+    async leggiDatiStatistiche(pazienteUid, daGiorno) {
+      const utenteRef = db.collection("users").doc(pazienteUid);
+      const [utente, spunteSnap] = await Promise.all([
+        utenteRef.get(),
+        utenteRef.collection("pastiFatti")
+          .where(firebase.firestore.FieldPath.documentId(), ">=", daGiorno)
+          .get(),
+      ]);
+      const spunte = {};
+      spunteSnap.forEach((d) => { spunte[d.id] = d.data(); });
+      return { utente: utente.exists ? utente.data() : null, spunte };
+    },
+
+    // ------------------------------------------------------------------
     // Lista della spesa: spunte e articoli aggiunti a mano, sincronizzati
     // tra tutti i dispositivi del paziente. Un documento per settimana di
     // calendario (id = data del lunedì, es. "2026-09-28") più un documento

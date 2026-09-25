@@ -37,6 +37,7 @@
     anticipo: "pnut:anticipo-promemoria",
     pushOk: "pnut:push-ok",               // "1" se questo dispositivo è registrato per il push dal server
     bannerIosChiuso: "pnut:banner-ios-chiuso",
+    ultimoAccessoInviato: "pnut:ultimo-accesso-inviato",
   };
   const ANTICIPI_VALIDI = [10, 15, 20, 30];
   const ANTICIPO_DEFAULT = 15;
@@ -156,6 +157,7 @@
     if (unsubPiano) { unsubPiano(); unsubPiano = null; }
     if (unsubPastiOggi) { unsubPastiOggi(); unsubPastiOggi = null; }
     scollegaSpesa();
+    azzeraStatistiche();
     if (unsubPazienti) { unsubPazienti(); unsubPazienti = null; }
     pazienteSelezionatoId = null;
     vistaProfCorrente = "lista";
@@ -312,6 +314,7 @@
     }
     aggiornaIconaCampanella();
     render();
+    registraAccessoSeServe();
 
     setInterval(controllaCambioGiorno, 60 * 1000);
 
@@ -320,11 +323,23 @@
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible" || RUOLO !== "paziente") return;
       controllaCambioGiorno();
+      registraAccessoSeServe();
       if (notificheAttive()) {
         pianificaNotificheOggi();
         mostraPromemoriaPerso();
       }
     });
+  }
+
+  /**
+   * Registra su Firestore l'apertura dell'app (al massimo ogni 30 minuti):
+   * il professionista la vede nelle statistiche e nell'avviso di abbandono.
+   */
+  function registraAccessoSeServe() {
+    const ultimo = Number(localStorage.getItem(LS_KEYS.ultimoAccessoInviato) || 0);
+    if (Date.now() - ultimo < 30 * 60 * 1000) return;
+    localStorage.setItem(LS_KEYS.ultimoAccessoInviato, String(Date.now()));
+    window.cloud.registraAccesso(UID).catch(() => localStorage.removeItem(LS_KEYS.ultimoAccessoInviato));
   }
 
   function controllaCambioGiorno() {
@@ -1529,9 +1544,13 @@
       if (vistaProfCorrente === "lista") renderListaPazienti();
     });
 
+    let primaLista = true;
     unsubPazienti = window.cloud.ascoltaPazientiProfessionista(UID, (pazienti) => {
       PAZIENTI_PROF = pazienti;
-      if (vistaProfCorrente === "lista") {
+      if (primaLista) { primaLista = false; if (pazienti.length) aggiornaStatisticheInBackground(false); }
+      if (vistaProfCorrente === "statistiche") {
+        renderStatistiche();
+      } else if (vistaProfCorrente === "lista") {
         renderListaPazienti();
       } else if (vistaProfCorrente === "editor" && pazienteSelezionatoId) {
         const aggiornato = pazienti.find((p) => p.id === pazienteSelezionatoId);
@@ -1645,6 +1664,7 @@
     profRoot.innerHTML = `
       ${renderBoxLicenzaHTML()}
       <button type="button" class="btn" id="btn-nuovo-paziente" style="margin-bottom:10px;" ${(statoLicenza().attiva && !statoLicenza().pieno) ? "" : "disabled"}>+ Nuovo paziente</button>
+      ${PAZIENTI_PROF.length ? `<button type="button" class="btn btn--ghost" id="btn-statistiche" style="margin-bottom:10px;">Andamento dei pazienti</button>` : ""}
       <button type="button" class="btn btn--ghost" id="btn-profilo-prof" style="margin-bottom:16px;">I miei dati di contatto</button>
       ${contattiMancanti ? `<p class="hint avviso-profilo">Aggiungi email e telefono in "I miei dati di contatto": i tuoi pazienti vedranno il pulsante Contatta.</p>` : ""}
       ${PAZIENTI_PROF.length === 0 ? `
@@ -1656,6 +1676,7 @@
               <span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span>
               <span class="paziente-card__email">${escapeHTML(p.pazienteEmail || "")}</span>
               ${p.paziente && p.paziente.obiettivo ? `<span class="paziente-card__obiettivo">${escapeHTML(p.paziente.obiettivo)}</span>` : ""}
+              ${badgeStatoHTML(p.id)}
             </button>
           `).join("")}
         </div>
@@ -1666,8 +1687,328 @@
     const btnPortale = document.getElementById("btn-portale-clienti");
     if (btnPortale) btnPortale.addEventListener("click", apriPortaleClienti);
     document.getElementById("btn-profilo-prof").addEventListener("click", renderProfiloProfessionista);
+    const btnStat = document.getElementById("btn-statistiche");
+    if (btnStat) btnStat.addEventListener("click", renderStatistiche);
     document.querySelectorAll(".paziente-card").forEach((btn) => {
       btn.addEventListener("click", () => apriEditorPaziente(btn.dataset.id));
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Statistiche dei pazienti (lato professionista)
+  // ---------------------------------------------------------------------
+  // I calcoli stanno in js/statistiche.js; qui c'è la lettura da Firestore
+  // (con una piccola cache: le statistiche non cambiano di minuto in minuto)
+  // e l'interfaccia: panoramica di tutti i pazienti e scheda del singolo.
+  const STAT = { risultati: {}, caricato: null, inCorso: null, errorePermessi: false };
+  const STAT_VALIDITA_MS = 10 * 60 * 1000;
+  const ETICHETTE_STATO = {
+    rosso: "Da ricontattare",
+    giallo: "Da seguire",
+    verde: "In linea",
+    attesa: "Piano non iniziato",
+  };
+
+  function azzeraStatistiche() {
+    STAT.risultati = {}; STAT.caricato = null; STAT.inCorso = null; STAT.errorePermessi = false;
+  }
+
+  function perc(v) { return v == null ? "—" : Math.round(v * 100) + "%"; }
+
+  function quandoRelativo(chiaveGiorno) {
+    if (!chiaveGiorno) return "mai";
+    const n = window.statistiche.differenzaGiorni(new Date(), window.statistiche.daChiave(chiaveGiorno));
+    if (n <= 0) return "oggi";
+    if (n === 1) return "ieri";
+    return `${n} giorni fa`;
+  }
+
+  function dataDaTimestamp(t) {
+    if (!t) return null;
+    if (typeof t.toDate === "function") return t.toDate();
+    const d = new Date(t);
+    return isNaN(d) ? null : d;
+  }
+
+  /** Legge (o riusa dalla cache) i dati di tutti i pazienti e calcola le statistiche. */
+  function caricaStatistiche(forza) {
+    const fresche = STAT.caricato && (Date.now() - STAT.caricato < STAT_VALIDITA_MS);
+    const tuttiPresenti = PAZIENTI_PROF.every((p) => STAT.risultati[p.id]);
+    if (!forza && fresche && tuttiPresenti) return Promise.resolve();
+    if (STAT.inCorso) return STAT.inCorso;
+    const S = window.statistiche;
+    const daGiorno = S.primoGiornoStorico(new Date());
+    STAT.inCorso = Promise.all(PAZIENTI_PROF.filter((p) => p.pazienteUid).map(async (p) => {
+      try {
+        const { utente, spunte } = await window.cloud.leggiDatiStatistiche(p.pazienteUid, daGiorno);
+        const u = utente || {};
+        const creato = dataDaTimestamp(u.creato);
+        const inizioPiano = p.dataInizio || CONFIG.startDate || null;
+        const inizioCreazione = creato ? S.chiave(creato) : null;
+        const inizio = [inizioPiano, inizioCreazione].filter(Boolean).sort().pop() || null;
+        STAT.risultati[p.id] = {
+          r: S.calcola({
+            spunte, inizio,
+            ultimoAccesso: dataDaTimestamp(u.ultimoAccesso),
+            notificheAttive: !!u.notificheAttive,
+            dispositiviNotifiche: Array.isArray(u.fcmTokens) ? u.fcmTokens.length : 0,
+            prossimaVisita: p.prossimaVisita || null,
+          }),
+          accessoRilevato: !!u.ultimoAccesso,
+        };
+      } catch (e) {
+        console.error("Statistiche paziente", p.id, e);
+        if (e && (e.code === "permission-denied" || e.code === "firestore/permission-denied")) STAT.errorePermessi = true;
+        STAT.risultati[p.id] = { errore: true };
+      }
+    })).then(() => {
+      STAT.caricato = Date.now();
+    }).finally(() => {
+      STAT.inCorso = null;
+    });
+    return STAT.inCorso;
+  }
+
+  /** Aggiorna la vista corrente quando le statistiche sono pronte. */
+  function aggiornaStatisticheInBackground(forza) {
+    caricaStatistiche(forza).then(() => {
+      if (vistaProfCorrente === "lista") renderListaPazienti();
+      else if (vistaProfCorrente === "statistiche") renderStatistiche();
+      else if (vistaProfCorrente === "statPaziente" && pazienteSelezionatoId) renderStatistichePaziente(pazienteSelezionatoId);
+    });
+  }
+
+  function badgeStatoHTML(pianoId) {
+    const x = STAT.risultati[pianoId];
+    if (!x || x.errore) return "";
+    const r = x.r;
+    const testo = r.stato === "attesa" ? ETICHETTE_STATO.attesa
+      : `${ETICHETTE_STATO[r.stato]} · 7 giorni ${perc(r.aderenza7)}`;
+    return `<span class="stato-badge stato-badge--${r.stato}"><span class="stato-punto" aria-hidden="true"></span>${escapeHTML(testo)}</span>`;
+  }
+
+  function testoNotifiche(n) {
+    return n === "attive" ? "Promemoria attivi" : n === "disattivate" ? "Promemoria disattivati" : "Promemoria senza dispositivo";
+  }
+
+  function renderStatistiche() {
+    vistaProfCorrente = "statistiche";
+    pazienteSelezionatoId = null;
+    document.getElementById("prof-header-titolo").textContent = "Andamento dei pazienti";
+
+    const pronti = PAZIENTI_PROF.filter((p) => STAT.risultati[p.id] && !STAT.risultati[p.id].errore);
+    const conteggi = { rosso: 0, giallo: 0, verde: 0, attesa: 0 };
+    pronti.forEach((p) => { conteggi[STAT.risultati[p.id].r.stato]++; });
+    const valutabili = pronti.map((p) => STAT.risultati[p.id].r.aderenza7).filter((v) => v != null);
+    const media7 = valutabili.length ? valutabili.reduce((a, b) => a + b, 0) / valutabili.length : null;
+
+    const ordinati = PAZIENTI_PROF.slice().sort((a, b) => {
+      const ra = STAT.risultati[a.id], rb = STAT.risultati[b.id];
+      const oa = ra && ra.r ? window.statistiche.ORDINE_STATO[ra.r.stato] : 9;
+      const ob = rb && rb.r ? window.statistiche.ORDINE_STATO[rb.r.stato] : 9;
+      if (oa !== ob) return oa - ob;
+      const va = ra && ra.r && ra.r.aderenza7 != null ? ra.r.aderenza7 : 2;
+      const vb = rb && rb.r && rb.r.aderenza7 != null ? rb.r.aderenza7 : 2;
+      return va - vb;
+    });
+
+    const inCaricamento = !!STAT.inCorso || (!STAT.caricato && PAZIENTI_PROF.length > 0);
+    const aggiornato = STAT.caricato ? new Date(STAT.caricato).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : null;
+
+    profRoot.innerHTML = `
+      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      ${STAT.errorePermessi ? `<p class="hint avviso-profilo">Non riesco a leggere le spunte dei pazienti: probabilmente le nuove regole di Firestore non sono ancora state pubblicate.</p>` : ""}
+      ${PAZIENTI_PROF.length === 0 ? `<div class="empty">Quando avrai dei pazienti, qui vedrai come seguono il piano.</div>` : `
+        <section class="stat-sintesi">
+          <div class="stat-sintesi__num"><strong>${perc(media7)}</strong><span>aderenza media negli ultimi 7 giorni</span></div>
+          <div class="stat-sintesi__stati">
+            <span class="stato-badge stato-badge--rosso"><span class="stato-punto"></span>${conteggi.rosso} da ricontattare</span>
+            <span class="stato-badge stato-badge--giallo"><span class="stato-punto"></span>${conteggi.giallo} da seguire</span>
+            <span class="stato-badge stato-badge--verde"><span class="stato-punto"></span>${conteggi.verde} in linea</span>
+            ${conteggi.attesa ? `<span class="stato-badge stato-badge--attesa"><span class="stato-punto"></span>${conteggi.attesa} non iniziati</span>` : ""}
+          </div>
+        </section>
+        <div class="stat-aggiorna">
+          <span>${inCaricamento ? "Caricamento in corso…" : aggiornato ? `Aggiornate alle ${aggiornato}` : ""}</span>
+          <button type="button" class="link-btn" id="btn-aggiorna-stat" ${inCaricamento ? "disabled" : ""}>Aggiorna</button>
+        </div>
+        <div class="lista-pazienti">
+          ${ordinati.map((p) => {
+            const x = STAT.risultati[p.id];
+            if (!x) return `<div class="stat-card"><span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span><span class="stat-card__piede">Caricamento…</span></div>`;
+            if (x.errore) return `<div class="stat-card"><span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span><span class="stat-card__piede">Dati non disponibili</span></div>`;
+            const r = x.r;
+            return `
+              <button type="button" class="stat-card stat-card--${r.stato}" data-stat-id="${p.id}">
+                <span class="stat-card__testa">
+                  <span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span>
+                  <span class="stato-badge stato-badge--${r.stato}"><span class="stato-punto"></span>${ETICHETTE_STATO[r.stato]}</span>
+                </span>
+                ${r.motivi.length && r.stato !== "verde" ? `<span class="stat-card__motivo">${escapeHTML(r.motivi[0])}</span>` : ""}
+                <span class="stat-card__numeri">
+                  <span><strong>${perc(r.aderenza7)}</strong> 7 giorni</span>
+                  <span><strong>${perc(r.aderenza30)}</strong> 30 giorni</span>
+                  <span><strong>${r.serie}</strong> ${r.serie === 1 ? "giorno" : "giorni"} di fila</span>
+                </span>
+                <span class="stat-card__piede">Ultima attività: ${quandoRelativo(r.ultimaInterazione)} · ${testoNotifiche(r.notifiche)}</span>
+              </button>`;
+          }).join("")}
+        </div>
+        <p class="stat-nota">L'aderenza è la quota di pasti segnati come fatti sui giorni già conclusi. Una giornata è rispettata con almeno ${window.statistiche.SOGLIA_GIORNO_OK} pasti su 5. Il paziente è da ricontattare se non apre l'app e non segna pasti da più di ${window.statistiche.GIORNI_ALLARME} giorni.</p>
+      `}
+    `;
+
+    document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    const agg = document.getElementById("btn-aggiorna-stat");
+    if (agg) agg.addEventListener("click", () => { aggiornaStatisticheInBackground(true); renderStatistiche(); });
+    profRoot.querySelectorAll("[data-stat-id]").forEach((b) => b.addEventListener("click", () => renderStatistichePaziente(b.dataset.statId)));
+    if (!STAT.caricato && !STAT.inCorso && PAZIENTI_PROF.length) aggiornaStatisticheInBackground(false);
+  }
+
+  function messaggioIncoraggiamento(piano, r) {
+    const nome = (piano.pazienteNome || "").trim().split(/\s+/)[0] || "";
+    const saluto = nome ? `Ciao ${nome}` : "Ciao";
+    if (r.stato === "rosso") return `${saluto}, come stai? Ho visto che negli ultimi giorni non hai usato l'app del piano: va tutto bene? Se qualcosa non funziona o vuoi rivedere il piano insieme, scrivimi pure.`;
+    if (r.stato === "giallo") return `${saluto}, come procede con il piano? Se qualche pasto ti crea difficoltà possiamo trovare insieme un'alternativa. Ricordati di segnare i pasti nell'app: mi aiuta a seguirti meglio.`;
+    if (r.serie >= 3) return `${saluto}, complimenti: stai seguendo il piano con costanza da ${r.serie} giorni di fila! Continua così.`;
+    return `${saluto}, come va con il piano? Ricordati di segnare i pasti nell'app: mi aiuta a seguirti meglio.`;
+  }
+
+  function barraHTML(etichetta, valore, nota) {
+    return `
+      <div class="stat-barra">
+        <span class="stat-barra__etichetta">${escapeHTML(etichetta)}</span>
+        <span class="stat-barra__traccia"><span class="stat-barra__riempimento" style="width:${valore == null ? 0 : Math.round(valore * 100)}%"></span></span>
+        <span class="stat-barra__valore">${nota != null ? escapeHTML(nota) : perc(valore)}</span>
+      </div>`;
+  }
+
+  function renderStatistichePaziente(id) {
+    const piano = PAZIENTI_PROF.find((p) => p.id === id);
+    const x = STAT.risultati[id];
+    if (!piano || !x || x.errore) { renderStatistiche(); return; }
+    vistaProfCorrente = "statPaziente";
+    pazienteSelezionatoId = id;
+    const r = x.r;
+    document.getElementById("prof-header-titolo").textContent = piano.pazienteNome || "Paziente";
+
+    const GIORNI_BREVI = ["L", "M", "M", "G", "V", "S", "D"];
+    const livello = (f) => f == null ? "vuoto" : f >= 4 ? "alto" : f >= 2 ? "medio" : f >= 1 ? "basso" : "zero";
+    const pc = r.prossimoControllo;
+    const testoControllo = !pc ? "Non impostato"
+      : pc.traGiorni > 1 ? `Tra ${pc.traGiorni} giorni` : pc.traGiorni === 1 ? "Domani" : pc.traGiorni === 0 ? "Oggi"
+      : `Passato da ${-pc.traGiorni} ${pc.traGiorni === -1 ? "giorno" : "giorni"}`;
+    const messaggio = messaggioIncoraggiamento(piano, r);
+
+    profRoot.innerHTML = `
+      <button type="button" class="link-btn" id="btn-torna-stat" style="margin-bottom:10px;">← Andamento dei pazienti</button>
+
+      <section class="stat-testata stat-card--${r.stato}">
+        <span class="stato-badge stato-badge--${r.stato}"><span class="stato-punto"></span>${ETICHETTE_STATO[r.stato]}</span>
+        ${r.motivi.length ? `<ul class="stat-motivi">${r.motivi.map((m) => `<li>${escapeHTML(m)}</li>`).join("")}</ul>` : `<p class="stat-motivi">Segue il piano con regolarità e ha i promemoria attivi.</p>`}
+      </section>
+
+      <div class="stat-riquadri">
+        <div class="stat-riquadro"><strong>${perc(r.aderenza7)}</strong><span>Aderenza 7 giorni</span></div>
+        <div class="stat-riquadro"><strong>${perc(r.aderenza30)}</strong><span>Aderenza 30 giorni</span></div>
+        <div class="stat-riquadro"><strong>${r.serie}</strong><span>Giorni di fila rispettati (record ${r.record})</span></div>
+        <div class="stat-riquadro"><strong>${r.fattiOggi}/5</strong><span>Pasti segnati oggi</span></div>
+      </div>
+
+      <section class="settings-section">
+        <h2>Ultime 4 settimane</h2>
+        <div class="stat-calendario" role="img" aria-label="Pasti segnati giorno per giorno nelle ultime 4 settimane">
+          ${GIORNI_BREVI.map((g) => `<span class="stat-calendario__intestazione">${g}</span>`).join("")}
+          ${r.calendario.map((c) => `<span class="stat-giorno stat-giorno--${livello(c.fatti)} ${c.oggi ? "is-oggi" : ""}" title="${c.chiave}: ${c.fatti == null ? "non valutato" : c.fatti + "/5 pasti"}">${c.giorno}</span>`).join("")}
+        </div>
+        <p class="stat-legenda">
+          <span class="stat-giorno stat-giorno--alto"></span> 4–5 pasti
+          <span class="stat-giorno stat-giorno--medio"></span> 2–3
+          <span class="stat-giorno stat-giorno--basso"></span> 1
+          <span class="stat-giorno stat-giorno--zero"></span> nessuno
+        </p>
+      </section>
+
+      <section class="settings-section">
+        <h2>Andamento settimanale</h2>
+        <div class="stat-colonne">
+          ${r.settimane.map((s) => {
+            const d = window.statistiche.daChiave(s.lunedi);
+            return `<div class="stat-colonna ${s.inCorso ? "is-corrente" : ""}" title="Settimana dal ${d.toLocaleDateString("it-IT")}: ${perc(s.valore)}">
+              <span class="stat-colonna__valore">${s.valore == null ? "" : Math.round(s.valore * 100)}</span>
+              <span class="stat-colonna__barra"><span style="height:${s.valore == null ? 0 : Math.max(3, Math.round(s.valore * 100))}%"></span></span>
+              <span class="stat-colonna__etichetta">${d.getDate()}/${d.getMonth() + 1}</span>
+            </div>`;
+          }).join("")}
+        </div>
+        <p class="stat-nota" style="margin-top:8px;">Percentuale di pasti segnati per settimana, dal lunedì indicato. L'ultima colonna è la settimana in corso.</p>
+      </section>
+
+      <section class="settings-section">
+        <h2>Pasti negli ultimi 30 giorni</h2>
+        ${r.perPasto.map((p) => barraHTML(MEAL_META[p.pasto].label, p.valore)).join("")}
+        <div style="height:10px;"></div>
+        ${barraHTML("Dal lunedì al venerdì", r.feriali)}
+        ${barraHTML("Sabato e domenica", r.weekend)}
+      </section>
+
+      <section class="settings-section">
+        <h2>Uso dell'app</h2>
+        <p class="stat-riga"><span>Ultima attività</span><strong>${quandoRelativo(r.ultimaInterazione)}</strong></p>
+        <p class="stat-riga"><span>Ultimo pasto segnato</span><strong>${quandoRelativo(r.ultimaSpunta)}</strong></p>
+        <p class="stat-riga"><span>Promemoria</span><strong>${testoNotifiche(r.notifiche)}</strong></p>
+        ${x.accessoRilevato ? "" : `<p class="stat-nota" style="margin-top:8px;">Le aperture dell'app vengono registrate da questo aggiornamento: finché il paziente non riapre l'app, l'ultima attività si basa sui pasti segnati.</p>`}
+      </section>
+
+      <section class="settings-section">
+        <h2>Prossimo controllo</h2>
+        <p class="stat-riga"><span>${pc ? formattaDataIt(pc.data) : "Nessuna data"}</span><strong>${testoControllo}</strong></p>
+        <div class="editor-campo" style="flex-direction:row; gap:8px; align-items:stretch; margin-top:8px;">
+          <input type="date" id="input-prossima-visita" value="${pc ? pc.data : ""}" style="flex:1;" aria-label="Data del prossimo controllo">
+          <button type="button" class="btn" id="btn-salva-visita" style="width:auto; padding:0 16px;">Salva</button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h2>Scrivi a ${escapeHTML((piano.pazienteNome || "il paziente").split(" ")[0])}</h2>
+        <label class="editor-campo">Messaggio (puoi modificarlo)
+          <textarea id="testo-incoraggiamento" rows="4">${escapeHTML(messaggio)}</textarea>
+        </label>
+        <div class="stat-azioni">
+          <button type="button" class="btn" id="btn-msg-whatsapp">Invia con WhatsApp</button>
+          ${piano.pazienteEmail ? `<button type="button" class="btn btn--ghost" id="btn-msg-email">Invia per email</button>` : ""}
+        </div>
+      </section>
+
+      <button type="button" class="btn btn--ghost" id="btn-apri-piano-da-stat">Apri il piano di ${escapeHTML((piano.pazienteNome || "questo paziente").split(" ")[0])}</button>
+    `;
+
+    document.getElementById("btn-torna-stat").addEventListener("click", renderStatistiche);
+    document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
+    const testo = () => document.getElementById("testo-incoraggiamento").value.trim();
+    document.getElementById("btn-msg-whatsapp").addEventListener("click", () => {
+      window.open("https://wa.me/?text=" + encodeURIComponent(testo()), "_blank", "noopener");
+    });
+    const btnEmail = document.getElementById("btn-msg-email");
+    if (btnEmail) btnEmail.addEventListener("click", () => {
+      location.href = `mailto:${encodeURIComponent(piano.pazienteEmail)}?subject=${encodeURIComponent("Il tuo piano nutrizionale")}&body=${encodeURIComponent(testo())}`;
+    });
+    document.getElementById("btn-salva-visita").addEventListener("click", async (e) => {
+      const valore = document.getElementById("input-prossima-visita").value || null;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await window.cloud.salvaPiano(id, { prossimaVisita: valore });
+        piano.prossimaVisita = valore;
+        STAT.risultati[id].r.prossimoControllo = valore
+          ? { data: valore, traGiorni: window.statistiche.differenzaGiorni(window.statistiche.daChiave(valore), new Date()) }
+          : null;
+        mostraToast(valore ? "Prossimo controllo salvato" : "Data del controllo rimossa");
+        renderStatistichePaziente(id);
+      } catch (err) {
+        btn.disabled = false;
+        mostraToast(msgErroreScrittura(err, "Data non salvata: controlla la connessione"));
+      }
     });
   }
 
@@ -1695,7 +2036,10 @@
     const pz = piano.paziente || {};
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <div class="editor-navigazione">
+        <button type="button" class="link-btn" id="btn-torna-lista">← I tuoi pazienti</button>
+        <button type="button" class="link-btn" id="btn-andamento-paziente">Andamento</button>
+      </div>
 
       <section class="settings-section">
         <h2>Dati paziente</h2>
@@ -1752,6 +2096,10 @@
     `;
 
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    document.getElementById("btn-andamento-paziente").addEventListener("click", () => {
+      const id = piano.id;
+      caricaStatistiche(false).then(() => renderStatistichePaziente(id));
+    });
     document.getElementById("btn-salva-dati-paziente").addEventListener("click", salvaDatiPazienteProfessionista);
     document.getElementById("btn-salva-norme").addEventListener("click", salvaNormeGeneraliProfessionista);
     document.getElementById("btn-salva-sostituzioni").addEventListener("click", salvaSostituzioniProfessionista);

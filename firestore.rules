@@ -16,7 +16,8 @@
 //   con licenza attiva. Il paziente continua a leggere il suo piano anche se
 //   la licenza del professionista scade;
 // - le spunte "pasto fatto" e la lista della spesa vivono sotto l'utente
-//   paziente e le scrive lui.
+//   paziente e le scrive lui; il suo professionista può solo LEGGERE le
+//   spunte, per le statistiche di andamento.
 
 rules_version = '2';
 service cloud.firestore {
@@ -66,8 +67,14 @@ service cloud.firestore {
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid"]);
       allow delete: if false;
 
+      // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
+      // può leggerle (non modificarle) per le statistiche di andamento.
       match /pastiFatti/{giorno} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
+        allow write: if isSignedIn() && request.auth.uid == userId;
+        allow read: if isSignedIn() && (
+          request.auth.uid == userId ||
+          get(/databases/$(database)/documents/users/$(userId)).data.get("professionistaUid", "") == request.auth.uid
+        );
       }
 
       // Lista della spesa del paziente: una lista per settimana + le sue
