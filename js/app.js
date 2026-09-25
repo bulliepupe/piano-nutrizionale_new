@@ -155,6 +155,7 @@
   function pulisciListenerCloud() {
     if (unsubPiano) { unsubPiano(); unsubPiano = null; }
     if (unsubPastiOggi) { unsubPastiOggi(); unsubPastiOggi = null; }
+    scollegaSpesa();
     if (unsubPazienti) { unsubPazienti(); unsubPazienti = null; }
     pazienteSelezionatoId = null;
     vistaProfCorrente = "lista";
@@ -610,226 +611,422 @@
   }
 
   // ---------------------------------------------------------------------
-  // Vista "Spesa" — lista della spesa generata dai pasti della settimana
+  // Vista "Spesa" — lista della spesa intelligente generata dal piano
   // ---------------------------------------------------------------------
-  let spesaSettimanaSelezionata = null; // null = usa la settimana corrente calcolata
+  // Il riconoscimento degli alimenti (merge di singolari/plurali, varianti,
+  // quantità, categorie e icone) vive in js/alimenti.js. Qui c'è solo
+  // l'interfaccia: vista a lista o a blocchi, spunte sincronizzate su
+  // Firestore (una lista per settimana di calendario) e correzioni del
+  // paziente (nome, categoria, articoli nascosti).
+  const LS_VISTA_SPESA = "pnut:spesa-vista"; // "lista" | "blocchi"
+  const CAMPI_SPESA = MEAL_KEYS.concat(["coccola"]);
+  const MESI_BREVI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
+  const SPESA = {
+    offset: 0,            // 0 = questa settimana, 1 = prossima, …
+    docId: null,          // data del lunedì, es. "2026-09-28"
+    unsub: null,
+    unsubPref: null,
+    dati: { spuntate: [], extra: [] },
+    pref: { categoria: {}, nome: {}, nascosti: [] },
+    contesto: null,       // { giorni, etichetta } della settimana mostrata
+    voci: [],             // ultime voci disegnate (servono a opzioni e copia)
+  };
 
-  /**
-   * Divide il testo di un pasto sul separatore " + ", MA senza spezzare un "+"
-   * che si trova dentro una parentesi (es. "Omelette (1 uovo + 150g albumi)"
-   * deve restare un unico segmento da scomporre poi al suo interno).
-   */
-  function dividiRispettandoParentesi(testo) {
-    const segmenti = [];
-    let corrente = "";
-    let profondita = 0;
-    for (let i = 0; i < testo.length; i++) {
-      const ch = testo[i];
-      if (ch === "(") profondita++;
-      if (ch === ")") profondita = Math.max(0, profondita - 1);
-      if (ch === "+" && profondita === 0 && testo[i - 1] === " " && testo[i + 1] === " ") {
-        segmenti.push(corrente.trim());
-        corrente = "";
-      } else {
-        corrente += ch;
-      }
+  function vistaSpesa() {
+    return localStorage.getItem(LS_VISTA_SPESA) === "blocchi" ? "blocchi" : "lista";
+  }
+
+  function scollegaSpesa() {
+    if (SPESA.unsub) { SPESA.unsub(); SPESA.unsub = null; }
+    if (SPESA.unsubPref) { SPESA.unsubPref(); SPESA.unsubPref = null; }
+    SPESA.docId = null;
+    SPESA.offset = 0;
+    SPESA.dati = { spuntate: [], extra: [] };
+    SPESA.pref = { categoria: {}, nome: {}, nascosti: [] };
+  }
+
+  /** Le prossime 4 settimane di calendario, ciascuna con la sua settimana del piano. */
+  function settimaneSpesa() {
+    const lunedi = window.weekLogic.lunediDellaSettimana(new Date());
+    return [0, 1, 2, 3].map((k) => {
+      const inizio = new Date(lunedi);
+      inizio.setDate(inizio.getDate() + 7 * k);
+      const fine = new Date(inizio);
+      fine.setDate(fine.getDate() + 6);
+      const { settimana } = window.weekLogic.calcolaSettimanaGiorno(inizio, CONFIG, PIANO_ATTIVO);
+      const intervallo = inizio.getMonth() === fine.getMonth()
+        ? `${inizio.getDate()}–${fine.getDate()} ${MESI_BREVI[fine.getMonth()]}`
+        : `${inizio.getDate()} ${MESI_BREVI[inizio.getMonth()]} – ${fine.getDate()} ${MESI_BREVI[fine.getMonth()]}`;
+      const quando = ["Questa settimana", "Prossima settimana", "Tra 2 settimane", "Tra 3 settimane"][k];
+      return { k, settimana, docId: chiaveData(inizio), intervallo, etichetta: `${quando}, ${intervallo} (settimana ${settimana})` };
+    });
+  }
+
+  function collegaAscoltoSpesa(docId) {
+    if (!SPESA.unsubPref) {
+      SPESA.unsubPref = window.cloud.ascoltaSpesa(UID, "preferenze", (d) => {
+        SPESA.pref = { categoria: d.categoria || {}, nome: d.nome || {}, nascosti: d.nascosti || [] };
+        ridisegnaSpesaSeVisibile();
+      });
     }
-    if (corrente.trim()) segmenti.push(corrente.trim());
-    return segmenti;
+    if (SPESA.docId === docId && SPESA.unsub) return;
+    if (SPESA.unsub) SPESA.unsub();
+    SPESA.docId = docId;
+    SPESA.dati = { spuntate: [], extra: [] };
+    SPESA.unsub = window.cloud.ascoltaSpesa(UID, docId, (d) => {
+      if (SPESA.docId !== docId) return;
+      SPESA.dati = { spuntate: d.spuntate || [], extra: d.extra || [] };
+      ridisegnaSpesaSeVisibile();
+    });
   }
 
-  /** Estrae una o più voci {nome, quantita, unita} da UN segmento (senza "+" fuori parentesi). */
-  function estraiVociSegmento(testoSegmento) {
-    const out = [];
-    const matchParen = testoSegmento.match(/\(([^)]*)\)/);
-    const base = testoSegmento.replace(/\([^)]*\)/g, "").trim();
-    const parenContenuto = matchParen ? matchParen[1].trim() : "";
-
-    const parenSembraIngredienti = parenContenuto
-      && (parenContenuto.includes(",") || parenContenuto.includes("+") || /\d/.test(parenContenuto))
-      && !/^(no |senza )/i.test(parenContenuto)
-      && parenContenuto.length < 80;
-
-    if (parenSembraIngredienti && (parenContenuto.includes(",") || parenContenuto.includes("+"))) {
-      // Il nome del piatto (es. "Omelette", "Risotto alla robiola") non è di per
-      // sé un ingrediente da comprare: contano i componenti tra parentesi.
-      parenContenuto.split(/,|\+/).forEach((p) => out.push(...parseVoceSingola(p.trim())));
-    } else if (base) {
-      out.push(...parseVoceSingola(base));
-    } else if (parenContenuto) {
-      out.push(...parseVoceSingola(parenContenuto));
-    }
-    return out;
+  function ridisegnaSpesaSeVisibile() {
+    if (currentView === "spesa" && document.getElementById("spesa-contenuto")) disegnaContenutoSpesa();
   }
 
-  function parseVoceSingola(testo) {
-    testo = testo.trim();
-    if (!testo) return [];
-    if (/^(NO |SENZA )/i.test(testo)) return []; // note come "NO PANE"
-
-    // "3 fette biscottate integrali" / "1 uovo"
-    let m = testo.match(/^(\d+)\s+(.+)$/);
-    if (m) return [{ nome: capitalizzaVoce(m[2].trim()), quantita: Number(m[1]), unita: "pz" }];
-
-    // "Pollo alla griglia 220g" / "Latte p.s. 200ml"
-    m = testo.match(/^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(g|kg|ml|l)\b\.?\s*$/i);
-    if (m) return [{ nome: capitalizzaVoce(m[1].trim()), quantita: Number(m[2].replace(",", ".")), unita: m[3].toLowerCase() }];
-
-    // "150g albumi" (quantità prima del nome)
-    m = testo.match(/^(\d+(?:[.,]\d+)?)\s*(g|kg|ml|l)\s+(.+)$/i);
-    if (m) return [{ nome: capitalizzaVoce(m[3].trim()), quantita: Number(m[1].replace(",", ".")), unita: m[2].toLowerCase() }];
-
-    return [{ nome: capitalizzaVoce(testo), quantita: null, unita: null }];
-  }
-
-  function capitalizzaVoce(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-
-  function estraiVociDaPasto(testoPasto) {
-    return dividiRispettandoParentesi(testoPasto).flatMap(estraiVociSegmento);
-  }
-
-  /** Aggrega gli ingredienti di tutti i pasti dei 7 giorni di una settimana, sommando le quantità con la stessa unità. */
-  function aggregaIngredientiSettimana(giorni) {
+  /** Voci da mostrare: piano + articoli aggiunti a mano, con le correzioni del paziente applicate. */
+  function calcolaVociSpesa() {
     const mappa = new Map();
-    giorni.forEach((g) => {
-      MEAL_KEYS.forEach((k) => {
-        estraiVociDaPasto(g[k] || "").forEach((v) => {
-          const chiave = v.nome.toLowerCase() + "|" + (v.unita || "");
-          if (!mappa.has(chiave)) {
-            mappa.set(chiave, { nome: v.nome, quantita: v.quantita, unita: v.unita, occorrenze: 1 });
-          } else {
-            const voce = mappa.get(chiave);
-            voce.occorrenze += 1;
-            if (v.quantita != null && voce.quantita != null) voce.quantita += v.quantita;
-            else if (v.quantita != null) voce.quantita = v.quantita;
-          }
-        });
+    window.alimenti.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA).forEach((v) => {
+      mappa.set(v.chiave, Object.assign({}, v, { daPiano: true, testiExtra: [] }));
+    });
+    SPESA.dati.extra.forEach((testo) => {
+      window.alimenti.classificaArticolo(testo).forEach((v) => {
+        if (!mappa.has(v.chiave)) mappa.set(v.chiave, Object.assign({}, v, { daPiano: false, testiExtra: [] }));
+        mappa.get(v.chiave).testiExtra.push(testo);
       });
     });
-    return Array.from(mappa.values()).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
+    const nascosti = new Set(SPESA.pref.nascosti);
+    const spuntate = new Set(SPESA.dati.spuntate);
+    return Array.from(mappa.values()).map((v) => Object.assign(v, {
+      nomeOriginale: v.nome,
+      catOriginale: v.cat,
+      nome: SPESA.pref.nome[v.chiave] || v.nome,
+      cat: SPESA.pref.categoria[v.chiave] || v.cat,
+      nascosto: nascosti.has(v.chiave) && v.daPiano,
+      spuntata: spuntate.has(v.chiave),
+    }));
   }
-
-  function chiaveSpunteSpesa(settimana) { return "pnut:spesa-spuntate:" + settimana; }
-  function chiaveExtraSpesa(settimana) { return "pnut:spesa-extra:" + settimana; }
 
   function renderSpesa() {
     if (!PIANO_ATTIVO) {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
       return;
     }
-    const oggi = new Date();
-    const { settimana: settimanaCorrente } = window.weekLogic.calcolaSettimanaGiorno(oggi, CONFIG, PIANO_ATTIVO);
-    const settimanaMostrata = spesaSettimanaSelezionata || settimanaCorrente;
-    const giorni = PIANO_ATTIVO.settimane[settimanaMostrata];
-
+    const settimane = settimaneSpesa();
+    const sel = settimane[SPESA.offset] || settimane[0];
+    const giorni = PIANO_ATTIVO.settimane[sel.settimana];
     if (!giorni) {
-      root.innerHTML = `<div class="empty">La settimana ${settimanaMostrata} non è presente nel piano caricato.</div>`;
+      root.innerHTML = `<div class="empty">La settimana ${sel.settimana} non è presente nel piano caricato.</div>`;
       return;
     }
-
-    const opzioniSettimana = [1, 2, 3, 4, 5]
-      .filter((n) => Array.isArray(PIANO_ATTIVO.settimane[n]))
-      .map((n) => `<option value="${n}" ${n === settimanaMostrata ? "selected" : ""}>Settimana ${n}${n === settimanaCorrente ? " (attuale)" : ""}</option>`)
-      .join("");
-
-    const voci = aggregaIngredientiSettimana(giorni);
-    const spuntate = JSON.parse(localStorage.getItem(chiaveSpunteSpesa(settimanaMostrata)) || "[]");
-    const extra = JSON.parse(localStorage.getItem(chiaveExtraSpesa(settimanaMostrata)) || "[]");
-    const spuntateSet = new Set(spuntate);
-
-    function rigaHTML(testo, chiaveSpunta, extra) {
-      const isSpuntata = spuntateSet.has(chiaveSpunta);
-      return `
-        <li class="spesa-riga ${isSpuntata ? "is-spuntata" : ""}">
-          <label>
-            <input type="checkbox" data-spunta="${escapeHTML(chiaveSpunta)}" ${isSpuntata ? "checked" : ""}>
-            <span>${escapeHTML(testo)}</span>
-          </label>
-          ${extra ? `<button type="button" class="spesa-rimuovi" data-rimuovi-extra="${escapeHTML(chiaveSpunta)}" aria-label="Rimuovi">✕</button>` : ""}
-        </li>
-      `;
-    }
+    SPESA.contesto = { giorni, etichetta: sel.intervallo };
+    collegaAscoltoSpesa(sel.docId);
+    const vista = vistaSpesa();
 
     root.innerHTML = `
       <section class="hero" style="border-bottom:none; margin-bottom:8px; padding-bottom:6px;">
         <div class="hero__eyebrow"><span class="dot"></span> Lista della spesa</div>
-        <div class="hero__meta" style="margin-top:10px;">
-          <select id="sel-settimana-spesa" aria-label="Settimana">${opzioniSettimana}</select>
+        <div class="spesa-testata">
+          <select id="sel-settimana-spesa" aria-label="Settimana">
+            ${settimane.map((s) => `<option value="${s.k}" ${s.k === sel.k ? "selected" : ""}>${escapeHTML(s.etichetta)}</option>`).join("")}
+          </select>
+          <div class="spesa-vista" role="group" aria-label="Aspetto della lista">
+            <button type="button" data-vista="lista" aria-pressed="${vista === "lista"}" title="Vista a lista">☰ Lista</button>
+            <button type="button" data-vista="blocchi" aria-pressed="${vista === "blocchi"}" title="Vista a blocchi">▦ Blocchi</button>
+          </div>
         </div>
       </section>
-      <p class="hint" style="margin:0 0 14px;">Generata automaticamente dai pasti della settimana — il testo libero dei menu non sempre si presta a un'estrazione perfetta, controllala prima di uscire a fare la spesa.</p>
+      <p class="hint" style="margin:0 0 12px;">Un articolo per alimento, ricavato dai pasti della settimana. ${vista === "blocchi"
+        ? "Tocca un riquadro quando lo metti nel carrello; tienilo premuto per cambiarne nome o categoria."
+        : "Spunta un articolo quando lo metti nel carrello; tocca ⋯ per cambiarne nome o categoria."}</p>
 
-      <ul class="spesa-lista" id="spesa-lista">
-        ${voci.map((v) => {
-          const testo = v.quantita != null ? `${v.nome} — ${arrotondaQuantita(v.quantita)}${v.unita}` : `${v.nome}${v.occorrenze > 1 ? " ×" + v.occorrenze : ""}`;
-          return rigaHTML(testo, "auto:" + v.nome.toLowerCase() + "|" + (v.unita || ""), false);
-        }).join("")}
-        ${extra.map((testo) => rigaHTML(testo, "extra:" + testo.toLowerCase(), true)).join("")}
-      </ul>
+      <div id="spesa-contenuto" class="spesa-contenuto--${vista}"></div>
 
-      <div class="import-actions" style="margin-top:16px;">
+      <div class="import-actions" style="margin-top:18px;">
         <div class="editor-campo" style="flex-direction:row; gap:8px; align-items:stretch;">
-          <input type="text" id="input-spesa-extra" placeholder="Aggiungi un articolo…" style="flex:1;">
+          <input type="text" id="input-spesa-extra" placeholder="Mi serve anche…" autocomplete="off" style="flex:1;">
           <button type="button" class="btn" id="btn-aggiungi-spesa" style="width:auto; padding:0 16px;">Aggiungi</button>
         </div>
-        <button type="button" class="btn btn--ghost" id="btn-copia-spesa">Copia lista negli appunti</button>
+        <button type="button" class="btn btn--ghost" id="btn-copia-spesa">Copia gli articoli da prendere</button>
+        <div id="spesa-azioni-extra"></div>
       </div>
     `;
 
     document.getElementById("sel-settimana-spesa").addEventListener("change", (e) => {
-      const v = Number(e.target.value);
-      spesaSettimanaSelezionata = v === settimanaCorrente ? null : v;
+      SPESA.offset = Number(e.target.value) || 0;
       renderSpesa();
     });
 
-    root.querySelectorAll("[data-spunta]").forEach((chk) => {
-      chk.addEventListener("change", () => {
-        const chiave = chk.dataset.spunta;
-        const stato = new Set(JSON.parse(localStorage.getItem(chiaveSpunteSpesa(settimanaMostrata)) || "[]"));
-        if (chk.checked) stato.add(chiave); else stato.delete(chiave);
-        localStorage.setItem(chiaveSpunteSpesa(settimanaMostrata), JSON.stringify(Array.from(stato)));
-        chk.closest(".spesa-riga").classList.toggle("is-spuntata", chk.checked);
-      });
-    });
+    root.querySelectorAll("[data-vista]").forEach((b) => b.addEventListener("click", () => {
+      localStorage.setItem(LS_VISTA_SPESA, b.dataset.vista);
+      renderSpesa();
+    }));
 
-    root.querySelectorAll("[data-rimuovi-extra]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const testoDaRimuovere = btn.dataset.rimuoviExtra.slice("extra:".length);
-        const listaExtra = JSON.parse(localStorage.getItem(chiaveExtraSpesa(settimanaMostrata)) || "[]");
-        const nuovaLista = listaExtra.filter((t) => t.toLowerCase() !== testoDaRimuovere);
-        localStorage.setItem(chiaveExtraSpesa(settimanaMostrata), JSON.stringify(nuovaLista));
-        renderSpesa();
-      });
-    });
-
-    document.getElementById("btn-aggiungi-spesa").addEventListener("click", () => {
+    const aggiungi = async () => {
       const input = document.getElementById("input-spesa-extra");
-      const testo = input.value.trim();
+      const testo = input.value.trim().slice(0, 80);
       if (!testo) return;
-      const listaExtra = JSON.parse(localStorage.getItem(chiaveExtraSpesa(settimanaMostrata)) || "[]");
-      listaExtra.push(testo);
-      localStorage.setItem(chiaveExtraSpesa(settimanaMostrata), JSON.stringify(listaExtra));
-      renderSpesa();
-    });
+      input.value = "";
+      const voci = window.alimenti.classificaArticolo(testo);
+      const giaPresente = voci.length && voci.every((v) => SPESA.voci.some((x) => x.chiave === v.chiave && !x.nascosto));
+      if (giaPresente) {
+        mostraToast(`${voci.map((v) => SPESA.pref.nome[v.chiave] || v.nome).join(", ")}: già in lista`);
+        return;
+      }
+      SPESA.dati.extra = SPESA.dati.extra.concat([testo]);
+      disegnaContenutoSpesa();
+      try { await window.cloud.aggiungiArticoloSpesa(UID, SPESA.docId, testo); }
+      catch (e) { mostraToast("Articolo non salvato: controlla la connessione"); }
+    };
+    document.getElementById("btn-aggiungi-spesa").addEventListener("click", aggiungi);
     document.getElementById("input-spesa-extra").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); document.getElementById("btn-aggiungi-spesa").click(); }
+      if (e.key === "Enter") { e.preventDefault(); aggiungi(); }
     });
 
-    document.getElementById("btn-copia-spesa").addEventListener("click", async () => {
-      const righe = voci.map((v) => v.quantita != null ? `- ${v.nome} — ${arrotondaQuantita(v.quantita)}${v.unita}` : `- ${v.nome}${v.occorrenze > 1 ? " ×" + v.occorrenze : ""}`)
-        .concat(extra.map((t) => `- ${t}`));
-      const testoCompleto = `Lista della spesa — Settimana ${settimanaMostrata}\n\n` + righe.join("\n");
-      try {
-        await navigator.clipboard.writeText(testoCompleto);
-        mostraToast("Lista copiata negli appunti");
-      } catch (e) {
-        mostraToast("Impossibile copiare automaticamente su questo browser");
+    document.getElementById("btn-copia-spesa").addEventListener("click", copiaListaSpesa);
+    collegaEventiContenutoSpesa(document.getElementById("spesa-contenuto"));
+    disegnaContenutoSpesa();
+  }
+
+  function disegnaContenutoSpesa() {
+    const box = document.getElementById("spesa-contenuto");
+    if (!box || !SPESA.contesto) return;
+    const vista = vistaSpesa();
+    const voci = calcolaVociSpesa();
+    SPESA.voci = voci;
+    const visibili = voci.filter((v) => !v.nascosto);
+    const daPrendere = visibili.filter((v) => !v.spuntata).length;
+
+    if (!visibili.length) {
+      box.innerHTML = `<div class="empty" style="padding:28px 12px;">Nessun alimento trovato nei pasti di questa settimana. Scrivi qui sotto quello che ti serve.</div>`;
+    } else {
+      const sezioni = window.alimenti.CATEGORIE.map((cat) => {
+        const qui = visibili.filter((v) => v.cat === cat.id).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
+        if (!qui.length) return "";
+        const mancanti = qui.filter((v) => !v.spuntata).length;
+        const corpo = vista === "blocchi"
+          ? `<div class="spesa-blocchi">${qui.map(bloccoSpesaHTML).join("")}</div>`
+          : `<ul class="spesa-lista">${qui.map(rigaSpesaHTML).join("")}</ul>`;
+        return `
+          <section class="spesa-cat ${mancanti === 0 ? "is-completa" : ""}">
+            <h3 class="spesa-cat__titolo"><span aria-hidden="true">${cat.icona}</span> ${escapeHTML(cat.nome)}
+              <span class="spesa-cat__conta">${mancanti === 0 ? "✓" : mancanti}</span></h3>
+            ${corpo}
+          </section>`;
+      }).join("");
+      box.innerHTML = `
+        <p class="spesa-riepilogo">${daPrendere === 0 ? "Hai preso tutto. Buona settimana!" : `${daPrendere} ${daPrendere === 1 ? "articolo" : "articoli"} da prendere su ${visibili.length}`}</p>
+        ${sezioni}`;
+    }
+
+    // Azioni in fondo: riporta tutto da prendere, articoli nascosti
+    const extraBox = document.getElementById("spesa-azioni-extra");
+    if (extraBox) {
+      const numSpuntate = visibili.filter((v) => v.spuntata).length;
+      const numNascosti = SPESA.pref.nascosti.length;
+      extraBox.innerHTML = `
+        ${numSpuntate ? `<button type="button" class="btn btn--ghost" id="btn-azzera-spesa">Rimetti tutto da prendere</button>` : ""}
+        ${numNascosti ? `<button type="button" class="link-btn" id="btn-nascosti-spesa">${numNascosti} ${numNascosti === 1 ? "articolo nascosto" : "articoli nascosti"}: mostra</button>` : ""}`;
+      const az = document.getElementById("btn-azzera-spesa");
+      if (az) az.addEventListener("click", async () => {
+        SPESA.dati.spuntate = [];
+        disegnaContenutoSpesa();
+        try { await window.cloud.azzeraSpunteSpesa(UID, SPESA.docId); } catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
+      });
+      const na = document.getElementById("btn-nascosti-spesa");
+      if (na) na.addEventListener("click", apriNascostiSpesa);
+    }
+  }
+
+  function rigaSpesaHTML(v) {
+    return `
+      <li class="spesa-riga ${v.spuntata ? "is-spuntata" : ""}">
+        <label>
+          <input type="checkbox" data-spunta="${escapeHTML(v.chiave)}" ${v.spuntata ? "checked" : ""}>
+          <span class="spesa-riga__icona" aria-hidden="true">${v.icona}</span>
+          <span class="spesa-riga__nome">${escapeHTML(v.nome)}</span>
+        </label>
+        <button type="button" class="spesa-opzioni" data-opzioni="${escapeHTML(v.chiave)}" aria-label="Opzioni per ${escapeHTML(v.nome)}">⋯</button>
+      </li>`;
+  }
+
+  function bloccoSpesaHTML(v) {
+    return `
+      <button type="button" class="spesa-blocco ${v.spuntata ? "is-spuntata" : ""}" data-blocco="${escapeHTML(v.chiave)}" aria-pressed="${v.spuntata}">
+        <span class="spesa-blocco__icona" aria-hidden="true">${v.icona}</span>
+        <span class="spesa-blocco__nome">${escapeHTML(v.nome)}</span>
+      </button>`;
+  }
+
+  async function spuntaVoceSpesa(chiave, spuntata) {
+    const set = new Set(SPESA.dati.spuntate);
+    if (spuntata) set.add(chiave); else set.delete(chiave);
+    SPESA.dati.spuntate = Array.from(set);
+    disegnaContenutoSpesa();
+    try { await window.cloud.spuntaSpesa(UID, SPESA.docId, chiave, spuntata); }
+    catch (e) { mostraToast("Spunta non salvata: controlla la connessione"); }
+  }
+
+  /** Eventi delegati sul contenitore: sopravvivono ai ridisegni della lista. */
+  function collegaEventiContenutoSpesa(box) {
+    let timer = null, pressioneLunga = false, xy = null;
+
+    box.addEventListener("change", (e) => {
+      const chk = e.target.closest("[data-spunta]");
+      if (chk) spuntaVoceSpesa(chk.dataset.spunta, chk.checked);
+    });
+
+    box.addEventListener("click", (e) => {
+      const opz = e.target.closest("[data-opzioni]");
+      if (opz) { apriOpzioniSpesa(opz.dataset.opzioni); return; }
+      const blocco = e.target.closest("[data-blocco]");
+      if (blocco) {
+        if (pressioneLunga) { pressioneLunga = false; return; }
+        spuntaVoceSpesa(blocco.dataset.blocco, blocco.getAttribute("aria-pressed") !== "true");
       }
+    });
+
+    // Pressione lunga sui blocchi → opzioni
+    const annulla = () => { clearTimeout(timer); timer = null; };
+    box.addEventListener("pointerdown", (e) => {
+      const blocco = e.target.closest("[data-blocco]");
+      if (!blocco) return;
+      pressioneLunga = false;
+      xy = [e.clientX, e.clientY];
+      annulla();
+      timer = setTimeout(() => {
+        pressioneLunga = true;
+        if (navigator.vibrate) navigator.vibrate(15);
+        apriOpzioniSpesa(blocco.dataset.blocco);
+      }, 550);
+    });
+    box.addEventListener("pointermove", (e) => {
+      if (timer && xy && Math.hypot(e.clientX - xy[0], e.clientY - xy[1]) > 10) annulla();
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => box.addEventListener(ev, annulla));
+    box.addEventListener("contextmenu", (e) => {
+      const blocco = e.target.closest("[data-blocco]");
+      if (!blocco) return;
+      e.preventDefault();
+      if (!pressioneLunga) { annulla(); pressioneLunga = true; apriOpzioniSpesa(blocco.dataset.blocco); }
     });
   }
 
-  function arrotondaQuantita(n) {
-    return Number.isInteger(n) ? n : Math.round(n * 10) / 10;
+  function apriOpzioniSpesa(chiave) {
+    const v = SPESA.voci.find((x) => x.chiave === chiave);
+    if (!v) return;
+    const modificata = v.nome !== v.nomeOriginale || v.cat !== v.catOriginale;
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">${v.icona} ${escapeHTML(v.nome)}</h2>
+      <label class="editor-campo">Nome in lista
+        <input type="text" id="opz-spesa-nome" value="${escapeHTML(v.nome)}" maxlength="60">
+      </label>
+      <label class="editor-campo" style="margin-top:12px;">Categoria
+        <select id="opz-spesa-cat">
+          ${window.alimenti.CATEGORIE.map((c) => `<option value="${c.id}" ${c.id === v.cat ? "selected" : ""}>${c.icona} ${escapeHTML(c.nome)}</option>`).join("")}
+        </select>
+      </label>
+      <p class="sheet__nota">La modifica vale anche per le prossime settimane.</p>
+      <button type="button" class="btn" id="opz-spesa-salva">Salva</button>
+      ${modificata ? `<button type="button" class="btn btn--ghost" id="opz-spesa-ripristina">Ripristina nome e categoria originali</button>` : ""}
+      ${v.daPiano
+        ? `<button type="button" class="btn btn--ghost" id="opz-spesa-nascondi">Non mostrarlo più nella lista</button>`
+        : `<button type="button" class="btn btn--ghost" id="opz-spesa-elimina">Elimina articolo</button>`}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+
+    const salva = async (nome, cat) => {
+      const nuovoNome = nome && nome !== v.nomeOriginale ? nome : null;
+      const nuovaCat = cat && cat !== v.catOriginale ? cat : null;
+      if (nuovoNome) SPESA.pref.nome[chiave] = nuovoNome; else delete SPESA.pref.nome[chiave];
+      if (nuovaCat) SPESA.pref.categoria[chiave] = nuovaCat; else delete SPESA.pref.categoria[chiave];
+      chiudiSheet();
+      disegnaContenutoSpesa();
+      try {
+        await window.cloud.salvaPreferenzaSpesa(UID, "nome", chiave, nuovoNome);
+        await window.cloud.salvaPreferenzaSpesa(UID, "categoria", chiave, nuovaCat);
+      } catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
+    };
+
+    overlay.querySelector("#opz-spesa-salva").addEventListener("click", () => {
+      salva(overlay.querySelector("#opz-spesa-nome").value.trim(), overlay.querySelector("#opz-spesa-cat").value);
+    });
+    const rip = overlay.querySelector("#opz-spesa-ripristina");
+    if (rip) rip.addEventListener("click", () => salva(null, null));
+
+    const nasc = overlay.querySelector("#opz-spesa-nascondi");
+    if (nasc) nasc.addEventListener("click", async () => {
+      SPESA.pref.nascosti = SPESA.pref.nascosti.concat([chiave]);
+      if (!SPESA.pref.nome[chiave]) SPESA.pref.nome[chiave] = v.nome; // serve a mostrarlo tra i nascosti
+      chiudiSheet();
+      disegnaContenutoSpesa();
+      mostraToast(`${v.nome} non comparirà più nella lista`);
+      try {
+        await window.cloud.salvaPreferenzaSpesa(UID, "nascosti", chiave, true);
+        await window.cloud.salvaPreferenzaSpesa(UID, "nome", chiave, SPESA.pref.nome[chiave]);
+      } catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
+    });
+
+    const elim = overlay.querySelector("#opz-spesa-elimina");
+    if (elim) elim.addEventListener("click", async () => {
+      const testi = v.testiExtra.slice();
+      SPESA.dati.extra = SPESA.dati.extra.filter((t) => !testi.includes(t));
+      chiudiSheet();
+      disegnaContenutoSpesa();
+      try { for (const t of testi) await window.cloud.rimuoviArticoloSpesa(UID, SPESA.docId, t); }
+      catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
+    });
+  }
+
+  function nomeVoceNascosta(chiave) {
+    const inLista = SPESA.voci.find((x) => x.chiave === chiave);
+    if (inLista) return { nome: inLista.nome, icona: inLista.icona };
+    const cat = window.alimenti.voceDaChiave(chiave);
+    const nome = SPESA.pref.nome[chiave] || (cat ? cat.nome : chiave.slice(2).replace(/-/g, " "));
+    return { nome, icona: cat ? cat.icona : "🛒" };
+  }
+
+  function apriNascostiSpesa() {
+    const elenco = SPESA.pref.nascosti.map((k) => Object.assign({ chiave: k }, nomeVoceNascosta(k)));
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">Articoli nascosti</h2>
+      <p class="sheet__nota">Non compaiono nella lista anche se sono nei pasti del piano.</p>
+      <ul class="spesa-lista" style="margin-bottom:14px;">
+        ${elenco.map((x) => `
+          <li class="spesa-riga">
+            <span class="spesa-riga__icona" aria-hidden="true">${x.icona}</span>
+            <span class="spesa-riga__nome" style="flex:1;">${escapeHTML(x.nome)}</span>
+            <button type="button" class="link-btn" data-ripristina="${escapeHTML(x.chiave)}">Rimetti in lista</button>
+          </li>`).join("")}
+      </ul>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>
+    `);
+    overlay.querySelectorAll("[data-ripristina]").forEach((b) => b.addEventListener("click", async () => {
+      const k = b.dataset.ripristina;
+      SPESA.pref.nascosti = SPESA.pref.nascosti.filter((x) => x !== k);
+      b.closest("li").remove();
+      disegnaContenutoSpesa();
+      if (!SPESA.pref.nascosti.length) chiudiSheet();
+      try { await window.cloud.salvaPreferenzaSpesa(UID, "nascosti", k, false); }
+      catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
+    }));
+  }
+
+  async function copiaListaSpesa() {
+    const daPrendere = SPESA.voci.filter((v) => !v.nascosto && !v.spuntata);
+    if (!daPrendere.length) { mostraToast("Non c'è niente da prendere"); return; }
+    const blocchi = window.alimenti.CATEGORIE.map((cat) => {
+      const qui = daPrendere.filter((v) => v.cat === cat.id).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
+      return qui.length ? `${cat.nome}\n` + qui.map((v) => `- ${v.nome}`).join("\n") : "";
+    }).filter(Boolean);
+    const testo = `Lista della spesa (${SPESA.contesto.etichetta})\n\n` + blocchi.join("\n\n");
+    try {
+      await navigator.clipboard.writeText(testo);
+      mostraToast("Lista copiata negli appunti");
+    } catch (e) {
+      mostraToast("Impossibile copiare automaticamente su questo browser");
+    }
   }
 
   // ---------------------------------------------------------------------

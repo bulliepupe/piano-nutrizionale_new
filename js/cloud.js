@@ -291,6 +291,54 @@
       return messaging.onMessage(cb);
     },
 
+    // ------------------------------------------------------------------
+    // Lista della spesa: spunte e articoli aggiunti a mano, sincronizzati
+    // tra tutti i dispositivi del paziente. Un documento per settimana di
+    // calendario (id = data del lunedì, es. "2026-09-28") più un documento
+    // "preferenze" con le correzioni del paziente (categoria, nome, nascosti).
+    // ------------------------------------------------------------------
+    ascoltaSpesa(uid, docId, cb) {
+      return db.collection("users").doc(uid).collection("spesa").doc(docId).onSnapshot(
+        (doc) => cb(doc.exists ? doc.data() : {}),
+        (err) => { console.error("Errore ascolto lista spesa:", err); cb({}); }
+      );
+    },
+
+    async spuntaSpesa(uid, docId, chiave, spuntata) {
+      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+        spuntate: spuntata ? FieldValue.arrayUnion(chiave) : FieldValue.arrayRemove(chiave),
+        aggiornato: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    },
+
+    async azzeraSpunteSpesa(uid, docId) {
+      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+        spuntate: [], aggiornato: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    },
+
+    async aggiungiArticoloSpesa(uid, docId, testo) {
+      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+        extra: FieldValue.arrayUnion(testo), aggiornato: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    },
+
+    async rimuoviArticoloSpesa(uid, docId, testo) {
+      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+        extra: FieldValue.arrayRemove(testo), aggiornato: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    },
+
+    /** Correzioni del paziente: { categoria: {chiave: idCategoria}, nome: {chiave: testo}, nascosti: [chiave] } */
+    async salvaPreferenzaSpesa(uid, tipo, chiave, valore) {
+      const ref = db.collection("users").doc(uid).collection("spesa").doc("preferenze");
+      if (tipo === "nascosti") {
+        await ref.set({ nascosti: valore ? FieldValue.arrayUnion(chiave) : FieldValue.arrayRemove(chiave) }, { merge: true });
+      } else {
+        await ref.set({ [tipo]: { [chiave]: valore == null ? FieldValue.delete() : valore } }, { merge: true });
+      }
+    },
+
     /**
      * Salva su Firestore gli orari dei pasti (se personalizzati) e l'anticipo
      * del promemoria: la funzione server-side che invia le notifiche push
