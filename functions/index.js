@@ -314,13 +314,17 @@ function licenzaDaAbbonamento(sub) {
   const maxPazienti = piano === "oltre" ? Number(metadati.maxPazienti) : PIANI[piano].maxPazienti;
   const fine = (voce && voce.current_period_end) || sub.current_period_end;
   const attivo = ["active", "trialing", "past_due"].includes(sub.status);
+  const chiuso = sub.ended_at || (sub.status === "canceled" ? (sub.canceled_at || Math.floor(Date.now() / 1000)) : null);
   return {
     piano,
     maxPazienti,
     stato: attivo ? "attiva" : "scaduta",
-    scadenza: fine
-      ? admin.firestore.Timestamp.fromMillis((fine + GIORNI_TOLLERANZA * 86400) * 1000)
-      : null,
+    // Abbonamento già chiuso (disdetta immediata o fine periodo): vale la data
+    // reale di chiusura. Altrimenti fine del periodo pagato + qualche giorno
+    // di tolleranza per i rinnovi pagati con qualche ora di ritardo.
+    scadenza: chiuso
+      ? admin.firestore.Timestamp.fromMillis(chiuso * 1000)
+      : (fine ? admin.firestore.Timestamp.fromMillis((fine + GIORNI_TOLLERANZA * 86400) * 1000) : null),
     // Disdetta programmata: l'abbonamento resta attivo fino a questa data, poi non si rinnova.
     disdetto: !!(sub.cancel_at || sub.cancel_at_period_end),
     fineAbbonamento: sub.cancel_at
