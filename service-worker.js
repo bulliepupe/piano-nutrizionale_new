@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v27";
+const CACHE_VERSION = "v28";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -58,8 +58,12 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   if (new URL(event.request.url).origin !== self.location.origin) return;
+  // "no-cache": il browser chiede sempre al server se il file è cambiato
+  // (risposta leggera se è uguale). Così un aggiornamento pubblicato arriva
+  // subito, senza aspettare i 10 minuti di cache di GitHub Pages.
+  const richiesta = new Request(event.request.url, { cache: "no-cache", credentials: "same-origin" });
   event.respondWith(
-    fetch(event.request)
+    fetch(richiesta)
       .then((risposta) => {
         if (risposta.ok) {
           const copia = risposta.clone();

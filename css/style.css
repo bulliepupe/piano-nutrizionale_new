@@ -1448,6 +1448,70 @@ p.stat-motivi { padding-left: 0; }
 .ric-scelta input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
 .ric-destinatari { margin: 6px 0 0 28px; padding-left: 12px; border-left: 2px solid var(--border-soft); }
 
+/* Ricettario: caricamento di più schede e anteprime delle pagine */
+.ric-carica { display: block; cursor: pointer; }
+.is-disabilitato { opacity: 0.5; pointer-events: none; }
+.ricetta-card__foto.is-pagina, .ricetta-riga__foto.is-pagina, .ric-foto__anteprima.is-pagina, .ric-voce__mini {
+  background-position: center top;
+}
+.ricetta__foto--pagina { object-position: center top; border: 1px solid var(--border-soft); }
+.ric-voci { display: flex; flex-direction: column; gap: 8px; }
+.ric-voce {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 8px 8px 8px 8px;
+}
+.ric-voce.is-fatta { opacity: 0.6; }
+.ric-voce__mini {
+  flex: none;
+  width: 52px;
+  height: 64px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface)) center top / cover no-repeat;
+}
+.ric-voce__testo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ric-voce__titolo {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: transparent;
+  padding: 5px 6px;
+  margin-left: -6px;
+}
+.ric-voce__titolo:hover, .ric-voce__titolo:focus { border-color: var(--border); background: var(--bg); outline: none; }
+.ric-voce__stato { font-size: 12px; color: var(--ink-faint); }
+.ric-voce__togli { flex: none; background: none; border: none; color: var(--ink-faint); font-size: 16px; padding: 6px 8px; cursor: pointer; border-radius: var(--radius-s); }
+.ric-dettagli {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  padding: 4px 16px;
+  margin-bottom: 8px;
+}
+.ric-dettagli > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+  padding: 12px 0;
+  list-style-position: inside;
+}
+.ric-dettagli[open] > summary { border-bottom: 1px solid var(--border-soft); margin-bottom: 10px; }
+.ric-dettagli .settings-section { margin-bottom: 22px; }
+
 /* Stampa della ricetta: si stampa solo l'area preparata apposta */
 #area-stampa { display: none; }
 @media print {

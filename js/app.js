@@ -1622,7 +1622,7 @@
         <div class="ricette-griglia">
           ${filtrate.length ? filtrate.map((r) => `
             <button type="button" class="ricetta-card" data-ricetta="${r.id}">
-              <span class="ricetta-card__foto" ${r.foto && r.foto.url ? `style="background-image:url('${escapeHTML(r.foto.url)}')"` : ""}>${r.foto && r.foto.url ? "" : `<span aria-hidden="true">${r.allegato ? "📄" : "🍲"}</span>`}</span>
+              <span class="ricetta-card__foto ${r.foto && r.foto.auto ? "is-pagina" : ""}" ${r.foto && r.foto.url ? `style="background-image:url('${escapeHTML(r.foto.url)}')"` : ""}>${r.foto && r.foto.url ? "" : `<span aria-hidden="true">${r.allegato ? "📄" : "🍲"}</span>`}</span>
               <span class="ricetta-card__corpo">
                 ${ricettaNuova(r) ? `<span class="ricetta-card__nuova">Nuova</span>` : ""}
                 <span class="ricetta-card__titolo">${escapeHTML(r.titolo || "Ricetta")}</span>
@@ -1653,7 +1653,7 @@
   function corpoRicettaHTML(r, perStampa) {
     const macro = [["Proteine", r.proteine], ["Carboidrati", r.carboidrati], ["Grassi", r.grassi]].filter((m) => m[1] != null && m[1] !== "");
     return `
-      ${r.foto && r.foto.url ? `<img class="ricetta__foto" src="${escapeHTML(r.foto.url)}" alt="">` : ""}
+      ${r.foto && r.foto.url && !(perStampa && r.foto.auto) ? `<img class="ricetta__foto ${r.foto.auto ? "ricetta__foto--pagina" : ""}" src="${escapeHTML(r.foto.url)}" alt="${r.foto.auto ? "Anteprima della prima pagina della ricetta" : ""}">` : ""}
       <h2 class="ricetta__titolo">${escapeHTML(r.titolo || "Ricetta")}</h2>
       <div class="ricetta__meta">${metaRicettaHTML(r)}</div>
       ${macro.length ? `<p class="ricetta__macro">A porzione: ${macro.map((m) => `${m[0].toLowerCase()} ${escapeHTML(m[1])} g`).join(", ")}</p>` : ""}
@@ -1674,7 +1674,7 @@
       <button type="button" class="link-btn link-btn--sinistra" id="btn-torna-ricette">← Tutte le ricette</button>
       <article class="ricetta">${corpoRicettaHTML(r, false)}</article>
       <div class="ricetta__azioni">
-        ${r.allegato && r.allegato.url ? `<a class="btn" href="${escapeHTML(r.allegato.url)}" target="_blank" rel="noopener">${r.allegato.tipo === "application/pdf" ? "Apri la scheda in PDF" : "Apri la scheda della ricetta"}</a>` : ""}
+        ${r.allegato && r.allegato.url ? `<a class="btn" href="${escapeHTML(r.allegato.url)}" target="_blank" rel="noopener">${haContenuto ? (r.allegato.tipo === "application/pdf" ? "Apri la scheda in PDF" : "Apri la scheda della ricetta") : "Apri la ricetta"}</a>` : ""}
         ${(r.ingredienti || []).length ? `<button type="button" class="btn ${r.allegato ? "btn--ghost" : ""}" id="btn-ricetta-spesa">Aggiungi gli ingredienti alla spesa</button>` : ""}
         ${haContenuto ? `<button type="button" class="btn btn--ghost" id="btn-ricetta-stampa">Stampa o salva in PDF</button>` : ""}
       </div>
@@ -2213,13 +2213,18 @@
   // ---------------------------------------------------------------------
   // Ricettario (lato professionista)
   // ---------------------------------------------------------------------
+  // Strada principale: caricare le schede già pronte (PDF o foto), anche
+  // molte insieme; l'app ricava da sola titolo e anteprima. In alternativa
+  // si può scrivere la ricetta nell'app, con ingredienti che il paziente può
+  // mandare nella lista della spesa.
   const ETICHETTE_RICETTE = ["Colazione", "Spuntino", "Pranzo", "Cena", "Vegetariana", "Vegana", "Senza glutine", "Senza lattosio", "Meal prep", "Veloce", "Dolce"];
   const MAX_ALLEGATO = 10 * 1024 * 1024;
-  const RICPRO = { elenco: [], unsub: null, pronto: false, bozza: null };
+  const MAX_FILE_INSIEME = 20;
+  const RICPRO = { elenco: [], unsub: null, pronto: false, bozza: null, gruppo: null };
 
   function scollegaRicettario() {
     if (RICPRO.unsub) { RICPRO.unsub(); RICPRO.unsub = null; }
-    RICPRO.elenco = []; RICPRO.pronto = false; RICPRO.bozza = null;
+    RICPRO.elenco = []; RICPRO.pronto = false; RICPRO.bozza = null; RICPRO.gruppo = null;
   }
 
   function collegaRicettario() {
@@ -2241,23 +2246,112 @@
     return nomi.length <= 3 ? nomi.join(", ") : `${nomi.length} pazienti`;
   }
 
+  // ---- pdf.js: legge i PDF per ricavarne l'anteprima della prima pagina ----
+  // La libreria è ospitata insieme all'app (js/vendor/pdfjs) e viene caricata
+  // solo quando il professionista sceglie un PDF. isEvalSupported: false
+  // chiude la falla CVE-2024-4367 delle versioni 3.x.
+  let pdfJsPromessa = null;
+  function caricaPdfJs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (!pdfJsPromessa) {
+      pdfJsPromessa = new Promise((ok, ko) => {
+        const s = document.createElement("script");
+        s.src = "js/vendor/pdfjs/pdf.min.js";
+        s.onload = () => {
+          if (!window.pdfjsLib) { ko(new Error("pdfjs")); return; }
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "js/vendor/pdfjs/pdf.worker.min.js";
+          ok(window.pdfjsLib);
+        };
+        s.onerror = () => { pdfJsPromessa = null; ko(new Error("pdfjs-non-trovato")); };
+        document.head.appendChild(s);
+      });
+    }
+    return pdfJsPromessa;
+  }
+
+  /** Immagine JPEG della prima pagina di un PDF (larga circa 900 pixel). */
+  async function anteprimaPdf(file) {
+    const pdfjs = await caricaPdfJs();
+    const dati = new Uint8Array(await file.arrayBuffer());
+    const doc = await pdfjs.getDocument({ data: dati, isEvalSupported: false }).promise;
+    try {
+      const pagina = await doc.getPage(1);
+      const base = pagina.getViewport({ scale: 1 });
+      const vp = pagina.getViewport({ scale: Math.min(3, 900 / base.width) });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await pagina.render({ canvasContext: ctx, viewport: vp }).promise;
+      return await new Promise((ok, ko) => canvas.toBlob((b) => (b ? ok(b) : ko(new Error("conversione"))), "image/jpeg", 0.8));
+    } finally {
+      doc.destroy();
+    }
+  }
+
+  function titoloDaNomeFile(nome) {
+    let t = String(nome || "").replace(/\.[^.]+$/, "").replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
+    if (t && t === t.toUpperCase()) t = t.toLowerCase();
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Ricetta";
+  }
+
+  /**
+   * Prepara un file scelto dal professionista: allegato da caricare e
+   * anteprima (prima pagina del PDF, oppure la foto stessa ridotta).
+   */
+  async function preparaFileRicetta(file) {
+    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+      if (file.size > MAX_ALLEGATO) throw new Error("troppo-grande");
+      let foto = null;
+      try {
+        const blob = await anteprimaPdf(file);
+        foto = { blob, nome: "anteprima.jpg", anteprima: URL.createObjectURL(blob), auto: true };
+      } catch (e) {
+        console.warn("Anteprima PDF non disponibile:", e);
+      }
+      return { allegato: { blob: file, nome: file.name, tipo: "application/pdf" }, foto };
+    }
+    if (file.type.startsWith("image/")) {
+      const grande = await comprimiImmagine(file, 2200, 0.85);
+      const piccola = await comprimiImmagine(file, 1200, 0.8);
+      return {
+        allegato: { blob: grande, nome: file.name.replace(/\.[^.]+$/, "") + ".jpg", tipo: "image/jpeg" },
+        foto: { blob: piccola, nome: "anteprima.jpg", anteprima: URL.createObjectURL(piccola), auto: true },
+      };
+    }
+    throw new Error("formato");
+  }
+
+  function messaggioErroreFile(e) {
+    const m = e && e.message;
+    if (m === "troppo-grande") return "Supera i 10 MB";
+    if (m === "formato") return "Formato non supportato: usa PDF o foto";
+    return "File non leggibile";
+  }
+
+  // ---- Elenco del ricettario ----
   function renderRicettario() {
     vistaProfCorrente = "ricettario";
     pazienteSelezionatoId = null;
+    RICPRO.bozza = null;
     document.getElementById("prof-header-titolo").textContent = "Ricettario";
     collegaRicettario();
     const puoScrivere = statoLicenza().attiva;
 
     profRoot.innerHTML = `
       <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
-      <button type="button" class="btn" id="btn-nuova-ricetta" style="margin-bottom:16px;" ${puoScrivere ? "" : "disabled"}>+ Nuova ricetta</button>
+      <label class="btn ric-carica ${puoScrivere ? "" : "is-disabilitato"}">Carica ricette in PDF o foto
+        <input type="file" id="ric-file-multipli" accept="application/pdf,image/*" multiple hidden ${puoScrivere ? "" : "disabled"}>
+      </label>
+      <p class="stat-nota" style="margin:6px 2px 10px;">Puoi sceglierne più di una insieme: titolo e anteprima li ricava l'app dai file.</p>
+      <button type="button" class="btn btn--ghost" id="btn-nuova-ricetta" style="margin-bottom:16px;" ${puoScrivere ? "" : "disabled"}>Scrivi una ricetta nell'app</button>
       ${!puoScrivere ? `<p class="stat-nota" style="margin:-6px 2px 14px;">Per aggiungere o modificare ricette serve una licenza attiva.</p>` : ""}
       ${!RICPRO.pronto ? `<div class="empty">Caricamento…</div>`
-        : RICPRO.elenco.length === 0 ? `<div class="empty">Qui raccogli le ricette da proporre ai tuoi pazienti: scritte direttamente nell'app oppure come PDF o foto di una scheda che hai già.</div>`
+        : RICPRO.elenco.length === 0 ? `<div class="empty">Qui raccogli le ricette da proporre ai tuoi pazienti.</div>`
         : `<div class="lista-pazienti">
             ${RICPRO.elenco.map((r) => `
               <button type="button" class="ricetta-riga" data-ricetta-pro="${r.id}">
-                <span class="ricetta-riga__foto" ${r.foto && r.foto.url ? `style="background-image:url('${escapeHTML(r.foto.url)}')"` : ""}>${r.foto && r.foto.url ? "" : (r.allegato ? "📄" : "🍲")}</span>
+                <span class="ricetta-riga__foto ${r.foto && r.foto.auto ? "is-pagina" : ""}" ${r.foto && r.foto.url ? `style="background-image:url('${escapeHTML(r.foto.url)}')"` : ""}>${r.foto && r.foto.url ? "" : (r.allegato ? "📄" : "🍲")}</span>
                 <span class="ricetta-riga__testo">
                   <span class="paziente-card__nome">${escapeHTML(r.titolo || "Senza titolo")}</span>
                   <span class="paziente-card__email">${escapeHTML(destinatariTesto(r))}${(r.etichette || []).length ? " · " + escapeHTML(r.etichette.slice(0, 3).join(", ")) : ""}</span>
@@ -2267,19 +2361,259 @@
     `;
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-nuova-ricetta").addEventListener("click", () => apriEditorRicetta(null));
+    document.getElementById("ric-file-multipli").addEventListener("change", (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (files.length) avviaCaricamentoMultiplo(files);
+    });
     profRoot.querySelectorAll("[data-ricetta-pro]").forEach((b) => b.addEventListener("click", () => apriEditorRicetta(b.dataset.ricettaPro)));
   }
 
+  // ---- Caricamento di più schede insieme ----
+  function avviaCaricamentoMultiplo(files) {
+    if (!RICPRO.gruppo) {
+      RICPRO.gruppo = { voci: [], etichette: [], altre: "", visibilita: "tutti", destinatari: [], inCorso: false };
+    }
+    const g = RICPRO.gruppo;
+    const spazio = MAX_FILE_INSIEME - g.voci.length;
+    if (files.length > spazio) mostraToast(`Puoi caricare al massimo ${MAX_FILE_INSIEME} file per volta`, 3500);
+    files.slice(0, Math.max(0, spazio)).forEach((file) => {
+      const voce = { chiave: Math.random().toString(36).slice(2), file, titolo: titoloDaNomeFile(file.name), stato: "preparazione", prep: null, errore: "" };
+      g.voci.push(voce);
+      preparaFileRicetta(file)
+        .then((prep) => { voce.prep = prep; voce.stato = "pronto"; })
+        .catch((e) => { voce.stato = "errore"; voce.errore = messaggioErroreFile(e); })
+        .finally(() => aggiornaVoceGruppo(voce));
+    });
+    renderCaricamentoMultiplo();
+  }
+
+  function statoVoceHTML(v) {
+    if (v.stato === "preparazione") return "Preparazione dell'anteprima…";
+    if (v.stato === "pronto") return v.file.type === "application/pdf" || /\.pdf$/i.test(v.file.name) ? `PDF · ${dimensioneFile(v.file.size)}` : "Foto";
+    if (v.stato === "caricamento") return `Caricamento… ${Math.round((v.progresso || 0) * 100)}%`;
+    if (v.stato === "fatto") return "✓ Pubblicata";
+    return `<span style="color:var(--stato-rosso)">${escapeHTML(v.errore || "Errore")}</span>`;
+  }
+
+  function dimensioneFile(byte) {
+    return byte >= 1048576 ? (byte / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(byte / 1024)) + " KB";
+  }
+
+  function aggiornaVoceGruppo(v) {
+    const riga = document.querySelector(`[data-voce="${v.chiave}"]`);
+    if (!riga) return;
+    const mini = riga.querySelector(".ric-voce__mini");
+    const foto = v.prep && v.prep.foto;
+    mini.style.backgroundImage = foto ? `url('${foto.anteprima}')` : "";
+    mini.textContent = foto ? "" : (v.stato === "errore" ? "⚠️" : "📄");
+    riga.querySelector(".ric-voce__stato").innerHTML = statoVoceHTML(v);
+    riga.classList.toggle("is-fatta", v.stato === "fatto");
+    aggiornaPulsantePubblica();
+  }
+
+  function aggiornaPulsantePubblica() {
+    const btn = document.getElementById("ric-pubblica-gruppo");
+    if (!btn || !RICPRO.gruppo) return;
+    const g = RICPRO.gruppo;
+    const pronte = g.voci.filter((v) => v.stato === "pronto").length;
+    const inPreparazione = g.voci.some((v) => v.stato === "preparazione");
+    btn.disabled = g.inCorso || inPreparazione || pronte === 0;
+    btn.textContent = g.inCorso ? "Pubblicazione in corso…"
+      : inPreparazione ? "Preparazione dei file…"
+      : pronte === 1 ? "Pubblica 1 ricetta" : `Pubblica ${pronte} ricette`;
+  }
+
+  function sceltaDestinatariHTML(prefisso, visibilita, selezionati) {
+    return `
+      <label class="ric-scelta"><input type="radio" name="${prefisso}-visibilita" value="tutti" ${visibilita === "selezionati" ? "" : "checked"}> Tutti i miei pazienti, anche quelli futuri</label>
+      <label class="ric-scelta"><input type="radio" name="${prefisso}-visibilita" value="selezionati" ${visibilita === "selezionati" ? "checked" : ""}> Solo i pazienti che scelgo</label>
+      <div id="${prefisso}-destinatari" class="ric-destinatari" ${visibilita === "selezionati" ? "" : "hidden"}>
+        ${PAZIENTI_PROF.filter((p) => p.pazienteUid).map((p) => `
+          <label class="ric-scelta"><input type="checkbox" value="${escapeHTML(p.pazienteUid)}" ${selezionati.has(p.pazienteUid) ? "checked" : ""}> ${escapeHTML(p.pazienteNome || p.pazienteEmail || "Paziente")}</label>`).join("") || `<p class="stat-nota">Non hai ancora pazienti.</p>`}
+      </div>`;
+  }
+
+  function sceltaEtichetteHTML(prefisso, scelte, altre) {
+    return `
+      <div class="ricette-filtri">
+        ${ETICHETTE_RICETTE.map((e) => `<button type="button" class="chip-filtro" data-${prefisso}-etichetta="${escapeHTML(e)}" aria-pressed="${scelte.includes(e)}">${escapeHTML(e)}</button>`).join("")}
+      </div>
+      <label class="editor-campo" style="margin-top:10px;">Altre etichette, separate da virgola
+        <input type="text" id="${prefisso}-altre-etichette" maxlength="120" value="${escapeHTML(altre)}" placeholder="Es. Estiva, Proteica">
+      </label>`;
+  }
+
+  function leggiEtichette(prefisso) {
+    const scelte = Array.from(profRoot.querySelectorAll(`[data-${prefisso}-etichetta]`))
+      .filter((x) => x.getAttribute("aria-pressed") === "true").map((x) => x.getAttribute(`data-${prefisso}-etichetta`));
+    const altre = document.getElementById(`${prefisso}-altre-etichette`).value.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 8);
+    return Array.from(new Set(scelte.concat(altre)));
+  }
+
+  function leggiDestinatari(prefisso) {
+    const visibilita = profRoot.querySelector(`input[name="${prefisso}-visibilita"]:checked`).value;
+    const destinatari = visibilita === "selezionati"
+      ? Array.from(profRoot.querySelectorAll(`#${prefisso}-destinatari input:checked`)).map((x) => x.value) : [];
+    return { visibilita, destinatari };
+  }
+
+  function collegaSceltePrefisso(prefisso) {
+    profRoot.querySelectorAll(`[data-${prefisso}-etichetta]`).forEach((x) => x.addEventListener("click", () => {
+      x.setAttribute("aria-pressed", x.getAttribute("aria-pressed") === "true" ? "false" : "true");
+    }));
+    profRoot.querySelectorAll(`input[name="${prefisso}-visibilita"]`).forEach((x) => x.addEventListener("change", () => {
+      document.getElementById(`${prefisso}-destinatari`).hidden = profRoot.querySelector(`input[name="${prefisso}-visibilita"]:checked`).value !== "selezionati";
+    }));
+  }
+
+  function renderCaricamentoMultiplo() {
+    vistaProfCorrente = "ricetteMultiple";
+    const g = RICPRO.gruppo;
+    document.getElementById("prof-header-titolo").textContent = "Carica ricette";
+    const scelteEt = g.etichette.filter((e) => ETICHETTE_RICETTE.includes(e));
+
+    profRoot.innerHTML = `
+      <button type="button" class="link-btn" id="btn-annulla-gruppo" style="margin-bottom:10px;">← Ricettario</button>
+      <section class="settings-section">
+        <h2>${g.voci.length === 1 ? "1 ricetta" : g.voci.length + " ricette"}</h2>
+        <p class="stat-nota" style="margin:0 0 10px;">Controlla i titoli: li ho ricavati dai nomi dei file.</p>
+        <div class="ric-voci">
+          ${g.voci.map((v) => `
+            <div class="ric-voce ${v.stato === "fatto" ? "is-fatta" : ""}" data-voce="${v.chiave}">
+              <span class="ric-voce__mini" ${v.prep && v.prep.foto ? `style="background-image:url('${v.prep.foto.anteprima}')"` : ""}>${v.prep && v.prep.foto ? "" : (v.stato === "errore" ? "⚠️" : "📄")}</span>
+              <span class="ric-voce__testo">
+                <input type="text" class="ric-voce__titolo" data-titolo-voce="${v.chiave}" value="${escapeHTML(v.titolo)}" maxlength="90" aria-label="Titolo della ricetta" ${g.inCorso || v.stato === "fatto" ? "disabled" : ""}>
+                <span class="ric-voce__stato">${statoVoceHTML(v)}</span>
+              </span>
+              ${g.inCorso || v.stato === "fatto" ? "" : `<button type="button" class="ric-voce__togli" data-togli-voce="${v.chiave}" aria-label="Togli ${escapeHTML(v.titolo)}">✕</button>`}
+            </div>`).join("")}
+        </div>
+        ${g.voci.length < MAX_FILE_INSIEME && !g.inCorso ? `<label class="btn btn--ghost ric-file" style="margin-top:10px;">Aggiungi altri file<input type="file" id="ric-altri-file" accept="application/pdf,image/*" multiple hidden></label>` : ""}
+      </section>
+
+      <section class="settings-section">
+        <h2>Etichette per tutte</h2>
+        ${sceltaEtichetteHTML("grp", scelteEt, g.altre)}
+      </section>
+
+      <section class="settings-section">
+        <h2>Chi le vede</h2>
+        ${sceltaDestinatariHTML("grp", g.visibilita, new Set(g.destinatari))}
+      </section>
+
+      <p id="grp-stato" class="stat-nota" role="status" style="margin:0 0 10px;"></p>
+      <button type="button" class="btn" id="ric-pubblica-gruppo"></button>
+    `;
+    aggiornaPulsantePubblica();
+    collegaSceltePrefisso("grp");
+
+    const ricordaComuni = () => {
+      g.etichette = leggiEtichette("grp");
+      g.altre = document.getElementById("grp-altre-etichette").value;
+      const d = leggiDestinatari("grp");
+      g.visibilita = d.visibilita; g.destinatari = d.destinatari;
+    };
+    document.getElementById("btn-annulla-gruppo").addEventListener("click", () => {
+      if (g.inCorso) return;
+      RICPRO.gruppo = null;
+      renderRicettario();
+    });
+    profRoot.querySelectorAll("[data-titolo-voce]").forEach((inp) => inp.addEventListener("input", () => {
+      const v = g.voci.find((x) => x.chiave === inp.dataset.titoloVoce);
+      if (v) v.titolo = inp.value;
+    }));
+    profRoot.querySelectorAll("[data-togli-voce]").forEach((b) => b.addEventListener("click", () => {
+      ricordaComuni();
+      g.voci = g.voci.filter((x) => x.chiave !== b.dataset.togliVoce);
+      if (!g.voci.length) { RICPRO.gruppo = null; renderRicettario(); return; }
+      renderCaricamentoMultiplo();
+    }));
+    const altri = document.getElementById("ric-altri-file");
+    if (altri) altri.addEventListener("change", (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      ricordaComuni();
+      avviaCaricamentoMultiplo(files);
+    });
+    document.getElementById("ric-pubblica-gruppo").addEventListener("click", () => {
+      ricordaComuni();
+      pubblicaGruppo();
+    });
+  }
+
+  async function pubblicaGruppo() {
+    const g = RICPRO.gruppo;
+    const stato = document.getElementById("grp-stato");
+    if (g.visibilita === "selezionati" && !g.destinatari.length) {
+      stato.textContent = "Scegli almeno un paziente, oppure rendi le ricette visibili a tutti.";
+      stato.style.color = "var(--stato-rosso)";
+      return;
+    }
+    const daPubblicare = g.voci.filter((v) => v.stato === "pronto");
+    g.inCorso = true;
+    renderCaricamentoMultiplo();
+    const autoreNome = (PROFILO_PROF.contatti && PROFILO_PROF.contatti.nome) || PROFILO_PROF.nome || "";
+    let riuscite = 0;
+    for (const v of daPubblicare) {
+      v.stato = "caricamento"; v.progresso = 0; aggiornaVoceGruppo(v);
+      const id = window.cloud.nuovoIdRicetta();
+      try {
+        let foto = null;
+        if (v.prep.foto) {
+          const f = await window.cloud.caricaFileRicetta(UID, id, v.prep.foto.nome, v.prep.foto.blob, "image/jpeg",
+            (x) => { v.progresso = x * 0.2; aggiornaVoceGruppo(v); });
+          foto = Object.assign(f, { auto: true });
+        }
+        const a = await window.cloud.caricaFileRicetta(UID, id, v.prep.allegato.nome, v.prep.allegato.blob, v.prep.allegato.tipo,
+          (x) => { v.progresso = 0.2 + x * 0.8; aggiornaVoceGruppo(v); });
+        await window.cloud.salvaRicetta(id, {
+          titolo: (v.titolo || "").trim() || titoloDaNomeFile(v.file.name),
+          porzioni: null, tempoMin: null, kcal: null, proteine: null, carboidrati: null, grassi: null,
+          etichette: g.etichette, ingredienti: [], procedimento: [], note: "",
+          visibilita: g.visibilita, destinatari: g.destinatari,
+          professionistaUid: UID, autoreNome,
+          foto, allegato: Object.assign(a, { nome: v.prep.allegato.nome, tipo: v.prep.allegato.tipo }),
+        }, true);
+        v.stato = "fatto"; riuscite++;
+      } catch (e) {
+        console.error("Pubblicazione ricetta:", e);
+        v.stato = "errore";
+        v.errore = /permission|unauthorized/i.test((e && (e.code || e.message)) || "")
+          ? "Non pubblicata: licenza o regole non valide" : "Non pubblicata: riprova";
+        v.prep && (v.stato = "errore");
+      }
+      aggiornaVoceGruppo(v);
+    }
+    g.inCorso = false;
+    const errori = g.voci.filter((v) => v.stato === "errore" && v.prep).length;
+    if (!errori) {
+      mostraToast(riuscite === 1 ? "Ricetta pubblicata" : `${riuscite} ricette pubblicate`);
+      RICPRO.gruppo = null;
+      renderRicettario();
+    } else {
+      // Le non riuscite tornano "pronte" per un nuovo tentativo.
+      g.voci.forEach((v) => { if (v.stato === "errore" && v.prep) { v.stato = "pronto"; } });
+      renderCaricamentoMultiplo();
+      const s = document.getElementById("grp-stato");
+      s.textContent = `${riuscite} pubblicate, ${errori} non riuscite: controlla la connessione e tocca di nuovo Pubblica.`;
+      s.style.color = "var(--stato-rosso)";
+    }
+  }
+
+  // ---- Editor di una singola ricetta ----
   function apriEditorRicetta(id) {
     const esistente = id ? RICPRO.elenco.find((r) => r.id === id) : null;
     RICPRO.bozza = {
       id: esistente ? esistente.id : window.cloud.nuovoIdRicetta(),
       nuova: !esistente,
       originale: esistente || null,
+      datiIniziali: esistente || null,
       foto: esistente && esistente.foto ? esistente.foto : null,
       allegato: esistente && esistente.allegato ? esistente.allegato : null,
-      fotoNuova: null,       // { blob, nome, anteprima }
+      fotoNuova: null,       // { blob, nome, anteprima, auto }
       allegatoNuovo: null,   // { blob, nome, tipo }
+      dettagliAperti: !esistente || !esistente.allegato || !!((esistente.ingredienti || []).length || (esistente.procedimento || []).length),
     };
     renderEditorRicetta();
     window.scrollTo(0, 0);
@@ -2292,9 +2626,9 @@
     document.getElementById("prof-header-titolo").textContent = b.nuova ? "Nuova ricetta" : "Modifica ricetta";
     const etichette = r.etichette || [];
     const altre = etichette.filter((e) => !ETICHETTE_RICETTE.includes(e));
-    const selezionati = new Set(r.destinatari || []);
-    const perSelezionati = r.visibilita === "selezionati";
+    const fotoCorrente = b.fotoNuova || b.foto;
     const anteprimaFoto = b.fotoNuova ? b.fotoNuova.anteprima : (b.foto ? b.foto.url : null);
+    const fotoAuto = !!(fotoCorrente && fotoCorrente.auto);
     const allegatoNome = b.allegatoNuovo ? b.allegatoNuovo.nome : (b.allegato ? b.allegato.nome : null);
 
     profRoot.innerHTML = `
@@ -2307,78 +2641,78 @@
       </section>
 
       <section class="settings-section">
-        <h2>Foto</h2>
+        <h2>Scheda della ricetta (PDF o foto)</h2>
         <div class="ric-foto">
-          <div class="ric-foto__anteprima" ${anteprimaFoto ? `style="background-image:url('${escapeHTML(anteprimaFoto)}')"` : ""}>${anteprimaFoto ? "" : "<span>Nessuna foto</span>"}</div>
+          <div class="ric-foto__anteprima ${fotoAuto ? "is-pagina" : ""}" ${anteprimaFoto ? `style="background-image:url('${escapeHTML(anteprimaFoto)}')"` : ""}>${anteprimaFoto ? "" : `<span>${allegatoNome ? "📄" : "Nessun file"}</span>`}</div>
           <div class="ric-foto__azioni">
-            <label class="btn btn--ghost ric-file">${anteprimaFoto ? "Cambia foto" : "Scegli una foto"}<input type="file" id="ric-foto-file" accept="image/*" hidden></label>
-            ${anteprimaFoto ? `<button type="button" class="link-btn" id="ric-foto-togli">Togli la foto</button>` : ""}
+            ${allegatoNome ? `<span class="stat-nota" style="margin:0;">📎 ${escapeHTML(allegatoNome)}</span>` : ""}
+            <label class="btn btn--ghost ric-file">${allegatoNome ? "Sostituisci il file" : "Scegli PDF o foto"}<input type="file" id="ric-allegato-file" accept="application/pdf,image/*" hidden></label>
+            ${allegatoNome ? `<button type="button" class="link-btn" id="ric-allegato-togli">Togli il file</button>` : ""}
           </div>
         </div>
-      </section>
-
-      <section class="settings-section">
-        <h2>Dati</h2>
-        <div class="ric-griglia">
-          <label class="editor-campo">Porzioni<input type="number" id="ric-porzioni" min="1" max="50" inputmode="numeric" value="${escapeHTML(r.porzioni || "")}"></label>
-          <label class="editor-campo">Tempo (minuti)<input type="number" id="ric-tempo" min="1" max="1440" inputmode="numeric" value="${escapeHTML(r.tempoMin || "")}"></label>
-          <label class="editor-campo">Kcal a porzione<input type="number" id="ric-kcal" min="0" max="5000" inputmode="numeric" value="${escapeHTML(r.kcal || "")}"></label>
-          <label class="editor-campo">Proteine (g)<input type="number" id="ric-proteine" min="0" step="0.1" inputmode="decimal" value="${escapeHTML(r.proteine != null ? r.proteine : "")}"></label>
-          <label class="editor-campo">Carboidrati (g)<input type="number" id="ric-carboidrati" min="0" step="0.1" inputmode="decimal" value="${escapeHTML(r.carboidrati != null ? r.carboidrati : "")}"></label>
-          <label class="editor-campo">Grassi (g)<input type="number" id="ric-grassi" min="0" step="0.1" inputmode="decimal" value="${escapeHTML(r.grassi != null ? r.grassi : "")}"></label>
-        </div>
-        <p class="stat-nota" style="margin-top:8px;">Tutti facoltativi. Kcal e macronutrienti si riferiscono a una porzione.</p>
+        <p id="ric-allegato-stato" class="stat-nota" role="status" style="margin-top:8px;">Massimo 10 MB. L'anteprima si ricava dalla prima pagina.</p>
       </section>
 
       <section class="settings-section">
         <h2>Etichette</h2>
-        <div class="ricette-filtri" id="ric-etichette">
-          ${ETICHETTE_RICETTE.map((e) => `<button type="button" class="chip-filtro" data-etichetta-ric="${escapeHTML(e)}" aria-pressed="${etichette.includes(e)}">${escapeHTML(e)}</button>`).join("")}
-        </div>
-        <label class="editor-campo" style="margin-top:10px;">Altre etichette, separate da virgola
-          <input type="text" id="ric-altre-etichette" maxlength="120" value="${escapeHTML(altre.join(", "))}" placeholder="Es. Estiva, Proteica">
-        </label>
-      </section>
-
-      <section class="settings-section">
-        <h2>Ingredienti</h2>
-        <label class="editor-campo">Uno per riga, con le quantità
-          <textarea id="ric-ingredienti" rows="7" placeholder="400 g di zucca&#10;200 g di ceci cotti&#10;1 cipolla&#10;1 cucchiaio di olio extravergine">${escapeHTML((r.ingredienti || []).join("\n"))}</textarea>
-        </label>
-        <p class="stat-nota" style="margin-top:6px;">Il paziente potrà mandarli nella lista della spesa con un tocco: l'app riconosce gli alimenti e toglie le quantità.</p>
-      </section>
-
-      <section class="settings-section">
-        <h2>Procedimento</h2>
-        <label class="editor-campo">Un passaggio per riga
-          <textarea id="ric-procedimento" rows="7" placeholder="Taglia la zucca a cubetti e rosolala con la cipolla.&#10;Aggiungi i ceci e copri con acqua calda.&#10;Cuoci 20 minuti e frulla.">${escapeHTML((r.procedimento || []).join("\n"))}</textarea>
-        </label>
-        <label class="editor-campo" style="margin-top:10px;">Note (facoltative)
-          <textarea id="ric-note" rows="3" maxlength="1000" placeholder="Conservazione, varianti, consigli">${escapeHTML(r.note || "")}</textarea>
-        </label>
-      </section>
-
-      <section class="settings-section">
-        <h2>Scheda allegata</h2>
-        <p class="stat-nota" style="margin:0 0 10px;">Se hai già la ricetta in PDF o in foto, allegala qui: puoi anche lasciare vuoti ingredienti e procedimento. Massimo 10 MB.</p>
-        ${allegatoNome ? `<p class="stat-riga"><span>📎 ${escapeHTML(allegatoNome)}</span><button type="button" class="link-btn" id="ric-allegato-togli" style="width:auto; padding:0;">Togli</button></p>` : ""}
-        <label class="btn btn--ghost ric-file" style="margin-top:8px;">${allegatoNome ? "Sostituisci l'allegato" : "Allega PDF o foto"}<input type="file" id="ric-allegato-file" accept="application/pdf,image/*" hidden></label>
+        ${sceltaEtichetteHTML("ric", etichette, altre.join(", "))}
       </section>
 
       <section class="settings-section">
         <h2>Chi la vede</h2>
-        <label class="ric-scelta"><input type="radio" name="ric-visibilita" value="tutti" ${perSelezionati ? "" : "checked"}> Tutti i miei pazienti, anche quelli futuri</label>
-        <label class="ric-scelta"><input type="radio" name="ric-visibilita" value="selezionati" ${perSelezionati ? "checked" : ""}> Solo i pazienti che scelgo</label>
-        <div id="ric-destinatari" class="ric-destinatari" ${perSelezionati ? "" : "hidden"}>
-          ${PAZIENTI_PROF.filter((p) => p.pazienteUid).map((p) => `
-            <label class="ric-scelta"><input type="checkbox" value="${escapeHTML(p.pazienteUid)}" ${selezionati.has(p.pazienteUid) ? "checked" : ""}> ${escapeHTML(p.pazienteNome || p.pazienteEmail || "Paziente")}</label>`).join("") || `<p class="stat-nota">Non hai ancora pazienti.</p>`}
-        </div>
+        ${sceltaDestinatariHTML("ric", r.visibilita, new Set(r.destinatari || []))}
       </section>
 
-      <p id="ric-stato" class="stat-nota" role="status" style="margin:0 0 10px;"></p>
+      <details class="ric-dettagli" id="ric-dettagli" ${b.dettagliAperti ? "open" : ""}>
+        <summary>Aggiungi dettagli (facoltativo)</summary>
+        <p class="stat-nota" style="margin:4px 0 16px;">Se scrivi gli ingredienti, il paziente può mandarli nella lista della spesa con un tocco. Se hai caricato un PDF, qui puoi lasciare tutto vuoto.</p>
+
+        <section class="settings-section">
+          <h2>Foto del piatto</h2>
+          <div class="ric-foto">
+            <div class="ric-foto__anteprima" ${anteprimaFoto && !fotoAuto ? `style="background-image:url('${escapeHTML(anteprimaFoto)}')"` : ""}>${anteprimaFoto && !fotoAuto ? "" : "<span>Usa l'anteprima del file</span>"}</div>
+            <div class="ric-foto__azioni">
+              <label class="btn btn--ghost ric-file">${anteprimaFoto && !fotoAuto ? "Cambia foto" : "Scegli una foto"}<input type="file" id="ric-foto-file" accept="image/*" hidden></label>
+              ${anteprimaFoto && !fotoAuto ? `<button type="button" class="link-btn" id="ric-foto-togli">Togli la foto</button>` : ""}
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Dati per porzione</h2>
+          <div class="ric-griglia">
+            <label class="editor-campo">Porzioni<input type="number" id="ric-porzioni" min="1" max="50" inputmode="numeric" value="${escapeHTML(r.porzioni || "")}"></label>
+            <label class="editor-campo">Tempo (minuti)<input type="number" id="ric-tempo" min="1" max="1440" inputmode="numeric" value="${escapeHTML(r.tempoMin || "")}"></label>
+            <label class="editor-campo">Kcal<input type="number" id="ric-kcal" min="0" max="5000" inputmode="numeric" value="${escapeHTML(r.kcal || "")}"></label>
+            <label class="editor-campo">Proteine (g)<input type="number" id="ric-proteine" min="0" step="0.1" inputmode="decimal" value="${escapeHTML(r.proteine != null ? r.proteine : "")}"></label>
+            <label class="editor-campo">Carboidrati (g)<input type="number" id="ric-carboidrati" min="0" step="0.1" inputmode="decimal" value="${escapeHTML(r.carboidrati != null ? r.carboidrati : "")}"></label>
+            <label class="editor-campo">Grassi (g)<input type="number" id="ric-grassi" min="0" step="0.1" inputmode="decimal" value="${escapeHTML(r.grassi != null ? r.grassi : "")}"></label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Ingredienti</h2>
+          <label class="editor-campo">Uno per riga, con le quantità
+            <textarea id="ric-ingredienti" rows="6" placeholder="400 g di zucca&#10;200 g di ceci cotti&#10;1 cipolla">${escapeHTML((r.ingredienti || []).join("\n"))}</textarea>
+          </label>
+        </section>
+
+        <section class="settings-section">
+          <h2>Procedimento</h2>
+          <label class="editor-campo">Un passaggio per riga
+            <textarea id="ric-procedimento" rows="6" placeholder="Taglia la zucca a cubetti e rosolala con la cipolla.&#10;Aggiungi i ceci e cuoci 20 minuti.">${escapeHTML((r.procedimento || []).join("\n"))}</textarea>
+          </label>
+          <label class="editor-campo" style="margin-top:10px;">Note
+            <textarea id="ric-note" rows="3" maxlength="1000" placeholder="Conservazione, varianti, consigli">${escapeHTML(r.note || "")}</textarea>
+          </label>
+        </section>
+      </details>
+
+      <p id="ric-stato" class="stat-nota" role="status" style="margin:16px 0 10px;"></p>
       <button type="button" class="btn" id="ric-salva">${b.nuova ? "Pubblica la ricetta" : "Salva le modifiche"}</button>
       ${b.nuova ? "" : `<button type="button" class="btn btn--ghost" id="ric-elimina" style="margin-top:10px;">Elimina la ricetta</button>`}
     `;
+    collegaSceltePrefisso("ric");
 
     const leggiModulo = () => {
       const num = (id, dec) => {
@@ -2388,32 +2722,51 @@
         return isFinite(n) && n >= 0 ? n : null;
       };
       const righe = (id) => document.getElementById(id).value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, 80);
-      const scelte = Array.from(profRoot.querySelectorAll("[data-etichetta-ric]")).filter((x) => x.getAttribute("aria-pressed") === "true").map((x) => x.dataset.etichettaRic);
-      const altreEt = document.getElementById("ric-altre-etichette").value.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 8);
-      const visibilita = profRoot.querySelector('input[name="ric-visibilita"]:checked').value;
-      const destinatari = visibilita === "selezionati"
-        ? Array.from(profRoot.querySelectorAll("#ric-destinatari input:checked")).map((x) => x.value) : [];
-      return {
+      return Object.assign({
         titolo: document.getElementById("ric-titolo").value.trim(),
         porzioni: num("ric-porzioni"), tempoMin: num("ric-tempo"), kcal: num("ric-kcal"),
         proteine: num("ric-proteine", true), carboidrati: num("ric-carboidrati", true), grassi: num("ric-grassi", true),
-        etichette: Array.from(new Set(scelte.concat(altreEt))),
+        etichette: leggiEtichette("ric"),
         ingredienti: righe("ric-ingredienti"),
         procedimento: righe("ric-procedimento"),
         note: document.getElementById("ric-note").value.trim().slice(0, 1000),
-        visibilita, destinatari,
-      };
+      }, leggiDestinatari("ric"));
     };
-    // Conserva quanto scritto quando la pagina viene ridisegnata (es. dopo aver scelto una foto)
-    const ricordaModulo = () => { b.originale = Object.assign({}, b.originale || {}, leggiModulo()); };
+    // Conserva quanto scritto quando la pagina viene ridisegnata (es. dopo aver scelto un file)
+    const ricordaModulo = () => {
+      b.originale = Object.assign({}, b.originale || {}, leggiModulo());
+      b.dettagliAperti = document.getElementById("ric-dettagli").open;
+    };
 
     document.getElementById("btn-torna-ricettario").addEventListener("click", () => { RICPRO.bozza = null; renderRicettario(); });
-    profRoot.querySelectorAll("[data-etichetta-ric]").forEach((x) => x.addEventListener("click", () => {
-      x.setAttribute("aria-pressed", x.getAttribute("aria-pressed") === "true" ? "false" : "true");
-    }));
-    profRoot.querySelectorAll('input[name="ric-visibilita"]').forEach((x) => x.addEventListener("change", () => {
-      document.getElementById("ric-destinatari").hidden = profRoot.querySelector('input[name="ric-visibilita"]:checked').value !== "selezionati";
-    }));
+
+    document.getElementById("ric-allegato-file").addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      ricordaModulo();
+      const stato = document.getElementById("ric-allegato-stato");
+      stato.textContent = "Preparazione dell'anteprima…";
+      try {
+        const prep = await preparaFileRicetta(file);
+        b.allegatoNuovo = prep.allegato;
+        // L'anteprima del file sostituisce solo un'anteprima automatica, mai una foto scelta a mano.
+        const fotoManuale = (b.fotoNuova && !b.fotoNuova.auto) || (!b.fotoNuova && b.foto && !b.foto.auto);
+        if (!fotoManuale) { b.fotoNuova = prep.foto; if (!prep.foto) b.foto = null; }
+        if (!document.getElementById("ric-titolo").value.trim()) b.originale.titolo = titoloDaNomeFile(file.name);
+        renderEditorRicetta();
+      } catch (err) {
+        stato.textContent = messaggioErroreFile(err);
+        stato.style.color = "var(--stato-rosso)";
+      }
+    });
+    const togliAll = document.getElementById("ric-allegato-togli");
+    if (togliAll) togliAll.addEventListener("click", () => {
+      ricordaModulo();
+      b.allegatoNuovo = null; b.allegato = null;
+      if (b.fotoNuova && b.fotoNuova.auto) b.fotoNuova = null;
+      if (b.foto && b.foto.auto) b.foto = null;
+      renderEditorRicetta();
+    });
 
     document.getElementById("ric-foto-file").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
@@ -2421,36 +2774,23 @@
       ricordaModulo();
       try {
         const blob = await comprimiImmagine(file, 1600, 0.82);
-        b.fotoNuova = { blob, nome: "foto.jpg", anteprima: URL.createObjectURL(blob) };
+        b.fotoNuova = { blob, nome: "foto.jpg", anteprima: URL.createObjectURL(blob), auto: false };
         renderEditorRicetta();
       } catch (err) {
         mostraToast("Non riesco a leggere questa immagine: prova con una foto JPG o PNG", 4000);
       }
     });
     const togliFoto = document.getElementById("ric-foto-togli");
-    if (togliFoto) togliFoto.addEventListener("click", () => { ricordaModulo(); b.fotoNuova = null; b.foto = null; renderEditorRicetta(); });
-
-    document.getElementById("ric-allegato-file").addEventListener("change", async (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (!file) return;
+    if (togliFoto) togliFoto.addEventListener("click", async () => {
       ricordaModulo();
-      try {
-        if (file.type === "application/pdf") {
-          if (file.size > MAX_ALLEGATO) { mostraToast("Il PDF supera i 10 MB: riducilo e riprova", 4000); return; }
-          b.allegatoNuovo = { blob: file, nome: file.name, tipo: "application/pdf" };
-        } else if (file.type.startsWith("image/")) {
-          const blob = await comprimiImmagine(file, 2200, 0.85);
-          b.allegatoNuovo = { blob, nome: file.name.replace(/\.[^.]+$/, "") + ".jpg", tipo: "image/jpeg" };
-        } else {
-          mostraToast("Puoi allegare solo PDF o immagini", 3500); return;
-        }
-        renderEditorRicetta();
-      } catch (err) {
-        mostraToast("Non riesco a leggere questo file: prova con un PDF o una foto JPG", 4000);
+      b.fotoNuova = null; b.foto = null;
+      // Se c'è un PDF, si torna alla sua anteprima automatica
+      const pdf = b.allegatoNuovo ? b.allegatoNuovo.blob : null;
+      if (pdf && b.allegatoNuovo.tipo === "application/pdf") {
+        try { const blob = await anteprimaPdf(pdf); b.fotoNuova = { blob, nome: "anteprima.jpg", anteprima: URL.createObjectURL(blob), auto: true }; } catch (err) { /* nessuna anteprima */ }
       }
+      renderEditorRicetta();
     });
-    const togliAll = document.getElementById("ric-allegato-togli");
-    if (togliAll) togliAll.addEventListener("click", () => { ricordaModulo(); b.allegatoNuovo = null; b.allegato = null; renderEditorRicetta(); });
 
     document.getElementById("ric-salva").addEventListener("click", () => salvaRicettaDaEditor(leggiModulo()));
     const elimina = document.getElementById("ric-elimina");
@@ -2459,13 +2799,14 @@
 
   async function salvaRicettaDaEditor(dati) {
     const b = RICPRO.bozza;
+    const iniziale = b.datiIniziali || {};
     const stato = document.getElementById("ric-stato");
     const btn = document.getElementById("ric-salva");
     const errore = (msg) => { stato.textContent = msg; stato.style.color = "var(--stato-rosso)"; stato.scrollIntoView({ block: "center" }); };
     if (!dati.titolo) return errore("Scrivi il titolo della ricetta.");
     const haAllegato = !!(b.allegatoNuovo || b.allegato);
     if (!dati.ingredienti.length && !dati.procedimento.length && !haAllegato) {
-      return errore("Inserisci ingredienti e procedimento, oppure allega la scheda della ricetta.");
+      return errore("Carica il PDF o la foto della ricetta, oppure scrivi ingredienti e procedimento nei dettagli.");
     }
     if (dati.visibilita === "selezionati" && !dati.destinatari.length) return errore("Scegli almeno un paziente, oppure rendi la ricetta visibile a tutti.");
 
@@ -2474,23 +2815,23 @@
     const vecchi = [];
     try {
       if (b.fotoNuova) {
-        stato.textContent = "Caricamento della foto…";
+        stato.textContent = "Caricamento dell'immagine…";
         const f = await window.cloud.caricaFileRicetta(UID, b.id, b.fotoNuova.nome, b.fotoNuova.blob, "image/jpeg",
-          (x) => { stato.textContent = `Caricamento della foto… ${Math.round(x * 100)}%`; });
-        if (b.originale && b.originale.foto && b.originale.foto.path) vecchi.push(b.originale.foto.path);
-        b.foto = f; b.fotoNuova = null;
-      } else if (!b.foto && b.originale && b.originale.foto && b.originale.foto.path) {
-        vecchi.push(b.originale.foto.path);
+          (x) => { stato.textContent = `Caricamento dell'immagine… ${Math.round(x * 100)}%`; });
+        if (iniziale.foto && iniziale.foto.path) vecchi.push(iniziale.foto.path);
+        b.foto = Object.assign(f, { auto: !!b.fotoNuova.auto }); b.fotoNuova = null;
+      } else if (!b.foto && iniziale.foto && iniziale.foto.path) {
+        vecchi.push(iniziale.foto.path);
       }
       if (b.allegatoNuovo) {
-        stato.textContent = "Caricamento dell'allegato…";
+        stato.textContent = "Caricamento del file…";
         const a = await window.cloud.caricaFileRicetta(UID, b.id, b.allegatoNuovo.nome, b.allegatoNuovo.blob, b.allegatoNuovo.tipo,
-          (x) => { stato.textContent = `Caricamento dell'allegato… ${Math.round(x * 100)}%`; });
-        if (b.originale && b.originale.allegato && b.originale.allegato.path) vecchi.push(b.originale.allegato.path);
+          (x) => { stato.textContent = `Caricamento del file… ${Math.round(x * 100)}%`; });
+        if (iniziale.allegato && iniziale.allegato.path) vecchi.push(iniziale.allegato.path);
         b.allegato = Object.assign(a, { nome: b.allegatoNuovo.nome, tipo: b.allegatoNuovo.tipo });
         b.allegatoNuovo = null;
-      } else if (!b.allegato && b.originale && b.originale.allegato && b.originale.allegato.path) {
-        vecchi.push(b.originale.allegato.path);
+      } else if (!b.allegato && iniziale.allegato && iniziale.allegato.path) {
+        vecchi.push(iniziale.allegato.path);
       }
 
       stato.textContent = "Salvataggio…";
@@ -2518,10 +2859,10 @@
 
   function confermaEliminaRicetta() {
     const b = RICPRO.bozza;
-    const r = b.originale;
+    const r = b.datiIniziali;
     const overlay = apriSheet(`
       <h2 class="sheet__titolo">Eliminare "${escapeHTML(r.titolo || "questa ricetta")}"?</h2>
-      <p class="sheet__nota sheet__nota--attenzione">La ricetta, la foto e l'allegato vengono cancellati per sempre e spariscono anche dall'app dei pazienti.</p>
+      <p class="sheet__nota sheet__nota--attenzione">La ricetta e i suoi file vengono cancellati per sempre e spariscono anche dall'app dei pazienti.</p>
       <button type="button" class="btn" id="conferma-elimina-ricetta">Elimina</button>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
     `);
