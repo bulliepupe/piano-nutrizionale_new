@@ -38,6 +38,7 @@
     pushOk: "pnut:push-ok",               // "1" se questo dispositivo è registrato per il push dal server
     bannerIosChiuso: "pnut:banner-ios-chiuso",
     ultimoAccessoInviato: "pnut:ultimo-accesso-inviato",
+    invitoRiattivaNotifiche: "pnut:invito-riattiva-notifiche",
   };
   const ANTICIPI_VALIDI = [10, 15, 20, 30];
   const ANTICIPO_DEFAULT = 15;
@@ -142,7 +143,7 @@
     if (RUOLO === "professionista") {
       avviaProfessionista(utenteDati);
     } else {
-      avviaPaziente();
+      avviaPaziente(utenteDati);
     }
   }
 
@@ -284,8 +285,9 @@
   // =======================================================================
   // LATO PAZIENTE
   // =======================================================================
-  async function avviaPaziente() {
+  async function avviaPaziente(utenteDati) {
     mostraSchermata("paziente");
+    migraDominioSeServe(utenteDati);
     applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
     aggiornaEyebrowData();
@@ -435,6 +437,7 @@
     const numFatti = MEAL_KEYS.filter((k) => fatti[k]).length;
 
     root.innerHTML = `
+      ${renderBannerRiattivaHTML()}
       ${renderBannerIosHTML()}
       ${avvisoInizio}
       <section class="hero">
@@ -457,6 +460,7 @@
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));
     });
     collegaBannerIos();
+    collegaBannerRiattiva();
     collegaContattoNutrizionista();
   }
 
@@ -1369,6 +1373,56 @@
   /** Vero su iPhone/iPad quando l'app è aperta da Safari invece che dall'icona sulla Home. */
   function serveGuidaIOS() {
     return eIOS() && !eStandalone();
+  }
+
+  // ---------------------------------------------------------------------
+  // Passaggio al nuovo indirizzo app.ilmiopiano.it
+  // ---------------------------------------------------------------------
+  // Per il browser il nuovo indirizzo è un'app diversa: le notifiche vanno
+  // riattivate. Al PRIMO accesso di un paziente dal nuovo indirizzo si
+  // scollegano i dispositivi registrati dal vecchio (altrimenti, dopo la
+  // riattivazione, arriverebbero promemoria doppi) e si mostra un invito a
+  // riattivare i promemoria. I dispositivi che si registrano dopo non
+  // vengono più toccati.
+  const DOMINIO_APP = "app.ilmiopiano.it";
+
+  function migraDominioSeServe(u) {
+    if (location.hostname !== DOMINIO_APP || !u || u.dominioNotifiche === DOMINIO_APP) return;
+    const avevaNotifiche = !!u.notificheAttive || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0);
+    window.cloud.azzeraDispositiviNotifiche(UID, DOMINIO_APP).then(() => {
+      if (avevaNotifiche) {
+        localStorage.setItem(LS_KEYS.invitoRiattivaNotifiche, "1");
+        if (currentView === "oggi") render();
+      }
+    }).catch((e) => console.warn("Migrazione notifiche al nuovo indirizzo non riuscita:", e));
+  }
+
+  function renderBannerRiattivaHTML() {
+    if (localStorage.getItem(LS_KEYS.invitoRiattivaNotifiche) !== "1") return "";
+    if (notificheAttive()) { localStorage.removeItem(LS_KEYS.invitoRiattivaNotifiche); return ""; }
+    return `
+      <div class="banner-ios" id="banner-riattiva">
+        <div class="banner-ios__testo">
+          <strong>L'app ha un nuovo indirizzo</strong>
+          <span>Riattiva i promemoria dei pasti su questo dispositivo.</span>
+        </div>
+        <button type="button" class="banner-ios__azione" id="btn-riattiva-notifiche">Riattiva</button>
+        <button type="button" class="banner-ios__chiudi" id="btn-chiudi-riattiva" aria-label="Nascondi">×</button>
+      </div>`;
+  }
+
+  function collegaBannerRiattiva() {
+    const btn = document.getElementById("btn-riattiva-notifiche");
+    if (btn) btn.addEventListener("click", async () => {
+      const ok = await attivaNotifiche();
+      if (ok) { localStorage.removeItem(LS_KEYS.invitoRiattivaNotifiche); render(); }
+    });
+    const chiudi = document.getElementById("btn-chiudi-riattiva");
+    if (chiudi) chiudi.addEventListener("click", () => {
+      localStorage.removeItem(LS_KEYS.invitoRiattivaNotifiche);
+      const b = document.getElementById("banner-riattiva");
+      if (b) b.remove();
+    });
   }
 
   function renderBannerIosHTML() {
@@ -3494,6 +3548,34 @@
     document.getElementById("btn-crea-paziente").addEventListener("click", onCreaPaziente);
   }
 
+  /** Dopo la creazione: le credenziali da comunicare al paziente, pronte da copiare o inviare. */
+  function mostraCredenzialiPaziente(nome, email, password) {
+    const indirizzo = location.origin + location.pathname.replace(/index\.html$/, "");
+    const primoNome = nome.split(" ")[0];
+    const testo = `Ciao ${primoNome}, ecco l'accesso all'app del tuo piano nutrizionale.\n\n` +
+      `Apri: ${indirizzo}\nEmail: ${email}\nPassword provvisoria: ${password}\n\n` +
+      `Al primo accesso ti consiglio di cambiare la password e di attivare i promemoria dei pasti.`;
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">✓ Paziente creato</h2>
+      <p class="sheet__nota">Comunica a ${escapeHTML(primoNome)} questi dati per il primo accesso.</p>
+      <div class="credenziali">
+        <p><span>Indirizzo</span><strong>${escapeHTML(indirizzo)}</strong></p>
+        <p><span>Email</span><strong>${escapeHTML(email)}</strong></p>
+        <p><span>Password provvisoria</span><strong class="credenziali__password">${escapeHTML(password)}</strong></p>
+      </div>
+      <button type="button" class="btn" id="btn-cred-whatsapp">Invia con WhatsApp</button>
+      <button type="button" class="btn btn--ghost" id="btn-cred-copia">Copia le credenziali</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Fatto</button>
+    `);
+    overlay.querySelector("#btn-cred-whatsapp").addEventListener("click", () => {
+      window.open("https://wa.me/?text=" + encodeURIComponent(testo), "_blank", "noopener");
+    });
+    overlay.querySelector("#btn-cred-copia").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(testo); mostraToast("Credenziali copiate", 3000); }
+      catch (e) { mostraToast("Copia non riuscita: seleziona il testo a mano", 3500); }
+    });
+  }
+
   /** Messaggi chiari per gli errori della funzione server creaPaziente. */
   function traduciErroreCreazionePaziente(e) {
     const codice = String((e && e.code) || "").replace(/^functions\//, "");
@@ -3542,8 +3624,8 @@
       if (contatti) pianoBase.contattiNutrizionista = contatti;
       pianoBase.dataInizio = dataInizio;
       await window.cloud.creaPaziente({ email, password, nome, piano: pianoBase });
-      mostraToast("Paziente creato — comunicagli email e password");
       renderListaPazienti();
+      mostraCredenzialiPaziente(nome, email, password);
     } catch (e) {
       mostraErroreIn("np-error", traduciErroreCreazionePaziente(e));
       btn.disabled = false;

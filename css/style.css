@@ -1526,3 +1526,11 @@ p.stat-motivi { padding-left: 0; }
   .ricetta--stampa .ricetta__piede { display: block; margin-top: 1cm; font-size: 9pt; color: #555; border-top: 1px solid #ccc; padding-top: 6px; }
   .ricetta--stampa h3, .ricetta--stampa li { break-inside: avoid; }
 }
+
+/* Credenziali del paziente appena creato */
+.credenziali { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 6px 14px; margin: 0 0 14px; }
+.credenziali p { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 9px 0; border-bottom: 1px solid var(--border-soft); font-size: 14px; }
+.credenziali p:last-child { border-bottom: none; }
+.credenziali span { color: var(--ink-soft); }
+.credenziali strong { color: var(--ink); text-align: right; overflow-wrap: anywhere; user-select: all; }
+.credenziali__password { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.04em; }

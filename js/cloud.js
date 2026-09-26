@@ -432,6 +432,14 @@
      * del promemoria: la funzione server-side che invia le notifiche push
      * legge da qui, perché non ha accesso al localStorage del telefono.
      */
+    /**
+     * Passaggio al nuovo indirizzo dell'app: scollega i dispositivi registrati
+     * dal vecchio indirizzo (vanno riattivati dal nuovo) e lo segna come fatto.
+     */
+    async azzeraDispositiviNotifiche(uid, dominio) {
+      await db.collection("users").doc(uid).update({ fcmTokens: [], notificheAttive: false, dominioNotifiche: dominio });
+    },
+
     async salvaPreferenzeNotifiche(uid, { orariOverride, anticipoMinuti, notificheAttive }) {
       const campi = { notificheAttive: !!notificheAttive };
       if (orariOverride !== undefined) campi.orariOverride = orariOverride;

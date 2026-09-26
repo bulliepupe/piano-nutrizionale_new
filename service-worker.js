@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v30";
+const CACHE_VERSION = "v31";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -61,10 +61,18 @@ self.addEventListener("fetch", (event) => {
   // "no-cache": il browser chiede sempre al server se il file è cambiato
   // (risposta leggera se è uguale). Così un aggiornamento pubblicato arriva
   // subito, senza aspettare i 10 minuti di cache di GitHub Pages.
-  const richiesta = new Request(event.request.url, { cache: "no-cache", credentials: "same-origin" });
+  // Le pagine (navigazioni) seguono i reindirizzamenti in modo "manuale": se
+  // il sito risponde con un redirect (es. dal vecchio indirizzo
+  // bulliepupe.github.io al nuovo app.ilmiopiano.it) è il browser a seguirlo e
+  // a cambiare indirizzo. Senza questo, il browser rifiuterebbe la pagina.
+  const navigazione = event.request.mode === "navigate";
+  const richiesta = new Request(event.request.url, {
+    cache: "no-cache", credentials: "same-origin", redirect: navigazione ? "manual" : "follow",
+  });
   event.respondWith(
     fetch(richiesta)
       .then((risposta) => {
+        if (risposta.type === "opaqueredirect" || risposta.redirected) return risposta;
         if (risposta.ok) {
           const copia = risposta.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia));

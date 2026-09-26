@@ -527,7 +527,7 @@ exports.stripeWebhook = onRequest(
  * il professionista è già entrato con email e password, quindi non serve il
  * link via email. Restituisce l'indirizzo della sessione del portale.
  */
-const RITORNI_AMMESSI = ["https://bulliepupe.github.io/", "https://ilmiopiano.it/", "https://www.ilmiopiano.it/"];
+const RITORNI_AMMESSI = ["https://app.ilmiopiano.it/", "https://bulliepupe.github.io/", "https://ilmiopiano.it/", "https://www.ilmiopiano.it/"];
 
 exports.apriPortaleClienti = onCall({ secrets: [STRIPE_SECRET_KEY] }, async (request) => {
   const uid = request.auth && request.auth.uid;
