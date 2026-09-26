@@ -1471,7 +1471,7 @@ p.stat-motivi { padding-left: 0; }
 .ric-griglia { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 420px) { .ric-griglia { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ric-griglia input { width: 100%; }
-.editor-campo input[type="date"], .ric-griglia input[type="number"] {
+.editor-campo input[type="date"], .editor-campo input[type="time"], .ric-griglia input[type="number"], .ric-griglia select {
   font-family: var(--font-body); font-size: 15px; color: var(--ink);
   border: 1px solid var(--border); border-radius: var(--radius-s); padding: 9px 11px; background: var(--surface);
 }
@@ -1565,3 +1565,39 @@ p.stat-motivi { padding-left: 0; }
 .credenziali span { color: var(--ink-soft); }
 .credenziali strong { color: var(--ink); text-align: right; overflow-wrap: anywhere; user-select: all; }
 .credenziali__password { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.04em; }
+
+/* Appuntamenti */
+.appuntamento {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.appuntamento.has-data { border-left: 4px solid var(--accent); }
+.appuntamento__eyebrow { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+.appuntamento__quando { margin: 0; font-family: var(--font-display); font-size: 21px; font-weight: 600; line-height: 1.25; color: var(--ink); }
+.appuntamento__dettaglio { margin: 0; font-size: 14px; color: var(--ink-soft); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.appuntamento__note { margin: 2px 0 0; font-size: 14px; color: var(--ink); background: var(--bg); border-radius: var(--radius-s); padding: 8px 10px; white-space: pre-line; }
+.appuntamento__richiesta { margin: 4px 0 0; font-size: 13.5px; color: var(--ink-soft); }
+.appuntamento .btn { margin-top: 6px; }
+.appuntamento .link-btn { width: auto; text-align: left; padding: 2px 0; }
+.banner-appuntamento { border-color: var(--accent); }
+.avviso-richieste {
+  display: flex; justify-content: space-between; align-items: center; width: 100%;
+  font-family: var(--font-body); font-size: 14.5px; font-weight: 700; color: var(--ink);
+  background: color-mix(in srgb, var(--gold) 20%, var(--surface)); border: 1px solid var(--gold);
+  border-radius: var(--radius-s); padding: 12px 14px; margin-bottom: 10px; cursor: pointer;
+}
+.avviso-richieste span { font-weight: 600; color: var(--ink-soft); }
+.richiesta-badge { display: inline-block; align-self: flex-start; margin-top: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink); background: color-mix(in srgb, var(--gold) 20%, var(--surface)); border-radius: 999px; padding: 2px 10px; }
+.richiesta-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--gold); border-radius: var(--radius-m); padding: 14px 16px; }
+.richiesta-card__testa { display: flex; justify-content: space-between; gap: 10px; margin: 0; font-size: 15px; }
+.richiesta-card__testa span { font-size: 12.5px; color: var(--ink-faint); }
+.richiesta-card__preferenze { margin: 6px 0 0; font-size: 13.5px; color: var(--ink-soft); }
+.richiesta-card__messaggio { margin: 8px 0 0; font-size: 14px; font-style: italic; color: var(--ink); }
+.richiesta-card__azioni { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.ric-griglia input, .ric-griglia select { width: 100%; min-height: 42px; box-sizing: border-box; }

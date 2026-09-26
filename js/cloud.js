@@ -354,6 +354,45 @@
     },
 
     // ------------------------------------------------------------------
+    // Appuntamenti
+    // L'appuntamento fissato sta nel piano (campo "appuntamento": data, ora,
+    // durata, modalità, luogo o link, note), così il paziente lo legge
+    // insieme al resto. Le richieste del paziente stanno in
+    // /richiesteAppuntamento: una richiesta esiste finché è in attesa, poi
+    // viene cancellata (quando il professionista la gestisce o il paziente
+    // la ritira).
+    // ------------------------------------------------------------------
+    async inviaRichiestaAppuntamento(dati) {
+      await db.collection("richiesteAppuntamento").add(Object.assign({}, dati, { creata: FieldValue.serverTimestamp() }));
+    },
+
+    async eliminaRichiestaAppuntamento(id) {
+      await db.collection("richiesteAppuntamento").doc(id).delete();
+    },
+
+    ascoltaRichiestePaziente(pazienteUid, cb) {
+      return db.collection("richiesteAppuntamento").where("pazienteUid", "==", pazienteUid).onSnapshot(
+        (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
+        (err) => { console.error("Errore ascolto richieste:", err); cb([]); }
+      );
+    },
+
+    ascoltaRichiesteProfessionista(professionistaUid, cb) {
+      return db.collection("richiesteAppuntamento").where("professionistaUid", "==", professionistaUid).onSnapshot(
+        (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
+        (err) => { console.error("Errore ascolto richieste:", err); cb([]); }
+      );
+    },
+
+    /** Elimina tutte le richieste di un paziente (usata prima di eliminare il paziente). */
+    async eliminaRichiesteDelPaziente(professionistaUid, pazienteUid) {
+      const snap = await db.collection("richiesteAppuntamento")
+        .where("professionistaUid", "==", professionistaUid)
+        .where("pazienteUid", "==", pazienteUid).get();
+      await Promise.all(snap.docs.map((d) => d.ref.delete()));
+    },
+
+    // ------------------------------------------------------------------
     // Statistiche per il professionista
     // ------------------------------------------------------------------
     /** Il paziente registra l'ultima apertura dell'app (serve all'avviso di abbandono). */

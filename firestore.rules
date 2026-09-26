@@ -119,6 +119,22 @@ service cloud.firestore {
       allow delete: if isProfessionista() && resource.data.professionistaUid == request.auth.uid;
     }
 
+    // Richieste di appuntamento: le crea il paziente, per il SUO
+    // professionista; le leggono solo loro due. Non si modificano: quando la
+    // richiesta è gestita (o ritirata) viene cancellata.
+    match /richiesteAppuntamento/{richiestaId} {
+      allow read, delete: if isSignedIn() && (
+        resource.data.pazienteUid == request.auth.uid || resource.data.professionistaUid == request.auth.uid
+      );
+      allow create: if isSignedIn()
+        && request.resource.data.pazienteUid == request.auth.uid
+        && request.resource.data.professionistaUid == utente().get("professionistaUid", "")
+        && request.resource.data.keys().hasOnly(["pazienteUid", "professionistaUid", "pianoId", "pazienteNome", "giorni", "fasce", "modalita", "messaggio", "creata"])
+        && request.resource.data.get("messaggio", "") is string
+        && request.resource.data.get("messaggio", "").size() <= 1000;
+      allow update: if false;
+    }
+
     // Tutto il resto (licenze in attesa, registro notifiche) è solo per il server.
     match /{document=**} {
       allow read, write: if false;

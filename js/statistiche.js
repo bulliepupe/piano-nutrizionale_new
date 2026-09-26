@@ -111,8 +111,11 @@
     });
 
     // Pasti fatti in parte o saltati negli ultimi 30 giorni, con i motivi
+    // (qui conta anche oggi: sono segnalazioni esplicite del paziente, non
+    // serve aspettare la fine della giornata per mostrarle)
     const imprevisti = { parziale: { totale: 0, motivi: {}, perPasto: {} }, saltato: { totale: 0, motivi: {}, perPasto: {} } };
-    g30.forEach((g) => {
+    const giorniImprevisti = pianoIniziato ? g30.concat([{ chiave: chiave(oggi) }]) : g30;
+    giorniImprevisti.forEach((g) => {
       const stato = spunte[g.chiave];
       PASTI.forEach((k) => {
         const st = statoPasto(stato, k);

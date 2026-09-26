@@ -161,6 +161,8 @@
     azzeraStatistiche();
     scollegaRicette();
     scollegaRicettario();
+    scollegaRichiestePaziente();
+    scollegaRichiesteProfessionista();
     if (unsubPazienti) { unsubPazienti(); unsubPazienti = null; }
     pazienteSelezionatoId = null;
     vistaProfCorrente = "lista";
@@ -302,6 +304,7 @@
       if (currentView === "oggi" || currentView === "settimana" || currentView === "impostazioni") render();
     });
     collegaAscoltoPastiOggi();
+    collegaRichiestePaziente();
 
     // Notifiche push ricevute mentre l'app è aperta: quelle ad app chiusa le
     // mostra invece il service worker (vedi service-worker.js).
@@ -440,6 +443,7 @@
 
     root.innerHTML = `
       ${renderBannerRiattivaHTML()}
+      ${renderAvvisoAppuntamentoHTML()}
       ${renderBannerIosHTML()}
       ${avvisoInizio}
       <section class="hero">
@@ -1177,6 +1181,7 @@
 
       <section class="settings-section">
         <h2>Il mio piano</h2>
+        ${appuntamentoPazienteHTML()}
         ${PIANO_ATTIVO ? `
           <div class="card-info">
             <dl>
@@ -1194,6 +1199,7 @@
     document.getElementById("chk-notifiche").addEventListener("change", onToggleNotificheDettaglio);
     root.querySelectorAll("[data-apri-guida-ios]").forEach((b) => b.addEventListener("click", apriGuidaIOS));
     collegaContattoNutrizionista();
+    collegaAppuntamentoPaziente();
     document.getElementById("sel-anticipo").addEventListener("change", (e) => {
       localStorage.setItem(LS_KEYS.anticipo, e.target.value);
       if (notificheAttive()) {
@@ -1844,6 +1850,245 @@
     if (img && !img.complete) { img.onload = vai; img.onerror = vai; } else vai();
   }
 
+  // ---------------------------------------------------------------------
+  // Appuntamenti (parti comuni a paziente e professionista)
+  // ---------------------------------------------------------------------
+  // L'appuntamento fissato sta nel piano: { data "YYYY-MM-DD", ora "HH:MM",
+  // durataMin, modalita "studio" | "online", luogo (indirizzo o link), note }.
+  const GIORNI_RICHIESTA = [["lun", "Lunedì"], ["mar", "Martedì"], ["mer", "Mercoledì"], ["gio", "Giovedì"], ["ven", "Venerdì"], ["sab", "Sabato"]];
+  const FASCE_RICHIESTA = [["mattina", "Mattina"], ["pomeriggio", "Pomeriggio"], ["sera", "Sera"]];
+  const MODALITA_APPUNTAMENTO = { studio: "In studio", online: "Online", indifferente: "Indifferente" };
+
+  function appuntamentoDi(piano) {
+    const a = piano && piano.appuntamento;
+    return a && /^\d{4}-\d{2}-\d{2}$/.test(a.data || "") ? a : null;
+  }
+
+  function giorniAppuntamento(a) {
+    return window.statistiche.differenzaGiorni(window.statistiche.daChiave(a.data), new Date());
+  }
+
+  function appuntamentoFuturo(piano) {
+    const a = appuntamentoDi(piano);
+    return a && giorniAppuntamento(a) >= 0 ? a : null;
+  }
+
+  function testoQuandoAppuntamento(a) {
+    const d = window.statistiche.daChiave(a.data);
+    const giorno = d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    return giorno.charAt(0).toUpperCase() + giorno.slice(1) + (a.ora ? ` alle ${a.ora}` : "");
+  }
+
+  function testoRelativoAppuntamento(a) {
+    const n = giorniAppuntamento(a);
+    return n === 0 ? "oggi" : n === 1 ? "domani" : n > 1 ? `tra ${n} giorni` : `${-n} giorni fa`;
+  }
+
+  function eLink(testo) {
+    return /^https?:\/\/\S+$/i.test(String(testo || "").trim());
+  }
+
+  function luogoAppuntamentoHTML(a) {
+    if (!a.luogo) return "";
+    const l = a.luogo.trim();
+    return eLink(l)
+      ? `<a href="${escapeHTML(l)}" target="_blank" rel="noopener" class="link-inline">Collegati alla visita online ↗</a>`
+      : escapeHTML(l);
+  }
+
+  function orariAppuntamento(a) {
+    const [h, m] = (a.ora || "09:00").split(":").map(Number);
+    const inizio = window.statistiche.daChiave(a.data);
+    inizio.setHours(h || 0, m || 0, 0, 0);
+    const fine = new Date(inizio.getTime() + (Number(a.durataMin) || 60) * 60000);
+    const fmt = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}00`;
+    return { inizio: fmt(inizio), fine: fmt(fine) };
+  }
+
+  function titoloAppuntamento(nutrizionista) {
+    return nutrizionista ? `Visita con ${nutrizionista}` : "Visita dal nutrizionista";
+  }
+
+  function linkGoogleCalendar(a, titolo) {
+    const o = orariAppuntamento(a);
+    const par = new URLSearchParams({
+      action: "TEMPLATE", text: titolo, dates: `${o.inizio}/${o.fine}`, ctz: "Europe/Rome",
+      details: [MODALITA_APPUNTAMENTO[a.modalita] || "", a.note || ""].filter(Boolean).join("\n"),
+      location: a.luogo || "",
+    });
+    return "https://calendar.google.com/calendar/render?" + par.toString();
+  }
+
+  function scaricaIcsAppuntamento(a, titolo) {
+    const o = orariAppuntamento(a);
+    const esc = (t) => String(t || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+    const adesso = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
+    const righe = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Il mio Piano//IT", "CALSCALE:GREGORIAN",
+      "BEGIN:VEVENT",
+      `UID:${a.data}-${(a.ora || "").replace(":", "")}-${Math.random().toString(36).slice(2)}@ilmiopiano.it`,
+      `DTSTAMP:${adesso}`, `DTSTART:${o.inizio}`, `DTEND:${o.fine}`,
+      `SUMMARY:${esc(titolo)}`,
+      a.luogo ? `LOCATION:${esc(a.luogo)}` : "",
+      `DESCRIPTION:${esc([MODALITA_APPUNTAMENTO[a.modalita] || "", a.note || ""].filter(Boolean).join("\n"))}`,
+      "BEGIN:VALARM", "TRIGGER:-PT2H", "ACTION:DISPLAY", `DESCRIPTION:${esc(titolo)}`, "END:VALARM",
+      "END:VEVENT", "END:VCALENDAR",
+    ].filter(Boolean);
+    const blob = new Blob([righe.join("\r\n")], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "appuntamento.ics";
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  function preferenzeRichiestaTesto(r) {
+    const giorni = (r.giorni || []).map((g) => (GIORNI_RICHIESTA.find((x) => x[0] === g) || [0, g])[1]).join(", ");
+    const fasce = (r.fasce || []).map((f) => (FASCE_RICHIESTA.find((x) => x[0] === f) || [0, f])[1].toLowerCase()).join(", ");
+    const parti = [];
+    if (giorni) parti.push(giorni);
+    if (fasce) parti.push(fasce);
+    if (r.modalita && r.modalita !== "indifferente") parti.push(MODALITA_APPUNTAMENTO[r.modalita].toLowerCase());
+    return parti.join(" · ") || "Nessuna preferenza indicata";
+  }
+
+  // ---------------------------------------------------------------------
+  // Appuntamenti (lato paziente)
+  // ---------------------------------------------------------------------
+  const APP_PAZ = { richieste: [], unsub: null };
+
+  function collegaRichiestePaziente() {
+    if (APP_PAZ.unsub) return;
+    APP_PAZ.unsub = window.cloud.ascoltaRichiestePaziente(UID, (lista) => {
+      APP_PAZ.richieste = lista;
+      if (currentView === "impostazioni") render();
+    });
+  }
+
+  function scollegaRichiestePaziente() {
+    if (APP_PAZ.unsub) { APP_PAZ.unsub(); APP_PAZ.unsub = null; }
+    APP_PAZ.richieste = [];
+  }
+
+  function nomeNutrizionista() {
+    const c = (PIANO_ATTIVO && PIANO_ATTIVO.contattiNutrizionista) || {};
+    return c.nome || (PIANO_ATTIVO && PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.nutrizionista) || "";
+  }
+
+  function appuntamentoPazienteHTML() {
+    if (!PIANO_ATTIVO) return "";
+    const a = appuntamentoFuturo(PIANO_ATTIVO);
+    const richiesta = APP_PAZ.richieste[0] || null;
+    const puoRichiedere = !!PIANO_ATTIVO.professionistaUid;
+    const quandoRichiesta = richiesta && dataDaTimestamp(richiesta.creata);
+    return `
+      <div class="appuntamento ${a ? "has-data" : ""}">
+        <p class="appuntamento__eyebrow">📅 ${a ? "Il tuo prossimo appuntamento" : "Appuntamenti"}</p>
+        ${a ? `
+          <p class="appuntamento__quando">${escapeHTML(testoQuandoAppuntamento(a))}</p>
+          <p class="appuntamento__dettaglio"><span class="pill">${escapeHTML(testoRelativoAppuntamento(a))}</span> ${escapeHTML(MODALITA_APPUNTAMENTO[a.modalita] || "")}${a.durataMin ? ` · ${a.durataMin} minuti` : ""}</p>
+          ${a.luogo ? `<p class="appuntamento__dettaglio">${luogoAppuntamentoHTML(a)}</p>` : ""}
+          ${a.note ? `<p class="appuntamento__note">${escapeHTML(a.note)}</p>` : ""}
+          <button type="button" class="btn btn--ghost" id="btn-app-calendario">Aggiungi al calendario</button>
+        ` : `<p class="appuntamento__dettaglio">Nessun appuntamento in programma.</p>`}
+        ${richiesta ? `
+          <p class="appuntamento__richiesta">Richiesta inviata${quandoRichiesta ? ` il ${quandoRichiesta.toLocaleDateString("it-IT", { day: "numeric", month: "long" })}` : ""}: in attesa di conferma dal tuo nutrizionista.</p>
+          <button type="button" class="link-btn" id="btn-app-ritira">Ritira la richiesta</button>
+        ` : puoRichiedere ? `<button type="button" class="btn ${a ? "btn--ghost" : ""}" id="btn-app-richiedi">${a ? "Chiedi di spostarlo o un altro appuntamento" : "Richiedi un appuntamento"}</button>` : ""}
+      </div>`;
+  }
+
+  function collegaAppuntamentoPaziente() {
+    const a = appuntamentoFuturo(PIANO_ATTIVO);
+    const cal = document.getElementById("btn-app-calendario");
+    if (cal && a) cal.addEventListener("click", () => {
+      const titolo = titoloAppuntamento(nomeNutrizionista());
+      const overlay = apriSheet(`
+        <h2 class="sheet__titolo">Aggiungi al calendario</h2>
+        <p class="sheet__nota">${escapeHTML(testoQuandoAppuntamento(a))}</p>
+        <button type="button" class="btn" id="cal-ics">Calendario del telefono (iPhone, Outlook)</button>
+        <a class="btn btn--ghost" href="${escapeHTML(linkGoogleCalendar(a, titolo))}" target="_blank" rel="noopener" style="text-decoration:none;">Google Calendar</a>
+        <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+      `);
+      overlay.querySelector("#cal-ics").addEventListener("click", () => { scaricaIcsAppuntamento(a, titolo); chiudiSheet(); });
+    });
+    const rit = document.getElementById("btn-app-ritira");
+    if (rit) rit.addEventListener("click", async () => {
+      const r = APP_PAZ.richieste[0];
+      if (!r) return;
+      rit.disabled = true;
+      try { await window.cloud.eliminaRichiestaAppuntamento(r.id); mostraToast("Richiesta ritirata"); }
+      catch (e) { rit.disabled = false; mostraToast("Non riuscito: controlla la connessione"); }
+    });
+    const ric = document.getElementById("btn-app-richiedi");
+    if (ric) ric.addEventListener("click", apriRichiestaAppuntamento);
+  }
+
+  function apriRichiestaAppuntamento() {
+    const scelti = { giorni: new Set(), fasce: new Set(), modalita: "indifferente" };
+    const chip = (tipo, [val, et]) => `<button type="button" class="chip-filtro" data-${tipo}="${val}" aria-pressed="false">${et}</button>`;
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">Richiedi un appuntamento</h2>
+      <p class="sheet__nota">Indica quando ti farebbe comodo: il tuo nutrizionista ti proporrà data e ora. Tutto facoltativo.</p>
+      <p class="stato-pasto__domanda">Giorni preferiti</p>
+      <div class="ricette-filtri">${GIORNI_RICHIESTA.map((g) => chip("giorno", g)).join("")}</div>
+      <p class="stato-pasto__domanda">Momento della giornata</p>
+      <div class="ricette-filtri">${FASCE_RICHIESTA.map((f) => chip("fascia", f)).join("")}</div>
+      <p class="stato-pasto__domanda">Modalità</p>
+      <div class="ricette-filtri">${Object.entries(MODALITA_APPUNTAMENTO).map(([v, e]) => `<button type="button" class="chip-filtro" data-modalita="${v}" aria-pressed="${v === "indifferente"}">${e}</button>`).join("")}</div>
+      <label class="editor-campo" style="margin-top:12px;">Messaggio
+        <textarea id="richiesta-messaggio" rows="3" maxlength="1000" placeholder="Es. vorrei rivedere la cena del weekend"></textarea>
+      </label>
+      <button type="button" class="btn" id="richiesta-invia" style="margin-top:12px;">Invia la richiesta</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    const toggle = (set, b, attr) => b.addEventListener("click", () => {
+      const v = b.getAttribute(attr);
+      if (set.has(v)) set.delete(v); else set.add(v);
+      b.setAttribute("aria-pressed", String(set.has(v)));
+    });
+    overlay.querySelectorAll("[data-giorno]").forEach((b) => toggle(scelti.giorni, b, "data-giorno"));
+    overlay.querySelectorAll("[data-fascia]").forEach((b) => toggle(scelti.fasce, b, "data-fascia"));
+    overlay.querySelectorAll("[data-modalita]").forEach((b) => b.addEventListener("click", () => {
+      scelti.modalita = b.dataset.modalita;
+      overlay.querySelectorAll("[data-modalita]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    }));
+    overlay.querySelector("#richiesta-invia").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await window.cloud.inviaRichiestaAppuntamento({
+          pazienteUid: UID,
+          professionistaUid: PIANO_ATTIVO.professionistaUid,
+          pianoId: PIANO_ATTIVO.id,
+          pazienteNome: (PIANO_ATTIVO.pazienteNome || (PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.nome) || "").slice(0, 120),
+          giorni: GIORNI_RICHIESTA.map((g) => g[0]).filter((g) => scelti.giorni.has(g)),
+          fasce: FASCE_RICHIESTA.map((f) => f[0]).filter((f) => scelti.fasce.has(f)),
+          modalita: scelti.modalita,
+          messaggio: overlay.querySelector("#richiesta-messaggio").value.trim().slice(0, 1000),
+        });
+        chiudiSheet();
+        mostraToast("Richiesta inviata al tuo nutrizionista", 3500);
+      } catch (err) {
+        btn.disabled = false;
+        mostraToast("Richiesta non inviata: controlla la connessione");
+      }
+    });
+  }
+
+  /** Promemoria nella schermata Oggi quando l'appuntamento è oggi, domani o dopodomani. */
+  function renderAvvisoAppuntamentoHTML() {
+    const a = appuntamentoFuturo(PIANO_ATTIVO);
+    if (!a || giorniAppuntamento(a) > 2) return "";
+    return `
+      <div class="banner-ios banner-appuntamento">
+        <div class="banner-ios__testo">
+          <strong>📅 Appuntamento ${escapeHTML(testoRelativoAppuntamento(a))}${a.ora ? ` alle ${escapeHTML(a.ora)}` : ""}</strong>
+          <span>${escapeHTML(MODALITA_APPUNTAMENTO[a.modalita] || "")}${a.note ? ` · ${escapeHTML(a.note)}` : ""}</span>
+        </div>
+      </div>`;
+  }
+
   // =======================================================================
   // LATO PROFESSIONISTA
   // =======================================================================
@@ -1862,12 +2107,15 @@
       if (vistaProfCorrente === "lista") renderListaPazienti();
     });
 
+    collegaRichiesteProfessionista();
     let primaLista = true;
     unsubPazienti = window.cloud.ascoltaPazientiProfessionista(UID, (pazienti) => {
       PAZIENTI_PROF = pazienti;
       if (primaLista) { primaLista = false; if (pazienti.length) aggiornaStatisticheInBackground(false); }
       if (vistaProfCorrente === "statistiche") {
         renderStatistiche();
+      } else if (vistaProfCorrente === "richieste") {
+        renderRichiesteAppuntamento();
       } else if (vistaProfCorrente === "lista") {
         renderListaPazienti();
       } else if (vistaProfCorrente === "editor" && pazienteSelezionatoId) {
@@ -1982,6 +2230,7 @@
     profRoot.innerHTML = `
       ${renderBoxLicenzaHTML()}
       <button type="button" class="btn" id="btn-nuovo-paziente" style="margin-bottom:10px;" ${(statoLicenza().attiva && !statoLicenza().pieno) ? "" : "disabled"}>+ Nuovo paziente</button>
+      ${richiesteAttive().length ? `<button type="button" class="avviso-richieste" id="btn-richieste">📅 ${richiesteAttive().length === 1 ? "1 richiesta di appuntamento" : richiesteAttive().length + " richieste di appuntamento"} <span>Apri ›</span></button>` : ""}
       ${PAZIENTI_PROF.length ? `<button type="button" class="btn btn--ghost" id="btn-statistiche" style="margin-bottom:10px;">Andamento dei pazienti</button>` : ""}
       <button type="button" class="btn btn--ghost" id="btn-ricettario" style="margin-bottom:10px;">Ricettario</button>
       <button type="button" class="btn btn--ghost" id="btn-profilo-prof" style="margin-bottom:16px;">I miei dati di contatto</button>
@@ -1996,6 +2245,8 @@
               <span class="paziente-card__email">${escapeHTML(p.pazienteEmail || "")}</span>
               ${p.paziente && p.paziente.obiettivo ? `<span class="paziente-card__obiettivo">${escapeHTML(p.paziente.obiettivo)}</span>` : ""}
               ${badgeStatoHTML(p.id)}
+              ${APP_PRO.richieste.some((r) => r.pazienteUid === p.pazienteUid) ? `<span class="richiesta-badge">📅 Chiede un appuntamento</span>` : ""}
+              ${appuntamentoFuturo(p) ? `<span class="paziente-card__email">Appuntamento: ${escapeHTML(testoQuandoAppuntamento(appuntamentoFuturo(p)))}</span>` : ""}
             </button>
           `).join("")}
         </div>
@@ -2007,6 +2258,8 @@
     if (btnPortale) btnPortale.addEventListener("click", apriPortaleClienti);
     document.getElementById("btn-profilo-prof").addEventListener("click", renderProfiloProfessionista);
     document.getElementById("btn-ricettario").addEventListener("click", renderRicettario);
+    const btnRich = document.getElementById("btn-richieste");
+    if (btnRich) btnRich.addEventListener("click", renderRichiesteAppuntamento);
     const btnStat = document.getElementById("btn-statistiche");
     if (btnStat) btnStat.addEventListener("click", renderStatistiche);
     document.querySelectorAll(".paziente-card").forEach((btn) => {
@@ -2072,7 +2325,7 @@
             ultimoAccesso: dataDaTimestamp(u.ultimoAccesso),
             notificheAttive: !!u.notificheAttive,
             dispositiviNotifiche: Array.isArray(u.fcmTokens) ? u.fcmTokens.length : 0,
-            prossimaVisita: p.prossimaVisita || null,
+            prossimaVisita: (p.appuntamento && p.appuntamento.data) || p.prossimaVisita || null,
           }),
           accessoRilevato: !!u.ultimoAccesso,
         };
@@ -2234,7 +2487,7 @@
     };
     return `
       <section class="settings-section">
-        <h2>Pasti fatti in parte o saltati (30 giorni)</h2>
+        <h2>Pasti fatti in parte o saltati (30 giorni, oggi compreso)</h2>
         ${riga(im.parziale, "Fatti in parte")}
         ${riga(im.saltato, "Saltati")}
       </section>`;
@@ -2327,11 +2580,11 @@
 
       <section class="settings-section">
         <h2>Prossimo controllo</h2>
-        <p class="stat-riga"><span>${pc ? formattaDataIt(pc.data) : "Nessuna data"}</span><strong>${testoControllo}</strong></p>
-        <div class="editor-campo" style="flex-direction:row; gap:8px; align-items:stretch; margin-top:8px;">
-          <input type="date" id="input-prossima-visita" value="${pc ? pc.data : ""}" style="flex:1;" aria-label="Data del prossimo controllo">
-          <button type="button" class="btn" id="btn-salva-visita" style="width:auto; padding:0 16px;">Salva</button>
-        </div>
+        ${appuntamentoDi(piano) ? `
+          <p class="stat-riga"><span>${escapeHTML(testoQuandoAppuntamento(appuntamentoDi(piano)))}</span><strong>${testoControllo}</strong></p>
+          <p class="stat-nota" style="margin:6px 0 0;">${escapeHTML(MODALITA_APPUNTAMENTO[appuntamentoDi(piano).modalita] || "")}${appuntamentoDi(piano).luogo ? " · " + escapeHTML(appuntamentoDi(piano).luogo) : ""}${appuntamentoDi(piano).note ? " · " + escapeHTML(appuntamentoDi(piano).note) : ""}</p>
+        ` : `<p class="stat-riga"><span>${pc ? formattaDataIt(pc.data) : "Nessun appuntamento"}</span><strong>${testoControllo}</strong></p>`}
+        <button type="button" class="btn btn--ghost" id="btn-fissa-appuntamento" style="margin-top:10px;">${appuntamentoDi(piano) ? "Modifica l'appuntamento" : "Fissa un appuntamento"}</button>
       </section>
 
       <section class="settings-section">
@@ -2358,23 +2611,171 @@
     if (btnEmail) btnEmail.addEventListener("click", () => {
       location.href = `mailto:${encodeURIComponent(piano.pazienteEmail)}?subject=${encodeURIComponent("Il tuo piano nutrizionale")}&body=${encodeURIComponent(testo())}`;
     });
-    document.getElementById("btn-salva-visita").addEventListener("click", async (e) => {
-      const valore = document.getElementById("input-prossima-visita").value || null;
-      const btn = e.currentTarget;
-      btn.disabled = true;
-      try {
-        await window.cloud.salvaPiano(id, { prossimaVisita: valore });
-        piano.prossimaVisita = valore;
-        STAT.risultati[id].r.prossimoControllo = valore
-          ? { data: valore, traGiorni: window.statistiche.differenzaGiorni(window.statistiche.daChiave(valore), new Date()) }
-          : null;
-        mostraToast(valore ? "Prossimo controllo salvato" : "Data del controllo rimossa");
-        renderStatistichePaziente(id);
-      } catch (err) {
-        btn.disabled = false;
-        mostraToast(msgErroreScrittura(err, "Data non salvata: controlla la connessione"));
-      }
+    document.getElementById("btn-fissa-appuntamento").addEventListener("click", () => apriFissaAppuntamento(piano, null));
+  }
+
+  // ---------------------------------------------------------------------
+  // Appuntamenti (lato professionista)
+  // ---------------------------------------------------------------------
+  const APP_PRO = { richieste: [], unsub: null };
+
+  function collegaRichiesteProfessionista() {
+    if (APP_PRO.unsub) return;
+    APP_PRO.unsub = window.cloud.ascoltaRichiesteProfessionista(UID, (lista) => {
+      APP_PRO.richieste = lista.sort((a, b) => ((dataDaTimestamp(a.creata) || 0) - (dataDaTimestamp(b.creata) || 0)));
+      if (vistaProfCorrente === "lista") renderListaPazienti();
+      else if (vistaProfCorrente === "richieste") renderRichiesteAppuntamento();
     });
+  }
+
+  function scollegaRichiesteProfessionista() {
+    if (APP_PRO.unsub) { APP_PRO.unsub(); APP_PRO.unsub = null; }
+    APP_PRO.richieste = [];
+  }
+
+  /** Richieste in attesa dei pazienti ancora presenti (le altre sono residui di pazienti eliminati). */
+  function richiesteAttive() {
+    return APP_PRO.richieste.filter((r) => PAZIENTI_PROF.some((p) => p.pazienteUid === r.pazienteUid));
+  }
+
+  function renderRichiesteAppuntamento() {
+    vistaProfCorrente = "richieste";
+    pazienteSelezionatoId = null;
+    document.getElementById("prof-header-titolo").textContent = "Richieste di appuntamento";
+    const elenco = richiesteAttive();
+    profRoot.innerHTML = `
+      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      ${elenco.length ? `<div class="lista-pazienti">${elenco.map((r) => {
+        const quando = dataDaTimestamp(r.creata);
+        return `
+          <div class="richiesta-card">
+            <p class="richiesta-card__testa"><strong>${escapeHTML(r.pazienteNome || "Paziente")}</strong>
+              <span>${quando ? quando.toLocaleDateString("it-IT", { day: "numeric", month: "long" }) : ""}</span></p>
+            <p class="richiesta-card__preferenze">${escapeHTML(preferenzeRichiestaTesto(r))}</p>
+            ${r.messaggio ? `<p class="richiesta-card__messaggio">“${escapeHTML(r.messaggio)}”</p>` : ""}
+            <div class="richiesta-card__azioni">
+              <button type="button" class="btn" data-fissa-richiesta="${r.id}">Fissa l'appuntamento</button>
+              <button type="button" class="link-btn" data-archivia-richiesta="${r.id}">Segna come gestita</button>
+            </div>
+          </div>`;
+      }).join("")}</div>` : `<div class="empty">Nessuna richiesta in attesa.</div>`}
+    `;
+    document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    profRoot.querySelectorAll("[data-fissa-richiesta]").forEach((b) => b.addEventListener("click", () => {
+      const r = APP_PRO.richieste.find((x) => x.id === b.dataset.fissaRichiesta);
+      const piano = r && PAZIENTI_PROF.find((p) => p.pazienteUid === r.pazienteUid);
+      if (piano) apriFissaAppuntamento(piano, r);
+    }));
+    profRoot.querySelectorAll("[data-archivia-richiesta]").forEach((b) => b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await window.cloud.eliminaRichiestaAppuntamento(b.dataset.archiviaRichiesta); mostraToast("Richiesta archiviata"); }
+      catch (e) { b.disabled = false; mostraToast("Non riuscito: controlla la connessione"); }
+    }));
+  }
+
+  /** Scheda per fissare (o modificare) l'appuntamento di un paziente, eventualmente in risposta a una richiesta. */
+  function apriFissaAppuntamento(piano, richiesta) {
+    const a = appuntamentoDi(piano) || {};
+    const modalita = a.modalita || (richiesta && richiesta.modalita === "online" ? "online" : "studio");
+    const contatti = PROFILO_PROF.contatti || {};
+    const primoNome = (piano.pazienteNome || "il paziente").split(" ")[0];
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">${appuntamentoDi(piano) ? "Modifica l'appuntamento" : "Fissa un appuntamento"}</h2>
+      <p class="sheet__nota">Per ${escapeHTML(piano.pazienteNome || "il paziente")}${richiesta ? ` · preferenze: ${escapeHTML(preferenzeRichiestaTesto(richiesta))}` : ""}</p>
+      ${richiesta && richiesta.messaggio ? `<p class="richiesta-card__messaggio" style="margin-top:0;">“${escapeHTML(richiesta.messaggio)}”</p>` : ""}
+      <div class="ric-griglia" style="grid-template-columns: 1fr 1fr;">
+        <label class="editor-campo" style="grid-column: 1 / -1;">Data<input type="date" id="app-data" value="${escapeHTML(a.data || "")}"></label>
+        <label class="editor-campo">Ora<input type="time" id="app-ora" value="${escapeHTML(a.ora || "")}"></label>
+        <label class="editor-campo">Durata
+          <select id="app-durata">${[30, 45, 60, 90].map((m) => `<option value="${m}" ${(Number(a.durataMin) || 60) === m ? "selected" : ""}>${m} min</option>`).join("")}</select>
+        </label>
+      </div>
+      <div class="ricette-filtri" style="margin-top:12px;" role="radiogroup" aria-label="Modalità">
+        <button type="button" class="chip-filtro" data-app-modalita="studio" aria-pressed="${modalita === "studio"}">In studio</button>
+        <button type="button" class="chip-filtro" data-app-modalita="online" aria-pressed="${modalita === "online"}">Online</button>
+      </div>
+      <label class="editor-campo" style="margin-top:4px;"><span id="app-luogo-etichetta">${modalita === "online" ? "Link della videochiamata" : "Indirizzo dello studio"}</span>
+        <input type="text" id="app-luogo" maxlength="300" value="${escapeHTML(a.luogo || (modalita === "studio" ? (contatti.studio || "") : ""))}" placeholder="${modalita === "online" ? "https://meet.google.com/…" : "Via…, città"}">
+      </label>
+      <label class="editor-campo" style="margin-top:10px;">Note per il paziente (facoltative)
+        <textarea id="app-note" rows="2" maxlength="500" placeholder="Es. porta le ultime analisi del sangue">${escapeHTML(a.note || "")}</textarea>
+      </label>
+      <p id="app-errore" class="auth-error" hidden></p>
+      <button type="button" class="btn" id="app-salva" style="margin-top:12px;">Salva l'appuntamento</button>
+      ${appuntamentoDi(piano) ? `<button type="button" class="btn btn--ghost" id="app-rimuovi">Rimuovi l'appuntamento</button>` : ""}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    let mod = modalita;
+    overlay.querySelectorAll("[data-app-modalita]").forEach((b) => b.addEventListener("click", () => {
+      const precedente = mod;
+      mod = b.dataset.appModalita;
+      overlay.querySelectorAll("[data-app-modalita]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      overlay.querySelector("#app-luogo-etichetta").textContent = mod === "online" ? "Link della videochiamata" : "Indirizzo dello studio";
+      const luogo = overlay.querySelector("#app-luogo");
+      luogo.placeholder = mod === "online" ? "https://meet.google.com/…" : "Via…, città";
+      if (precedente !== mod && (luogo.value === (contatti.studio || "") || eLink(luogo.value))) luogo.value = mod === "studio" ? (contatti.studio || "") : "";
+    }));
+
+    const salva = async (valore) => {
+      const errEl = overlay.querySelector("#app-errore");
+      try {
+        await window.cloud.salvaPiano(piano.id, { appuntamento: valore, prossimaVisita: valore ? valore.data : null });
+        if (richiesta) await window.cloud.eliminaRichiestaAppuntamento(richiesta.id).catch(() => {});
+        piano.appuntamento = valore; piano.prossimaVisita = valore ? valore.data : null;
+        if (STAT.risultati[piano.id] && STAT.risultati[piano.id].r) {
+          STAT.risultati[piano.id].r.prossimoControllo = valore
+            ? { data: valore.data, traGiorni: window.statistiche.differenzaGiorni(window.statistiche.daChiave(valore.data), new Date()) } : null;
+        }
+        return true;
+      } catch (e) {
+        errEl.textContent = msgErroreScrittura(e, "Non salvato: controlla la connessione e riprova.");
+        errEl.hidden = false;
+        return false;
+      }
+    };
+
+    overlay.querySelector("#app-salva").addEventListener("click", async (e) => {
+      const data = overlay.querySelector("#app-data").value;
+      const ora = overlay.querySelector("#app-ora").value;
+      const errEl = overlay.querySelector("#app-errore");
+      if (!data || !ora) { errEl.textContent = "Indica data e ora dell'appuntamento."; errEl.hidden = false; return; }
+      e.currentTarget.disabled = true;
+      const valore = {
+        data, ora,
+        durataMin: Number(overlay.querySelector("#app-durata").value) || 60,
+        modalita: mod,
+        luogo: overlay.querySelector("#app-luogo").value.trim().slice(0, 300),
+        note: overlay.querySelector("#app-note").value.trim().slice(0, 500),
+      };
+      if (!(await salva(valore))) { e.currentTarget.disabled = false; return; }
+      // Conferma con la possibilità di avvisare subito il paziente
+      const testo = `Ciao ${primoNome}, ti confermo il nostro appuntamento: ${testoQuandoAppuntamento(valore).toLowerCase()} (${MODALITA_APPUNTAMENTO[valore.modalita].toLowerCase()}${valore.luogo ? ", " + valore.luogo : ""}).${valore.note ? " " + valore.note.replace(/[.!?]?$/, (x) => x || ".") : ""} Lo trovi anche nell'app, in Impostazioni.`;
+      const conferma = apriSheet(`
+        <h2 class="sheet__titolo">✓ Appuntamento salvato</h2>
+        <p class="sheet__nota">${escapeHTML(primoNome)} lo vede già nell'app. Vuoi avvisarlo anche con un messaggio?</p>
+        <button type="button" class="btn" id="app-avvisa-wa">Avvisa con WhatsApp</button>
+        ${piano.pazienteEmail ? `<button type="button" class="btn btn--ghost" id="app-avvisa-email">Avvisa per email</button>` : ""}
+        <button type="button" class="btn btn--ghost" data-chiudi-sheet>Fatto</button>
+      `);
+      conferma.querySelector("#app-avvisa-wa").addEventListener("click", () => window.open("https://wa.me/?text=" + encodeURIComponent(testo), "_blank", "noopener"));
+      const em = conferma.querySelector("#app-avvisa-email");
+      if (em) em.addEventListener("click", () => {
+        location.href = `mailto:${encodeURIComponent(piano.pazienteEmail)}?subject=${encodeURIComponent("Il tuo appuntamento")}&body=${encodeURIComponent(testo)}`;
+      });
+      ridisegnaVistaProfessionista();
+    });
+    const rim = overlay.querySelector("#app-rimuovi");
+    if (rim) rim.addEventListener("click", async () => {
+      rim.disabled = true;
+      if (await salva(null)) { chiudiSheet(); mostraToast("Appuntamento rimosso"); ridisegnaVistaProfessionista(); }
+      else rim.disabled = false;
+    });
+  }
+
+  function ridisegnaVistaProfessionista() {
+    if (vistaProfCorrente === "statPaziente" && pazienteSelezionatoId) renderStatistichePaziente(pazienteSelezionatoId);
+    else if (vistaProfCorrente === "richieste") renderRichiesteAppuntamento();
+    else if (vistaProfCorrente === "lista") renderListaPazienti();
   }
 
   // ---------------------------------------------------------------------
@@ -3611,6 +4012,8 @@
     // Blocca anche "Annulla" mentre il server lavora, per non lasciare dubbi sull'esito.
     document.querySelectorAll("#sheet-overlay [data-chiudi-sheet]").forEach((b) => (b.disabled = true));
     try {
+      // Prima le eventuali richieste di appuntamento del paziente, poi il resto.
+      if (piano.pazienteUid) await window.cloud.eliminaRichiesteDelPaziente(UID, piano.pazienteUid).catch(() => {});
       await window.cloud.eliminaPaziente(piano.id);
       chiudiSheet();
       mostraToast(`${piano.pazienteNome || "Paziente"} eliminato`);
