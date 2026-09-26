@@ -722,7 +722,7 @@
     docId: null,          // data del lunedì, es. "2026-09-28"
     unsub: null,
     unsubPref: null,
-    dati: { spuntate: [], extra: [] },
+    dati: { spuntate: [], extra: [], prep: [] },
     pref: { categoria: {}, nome: {}, nascosti: [] },
     contesto: null,       // { giorni, etichetta } della settimana mostrata
     voci: [],             // ultime voci disegnate (servono a opzioni e copia)
@@ -737,7 +737,7 @@
     if (SPESA.unsubPref) { SPESA.unsubPref(); SPESA.unsubPref = null; }
     SPESA.docId = null;
     SPESA.offset = 0;
-    SPESA.dati = { spuntate: [], extra: [] };
+    SPESA.dati = { spuntate: [], extra: [], prep: [] };
     SPESA.pref = { categoria: {}, nome: {}, nascosti: [] };
   }
 
@@ -768,16 +768,18 @@
     if (SPESA.docId === docId && SPESA.unsub) return;
     if (SPESA.unsub) SPESA.unsub();
     SPESA.docId = docId;
-    SPESA.dati = { spuntate: [], extra: [] };
+    SPESA.dati = { spuntate: [], extra: [], prep: [] };
     SPESA.unsub = window.cloud.ascoltaSpesa(UID, docId, (d) => {
       if (SPESA.docId !== docId) return;
-      SPESA.dati = { spuntate: d.spuntate || [], extra: d.extra || [] };
+      SPESA.dati = { spuntate: d.spuntate || [], extra: d.extra || [], prep: d.prep || [] };
       ridisegnaSpesaSeVisibile();
     });
   }
 
   function ridisegnaSpesaSeVisibile() {
-    if (currentView === "spesa" && document.getElementById("spesa-contenuto")) disegnaContenutoSpesa();
+    if (currentView !== "spesa") return;
+    if (document.getElementById("spesa-contenuto")) disegnaContenutoSpesa();
+    else if (document.getElementById("prep-contenuto")) disegnaMealPrep();
   }
 
   /** Voci da mostrare: piano + articoli aggiunti a mano, con le correzioni del paziente applicate. */
@@ -804,6 +806,133 @@
     }));
   }
 
+  // ---------------------------------------------------------------------
+  // Meal prep (dentro la scheda Spesa, sulla stessa settimana)
+  // ---------------------------------------------------------------------
+  // Il calcolo sta in js/mealprep.js; qui c'è la vista con le due sessioni,
+  // la checklist (salvata nello stesso documento della lista della spesa di
+  // quella settimana) e la guida alla conservazione.
+  const LS_MODO_SPESA = "pnut:spesa-modo"; // "lista" | "prep"
+
+  function mealPrepAttivo() {
+    return !(PIANO_ATTIVO && PIANO_ATTIVO.mealPrep && PIANO_ATTIVO.mealPrep.attivo === false);
+  }
+
+  function modoSpesa() {
+    return mealPrepAttivo() && localStorage.getItem(LS_MODO_SPESA) === "prep" ? "prep" : "lista";
+  }
+
+  function interruttoreModoHTML(modo) {
+    if (!mealPrepAttivo()) return "";
+    return `
+      <div class="spesa-modo" role="tablist" aria-label="Sezione">
+        <button type="button" role="tab" data-modo="lista" aria-selected="${modo === "lista"}">🛒 Lista della spesa</button>
+        <button type="button" role="tab" data-modo="prep" aria-selected="${modo === "prep"}">🥡 Meal prep</button>
+      </div>`;
+  }
+
+  function collegaInterruttoreModo() {
+    root.querySelectorAll("[data-modo]").forEach((b) => b.addEventListener("click", () => {
+      localStorage.setItem(LS_MODO_SPESA, b.dataset.modo);
+      renderSpesa();
+    }));
+  }
+
+  function renderMealPrep(settimane, sel) {
+    root.innerHTML = `
+      ${interruttoreModoHTML("prep")}
+      <section class="hero" style="border-bottom:none; margin-bottom:8px; padding-bottom:6px;">
+        <div class="hero__eyebrow"><span class="dot"></span> Meal prep</div>
+        <div class="spesa-testata">
+          <select id="sel-settimana-spesa" aria-label="Settimana">
+            ${settimane.map((s) => `<option value="${s.k}" ${s.k === sel.k ? "selected" : ""}>${escapeHTML(s.etichetta)}</option>`).join("")}
+          </select>
+        </div>
+      </section>
+      <p class="hint" style="margin:0 0 12px;">Prepara in anticipo quello che si presta: con due sessioni, una la domenica e una il mercoledì sera, hai i pasti pronti per tutta la settimana. Quantità e giorni vengono dal tuo piano.</p>
+      <div id="prep-contenuto"></div>
+    `;
+    collegaInterruttoreModo();
+    document.getElementById("sel-settimana-spesa").addEventListener("change", (e) => {
+      SPESA.offset = Number(e.target.value) || 0;
+      renderSpesa();
+    });
+    const contenuto = document.getElementById("prep-contenuto");
+    contenuto.addEventListener("change", (e) => {
+      const chk = e.target.closest("[data-prep]");
+      if (chk) spuntaVocePrep(chk.dataset.prep, chk.checked);
+    });
+    disegnaMealPrep();
+  }
+
+  function disegnaMealPrep() {
+    const box = document.getElementById("prep-contenuto");
+    if (!box || !SPESA.contesto) return;
+    const M = window.mealPrep;
+    const r = M.calcola(SPESA.contesto.giorni);
+    const fatti = new Set(SPESA.dati.prep || []);
+    const tutte = r.sessioni.flatMap((s) => s.gruppi.flatMap((g) => g.voci));
+    const completate = tutte.filter((v) => fatti.has(v.chiave)).length;
+    const nota = PIANO_ATTIVO && PIANO_ATTIVO.mealPrep && PIANO_ATTIVO.mealPrep.note;
+
+    // Date delle due sessioni: la domenica prima e il mercoledì della settimana scelta
+    const lunedi = window.statistiche.daChiave(SPESA.docId);
+    const dataSessione = (delta) => {
+      const d = new Date(lunedi); d.setDate(d.getDate() + delta);
+      return d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+    };
+    const titoli = {
+      s1: { quando: dataSessione(-1), per: "per lunedì, martedì e mercoledì", extra: " (più uova sode e porzioni per tutta la settimana)" },
+      s2: { quando: dataSessione(2) + ", la sera", per: "per giovedì, venerdì, sabato e domenica", extra: "" },
+    };
+
+    box.innerHTML = `
+      ${nota ? `<div class="prep-nota"><strong>Dal tuo nutrizionista</strong><p>${escapeHTML(nota)}</p></div>` : ""}
+      ${r.vuoto ? `<div class="empty">In questa settimana del piano non ci sono alimenti da preparare in anticipo.</div>` : `
+        <p class="spesa-riepilogo">${completate === tutte.length ? "Tutto pronto per la settimana. Ottimo lavoro!" : `${completate} di ${tutte.length} preparazioni fatte`}</p>
+        ${r.sessioni.filter((s) => s.totale).map((s) => `
+          <section class="prep-sessione">
+            <h3 class="prep-sessione__titolo">${s.id === "s1" ? "Sessione 1" : "Sessione 2"} · ${escapeHTML(titoli[s.id].quando.charAt(0).toUpperCase() + titoli[s.id].quando.slice(1))}</h3>
+            <p class="prep-sessione__per">${titoli[s.id].per}${titoli[s.id].extra}</p>
+            ${s.gruppi.map((g) => `
+              <div class="prep-gruppo">
+                <p class="prep-gruppo__titolo"><span aria-hidden="true">${g.icona}</span> ${escapeHTML(g.titolo)} <span class="prep-gruppo__conserva">${escapeHTML(g.conservazione)}</span></p>
+                <p class="prep-gruppo__consiglio">${escapeHTML(g.consiglio)}</p>
+                ${g.avvisoRiso ? `<p class="prep-gruppo__avviso">⚠️ ${escapeHTML(g.avvisoRiso)}</p>` : ""}
+                <ul class="spesa-lista">
+                  ${g.voci.map((v) => `
+                    <li class="spesa-riga ${fatti.has(v.chiave) ? "is-spuntata" : ""}">
+                      <label>
+                        <input type="checkbox" data-prep="${escapeHTML(v.chiave)}" ${fatti.has(v.chiave) ? "checked" : ""}>
+                        <span class="spesa-riga__icona" aria-hidden="true">${v.icona}</span>
+                        <span class="prep-voce">
+                          <span class="spesa-riga__nome">${escapeHTML(v.nome)}${v.alternative.length ? ` <em>(oppure ${escapeHTML(v.alternative.join(", ").toLowerCase())})</em>` : ""}</span>
+                          <span class="prep-voce__quantita">${escapeHTML(M.testoQuantita(v))}</span>
+                        </span>
+                      </label>
+                    </li>`).join("")}
+                </ul>
+              </div>`).join("")}
+          </section>`).join("")}
+        <p class="stat-nota" style="margin:10px 2px 0;">Le quantità sono quelle scritte nel piano, sommate per tutti i giorni della sessione: se il piano indica il peso a crudo, cuoci quella quantità.</p>
+      `}
+      <details class="ric-dettagli prep-guida">
+        <summary>Conservare in sicurezza</summary>
+        ${M.GUIDA.map(([t, d]) => `<p class="prep-guida__voce"><strong>${escapeHTML(t)}</strong>${escapeHTML(d)}</p>`).join("")}
+        <p class="stat-nota" style="margin:8px 0 12px;">${escapeHTML(M.FONTI)}</p>
+      </details>
+    `;
+  }
+
+  async function spuntaVocePrep(chiave, fatto) {
+    const set = new Set(SPESA.dati.prep || []);
+    if (fatto) set.add(chiave); else set.delete(chiave);
+    SPESA.dati.prep = Array.from(set);
+    disegnaMealPrep();
+    try { await window.cloud.spuntaPrep(UID, SPESA.docId, chiave, fatto); }
+    catch (e) { mostraToast("Spunta non salvata: controlla la connessione"); }
+  }
+
   function renderSpesa() {
     if (!PIANO_ATTIVO) {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
@@ -818,9 +947,11 @@
     }
     SPESA.contesto = { giorni, etichetta: sel.intervallo };
     collegaAscoltoSpesa(sel.docId);
+    if (modoSpesa() === "prep") { renderMealPrep(settimane, sel); return; }
     const vista = vistaSpesa();
 
     root.innerHTML = `
+      ${interruttoreModoHTML("lista")}
       <section class="hero" style="border-bottom:none; margin-bottom:8px; padding-bottom:6px;">
         <div class="hero__eyebrow"><span class="dot"></span> Lista della spesa</div>
         <div class="spesa-testata">
@@ -853,6 +984,7 @@
       SPESA.offset = Number(e.target.value) || 0;
       renderSpesa();
     });
+    collegaInterruttoreModo();
 
     root.querySelectorAll("[data-vista]").forEach((b) => b.addEventListener("click", () => {
       localStorage.setItem(LS_VISTA_SPESA, b.dataset.vista);
@@ -3563,6 +3695,16 @@
       ${renderCopiaSettimanaHTML(disponibili)}
 
       <section class="settings-section">
+        <h2>Meal prep</h2>
+        <p class="hint">Nella scheda Spesa il paziente trova le sessioni di preparazione anticipata calcolate dal piano. Qui puoi aggiungere indicazioni tue o nascondere la sezione.</p>
+        <label class="ric-scelta"><input type="checkbox" id="prep-attivo" ${!(piano.mealPrep && piano.mealPrep.attivo === false) ? "checked" : ""}> Mostra la sezione Meal prep a questo paziente</label>
+        <label class="editor-campo" style="margin-top:8px;">Indicazioni per il paziente (facoltative)
+          <textarea id="prep-note" rows="3" maxlength="600" placeholder="Es. il pesce preparalo fresco il giorno stesso; per le verdure va bene il forno">${escapeHTML((piano.mealPrep && piano.mealPrep.note) || "")}</textarea>
+        </label>
+        <button type="button" class="btn" id="btn-salva-prep" style="margin-top:10px;">Salva meal prep</button>
+      </section>
+
+      <section class="settings-section">
         <h2>Importa / sostituisci l'intero piano</h2>
         <p class="hint">Per un piano tutto nuovo dalla nutrizionista, puoi caricare un file .json in un colpo solo, nello stesso formato scaricabile qui come modello.</p>
         <div class="import-actions">
@@ -3587,6 +3729,18 @@
     document.getElementById("btn-salva-dati-paziente").addEventListener("click", salvaDatiPazienteProfessionista);
     document.getElementById("btn-salva-norme").addEventListener("click", salvaNormeGeneraliProfessionista);
     document.getElementById("btn-salva-sostituzioni").addEventListener("click", salvaSostituzioniProfessionista);
+    document.getElementById("btn-salva-prep").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const mealPrep = { attivo: document.getElementById("prep-attivo").checked, note: document.getElementById("prep-note").value.trim().slice(0, 600) };
+      btn.disabled = true;
+      try {
+        await window.cloud.salvaPiano(piano.id, { mealPrep });
+        piano.mealPrep = mealPrep;
+        mostraToast("Meal prep salvato");
+      } catch (err) {
+        mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"));
+      } finally { btn.disabled = false; }
+    });
     collegaEditorPastoProfessionista();
     collegaCopiaSettimana();
     document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));

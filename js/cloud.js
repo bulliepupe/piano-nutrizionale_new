@@ -438,6 +438,14 @@
       }, { merge: true });
     },
 
+    /** Checklist del meal prep: stesso documento della lista della spesa di quella settimana. */
+    async spuntaPrep(uid, docId, chiave, fatto) {
+      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+        prep: fatto ? FieldValue.arrayUnion(chiave) : FieldValue.arrayRemove(chiave),
+        aggiornato: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    },
+
     async azzeraSpunteSpesa(uid, docId) {
       await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
         spuntate: [], aggiornato: FieldValue.serverTimestamp(),

@@ -1601,3 +1601,29 @@ p.stat-motivi { padding-left: 0; }
 .richiesta-card__messaggio { margin: 8px 0 0; font-size: 14px; font-style: italic; color: var(--ink); }
 .richiesta-card__azioni { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
 .ric-griglia input, .ric-griglia select { width: 100%; min-height: 42px; box-sizing: border-box; }
+
+/* Meal prep */
+.spesa-modo { display: flex; gap: 4px; background: var(--border-soft); border-radius: 999px; padding: 3px; margin-bottom: 12px; }
+.spesa-modo button {
+  flex: 1; font-family: var(--font-body); font-size: 13.5px; font-weight: 600; color: var(--ink-soft);
+  background: none; border: none; border-radius: 999px; padding: 8px 10px; cursor: pointer;
+}
+.spesa-modo button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-card); }
+.prep-nota { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-m); padding: 12px 14px; margin-bottom: 14px; }
+.prep-nota strong { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); }
+.prep-nota p { margin: 4px 0 0; font-size: 14.5px; white-space: pre-line; }
+.prep-sessione { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 14px 14px 6px; margin-top: 14px; }
+.prep-sessione__titolo { font-family: var(--font-display); font-size: 19px; font-weight: 600; margin: 0; }
+.prep-sessione__per { margin: 2px 0 8px; font-size: 13px; color: var(--ink-soft); }
+.prep-gruppo { border-top: 1px solid var(--border-soft); padding: 10px 0 8px; }
+.prep-gruppo__titolo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-weight: 700; font-size: 14.5px; }
+.prep-gruppo__conserva { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--ink-soft); background: var(--border-soft); border-radius: 999px; padding: 2px 8px; }
+.prep-gruppo__consiglio { margin: 4px 0 8px; font-size: 13px; color: var(--ink-soft); line-height: 1.45; }
+.prep-gruppo__avviso { margin: 0 0 8px; font-size: 13px; line-height: 1.45; background: color-mix(in srgb, var(--gold) 15%, var(--surface)); border-radius: var(--radius-s); padding: 8px 10px; }
+.prep-voce { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.prep-voce em { font-style: normal; color: var(--ink-soft); font-weight: 400; }
+.prep-voce__quantita { font-size: 12.5px; color: var(--ink-faint); }
+.spesa-riga.is-spuntata .prep-voce__quantita { text-decoration: line-through; }
+.prep-guida { margin-top: 18px; }
+.prep-guida__voce { margin: 0 0 10px; font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); }
+.prep-guida__voce strong { display: block; color: var(--ink); font-size: 14px; }
