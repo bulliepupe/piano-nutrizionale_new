@@ -2220,6 +2220,9 @@
   const ETICHETTE_RICETTE = ["Colazione", "Spuntino", "Pranzo", "Cena", "Vegetariana", "Vegana", "Senza glutine", "Senza lattosio", "Meal prep", "Veloce", "Dolce"];
   const MAX_ALLEGATO = 10 * 1024 * 1024;
   const MAX_FILE_INSIEME = 20;
+  // Servizio gratuito suggerito per ridurre i PDF troppo pesanti.
+  const URL_COMPRIMI_PDF = "https://www.ilovepdf.com/compress_pdf";
+  const LINK_COMPRIMI_HTML = `<a href="${URL_COMPRIMI_PDF}" target="_blank" rel="noopener" class="link-inline">Comprimilo con iLovePDF ↗</a>`;
   const RICPRO = { elenco: [], unsub: null, pronto: false, bozza: null, gruppo: null };
 
   function scollegaRicettario() {
@@ -2343,7 +2346,7 @@
       <label class="btn ric-carica ${puoScrivere ? "" : "is-disabilitato"}">Carica ricette in PDF o foto
         <input type="file" id="ric-file-multipli" accept="application/pdf,image/*" multiple hidden ${puoScrivere ? "" : "disabled"}>
       </label>
-      <p class="stat-nota" style="margin:6px 2px 10px;">Puoi sceglierne più di una insieme: titolo e anteprima li ricava l'app dai file.</p>
+      <p class="stat-nota" style="margin:6px 2px 10px;">Puoi sceglierne più di una insieme: titolo e anteprima li ricava l'app dai file. Massimo 10 MB per file: se un PDF è più pesante, <a href="${URL_COMPRIMI_PDF}" target="_blank" rel="noopener" class="link-inline">comprimilo gratis con iLovePDF ↗</a>.</p>
       <button type="button" class="btn btn--ghost" id="btn-nuova-ricetta" style="margin-bottom:16px;" ${puoScrivere ? "" : "disabled"}>Scrivi una ricetta nell'app</button>
       ${!puoScrivere ? `<p class="stat-nota" style="margin:-6px 2px 14px;">Per aggiungere o modificare ricette serve una licenza attiva.</p>` : ""}
       ${!RICPRO.pronto ? `<div class="empty">Caricamento…</div>`
@@ -2382,7 +2385,7 @@
       g.voci.push(voce);
       preparaFileRicetta(file)
         .then((prep) => { voce.prep = prep; voce.stato = "pronto"; })
-        .catch((e) => { voce.stato = "errore"; voce.errore = messaggioErroreFile(e); })
+        .catch((e) => { voce.stato = "errore"; voce.errore = messaggioErroreFile(e); voce.codice = e && e.message; })
         .finally(() => aggiornaVoceGruppo(voce));
     });
     renderCaricamentoMultiplo();
@@ -2393,7 +2396,24 @@
     if (v.stato === "pronto") return v.file.type === "application/pdf" || /\.pdf$/i.test(v.file.name) ? `PDF · ${dimensioneFile(v.file.size)}` : "Foto";
     if (v.stato === "caricamento") return `Caricamento… ${Math.round((v.progresso || 0) * 100)}%`;
     if (v.stato === "fatto") return "✓ Pubblicata";
+    if (v.codice === "troppo-grande") {
+      return `<span style="color:var(--stato-rosso)">Supera i 10 MB.</span> ${LINK_COMPRIMI_HTML}
+        <label class="link-inline">poi scegli il file compresso<input type="file" data-sostituisci-voce="${v.chiave}" accept="application/pdf" hidden></label>`;
+    }
     return `<span style="color:var(--stato-rosso)">${escapeHTML(v.errore || "Errore")}</span>`;
+  }
+
+  /** Sostituisce il file di una voce (es. con la versione compressa), tenendo il titolo. */
+  function sostituisciFileVoce(chiave, file) {
+    const g = RICPRO.gruppo;
+    const v = g && g.voci.find((x) => x.chiave === chiave);
+    if (!v || !file) return;
+    v.file = file; v.stato = "preparazione"; v.prep = null; v.errore = ""; v.codice = null;
+    aggiornaVoceGruppo(v);
+    preparaFileRicetta(file)
+      .then((prep) => { v.prep = prep; v.stato = "pronto"; })
+      .catch((e) => { v.stato = "errore"; v.errore = messaggioErroreFile(e); v.codice = e && e.message; })
+      .finally(() => aggiornaVoceGruppo(v));
   }
 
   function dimensioneFile(byte) {
@@ -2518,6 +2538,10 @@
       if (g.inCorso) return;
       RICPRO.gruppo = null;
       renderRicettario();
+    });
+    profRoot.querySelector(".ric-voci").addEventListener("change", (e) => {
+      const inp = e.target.closest("[data-sostituisci-voce]");
+      if (inp && inp.files && inp.files[0]) sostituisciFileVoce(inp.dataset.sostituisciVoce, inp.files[0]);
     });
     profRoot.querySelectorAll("[data-titolo-voce]").forEach((inp) => inp.addEventListener("input", () => {
       const v = g.voci.find((x) => x.chiave === inp.dataset.titoloVoce);
@@ -2650,7 +2674,7 @@
             ${allegatoNome ? `<button type="button" class="link-btn" id="ric-allegato-togli">Togli il file</button>` : ""}
           </div>
         </div>
-        <p id="ric-allegato-stato" class="stat-nota" role="status" style="margin-top:8px;">Massimo 10 MB. L'anteprima si ricava dalla prima pagina.</p>
+        <p id="ric-allegato-stato" class="stat-nota" role="status" style="margin-top:8px;">Massimo 10 MB (se è più pesante, <a href="${URL_COMPRIMI_PDF}" target="_blank" rel="noopener" class="link-inline">comprimilo con iLovePDF ↗</a>). L'anteprima si ricava dalla prima pagina.</p>
       </section>
 
       <section class="settings-section">
@@ -2755,8 +2779,9 @@
         if (!document.getElementById("ric-titolo").value.trim()) b.originale.titolo = titoloDaNomeFile(file.name);
         renderEditorRicetta();
       } catch (err) {
-        stato.textContent = messaggioErroreFile(err);
-        stato.style.color = "var(--stato-rosso)";
+        stato.innerHTML = err && err.message === "troppo-grande"
+          ? `<span style="color:var(--stato-rosso)">Il PDF supera i 10 MB.</span> ${LINK_COMPRIMI_HTML}, poi scegli il file compresso con "Scegli PDF o foto".`
+          : `<span style="color:var(--stato-rosso)">${escapeHTML(messaggioErroreFile(err))}</span>`;
       }
     });
     const togliAll = document.getElementById("ric-allegato-togli");

@@ -1492,7 +1492,8 @@ p.stat-motivi { padding-left: 0; }
   margin-left: -6px;
 }
 .ric-voce__titolo:hover, .ric-voce__titolo:focus { border-color: var(--border); background: var(--bg); outline: none; }
-.ric-voce__stato { font-size: 12px; color: var(--ink-faint); }
+.ric-voce__stato { font-size: 12px; color: var(--ink-faint); line-height: 1.5; }
+.link-inline { color: var(--accent); font-weight: 600; text-decoration: underline; cursor: pointer; white-space: nowrap; }
 .ric-voce__togli { flex: none; background: none; border: none; color: var(--ink-faint); font-size: 16px; padding: 6px 8px; cursor: pointer; border-radius: var(--radius-s); }
 .ric-dettagli {
   border: 1px solid var(--border);
