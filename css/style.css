@@ -263,6 +263,29 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 500; margin: 0; }
   color: var(--accent-ink);
 }
 .meal__check[aria-pressed="true"] svg { opacity: 1; }
+.meal__azioni { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 10px; }
+.meal__azioni .meal__check { margin-top: 0; }
+.meal__altro {
+  background: none; border: none; padding: 6px 2px; cursor: pointer;
+  font-family: var(--font-body); font-size: 12.5px; color: var(--ink-faint); text-decoration: underline;
+}
+.meal__check--parziale[aria-pressed="true"] { background: color-mix(in srgb, var(--gold) 22%, var(--surface)); border-color: var(--gold); color: var(--ink); }
+.meal__check--saltato[aria-pressed="true"] { background: var(--border-soft); border-color: var(--border); color: var(--ink-soft); }
+.meal.is-parziale { border-left-color: var(--gold); }
+.meal.is-saltato { border-left-color: var(--border); }
+.meal.is-saltato .meal__desc { color: var(--ink-faint); }
+.stato-pasto { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.stato-pasto__opzione {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  font-family: var(--font-body); font-size: 15px; font-weight: 600; color: var(--ink);
+  background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-m);
+  padding: 12px 14px; cursor: pointer;
+}
+.stato-pasto__opzione[aria-checked="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.stato-pasto__motivi:empty { display: none; }
+.stato-pasto__motivi { margin-bottom: 8px; }
+.stato-pasto__domanda { font-size: 13.5px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
+.stato-pasto__domanda span { font-weight: 400; color: var(--ink-faint); }
 
 .meal__sostituzioni {
   margin-top: 10px;
@@ -1043,6 +1066,14 @@ p.stat-motivi { padding-left: 0; }
 .stat-barra__etichetta { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stat-barra__traccia { height: 8px; background: var(--border-soft); border-radius: 999px; overflow: hidden; }
 .stat-barra__riempimento { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.stat-barra__traccia--quote { display: flex; }
+.stat-quota { display: inline-block; height: 100%; }
+.stat-quota--fatto { background: var(--accent); }
+.stat-quota--parziale { background: var(--gold); }
+.stat-quota--saltato { background: color-mix(in srgb, var(--stato-rosso) 55%, var(--surface)); }
+.stat-quota--vuoto { background: var(--border-soft); }
+.stat-legenda--barre .stat-quota { width: 14px; height: 10px; border-radius: 3px; margin-left: 4px; }
+.stat-imprevisto { padding: 4px 0 10px; }
 .stat-barra__valore { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .stat-riga { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 7px 0; font-size: 14px; color: var(--ink-soft); border-bottom: 1px solid var(--border-soft); }

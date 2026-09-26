@@ -6,10 +6,13 @@
  * verificare e da riusare.
  *
  * Definizioni usate in tutta l'app (spiegate anche all'utente):
- *  - aderenza = pasti segnati come fatti / pasti previsti, contando solo i
- *    giorni già conclusi (oggi escluso, perché la giornata è in corso) e solo
- *    dal giorno in cui il piano è iniziato;
- *  - giornata rispettata = almeno 4 pasti su 5 segnati come fatti;
+ *  - stato di un pasto (nel documento del giorno): true = fatto,
+ *    "parziale" = fatto in parte, "saltato" = saltato; il motivo facoltativo
+ *    sta in stato.motivi[pasto];
+ *  - aderenza = punti / pasti previsti, dove un pasto fatto vale 1, uno fatto
+ *    in parte vale 0,5 e uno saltato o non segnato vale 0. Contano solo i
+ *    giorni già conclusi (oggi escluso) e solo dall'inizio del piano;
+ *  - giornata rispettata = almeno 4 punti su 5;
  *  - inattivo = nessuna apertura dell'app e nessuna spunta da più di 2 giorni.
  *
  * Doppio export (window / module.exports), come gli altri moduli.
@@ -31,7 +34,30 @@
   function aggiungiGiorni(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
   function differenzaGiorni(a, b) { return Math.round((mezzanotte(a) - mezzanotte(b)) / 86400000); }
   function lunedi(d) { const x = mezzanotte(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
-  function fattiNelGiorno(stato) { return stato ? PASTI.filter((k) => stato[k] === true).length : 0; }
+  const MOTIVI = {
+    nonFinito: "Non l'ho finito",
+    cambiato: "Ho cambiato qualcosa",
+    fuori: "Ho mangiato fuori casa",
+    fame: "Non avevo fame",
+    tempo: "Non ho avuto tempo",
+    altro: "Altro",
+  };
+  const MOTIVI_PARZIALE = ["nonFinito", "cambiato", "fuori", "altro"];
+  const MOTIVI_SALTATO = ["fame", "tempo", "altro"];
+
+  /** Stato normalizzato di un pasto: "fatto" | "parziale" | "saltato" | null. */
+  function statoPasto(stato, k) {
+    const v = stato && stato[k];
+    if (v === true) return "fatto";
+    if (v === "parziale" || v === "saltato") return v;
+    return null;
+  }
+  function valorePasto(stato, k) {
+    const st = statoPasto(stato, k);
+    return st === "fatto" ? 1 : st === "parziale" ? 0.5 : 0;
+  }
+  function fattiNelGiorno(stato) { return stato ? PASTI.reduce((t, k) => t + valorePasto(stato, k), 0) : 0; }
+  function registratiNelGiorno(stato) { return stato ? PASTI.filter((k) => statoPasto(stato, k)).length : 0; }
 
   /** Primo giorno da cui ha senso chiedere le spunte (per la lettura da Firestore). */
   function primoGiornoStorico(oggi) {
@@ -67,10 +93,37 @@
     const aderenza = (lista) => lista.length ? lista.reduce((s, g) => s + g.fatti, 0) / (lista.length * PASTI.length) : null;
 
     const g7 = ultimi(7), g30 = ultimi(30);
-    const perPasto = PASTI.map((k) => ({
-      pasto: k,
-      valore: g30.length ? g30.filter((g) => spunte[g.chiave] && spunte[g.chiave][k] === true).length / g30.length : null,
-    }));
+    const perPasto = PASTI.map((k) => {
+      const conta = { fatto: 0, parziale: 0, saltato: 0, nonSegnato: 0 };
+      let punti = 0;
+      g30.forEach((g) => {
+        const st = statoPasto(spunte[g.chiave], k);
+        conta[st || "nonSegnato"]++;
+        punti += valorePasto(spunte[g.chiave], k);
+      });
+      const n = g30.length;
+      return {
+        pasto: k,
+        valore: n ? punti / n : null,
+        quote: n ? { fatto: conta.fatto / n, parziale: conta.parziale / n, saltato: conta.saltato / n, nonSegnato: conta.nonSegnato / n } : null,
+        conta,
+      };
+    });
+
+    // Pasti fatti in parte o saltati negli ultimi 30 giorni, con i motivi
+    const imprevisti = { parziale: { totale: 0, motivi: {}, perPasto: {} }, saltato: { totale: 0, motivi: {}, perPasto: {} } };
+    g30.forEach((g) => {
+      const stato = spunte[g.chiave];
+      PASTI.forEach((k) => {
+        const st = statoPasto(stato, k);
+        if (st !== "parziale" && st !== "saltato") return;
+        const gruppo = imprevisti[st];
+        gruppo.totale++;
+        gruppo.perPasto[k] = (gruppo.perPasto[k] || 0) + 1;
+        const motivo = stato.motivi && MOTIVI[stato.motivi[k]] ? stato.motivi[k] : null;
+        if (motivo) gruppo.motivi[motivo] = (gruppo.motivi[motivo] || 0) + 1;
+      });
+    });
 
     // Andamento per settimana di calendario (8 settimane, l'ultima è quella in corso)
     const lunediCorrente = lunedi(oggi);
@@ -106,7 +159,7 @@
     }
 
     // Ultima interazione: apertura dell'app o spunta, la più recente
-    const giorniConSpunte = Object.keys(spunte).filter((k) => fattiNelGiorno(spunte[k]) > 0).sort();
+    const giorniConSpunte = Object.keys(spunte).filter((k) => registratiNelGiorno(spunte[k]) > 0).sort();
     const ultimaSpunta = giorniConSpunte.length ? daChiave(giorniConSpunte[giorniConSpunte.length - 1]) : null;
     const candidati = [ultimaSpunta, p.ultimoAccesso || null].filter(Boolean).map(mezzanotte);
     const ultimaInterazione = candidati.length ? new Date(Math.max.apply(null, candidati)) : null;
@@ -144,7 +197,7 @@
     return {
       stato, motivi, pianoIniziato,
       aderenza7: a7, aderenza30: aderenza(g30), giorniValutati30: g30.length,
-      perPasto,
+      perPasto, imprevisti,
       feriali: aderenza(g30.filter((g) => !g.weekend)),
       weekend: aderenza(g30.filter((g) => g.weekend)),
       settimane, calendario,
@@ -160,7 +213,7 @@
   const ORDINE_STATO = { rosso: 0, giallo: 1, verde: 2, attesa: 3 };
 
   const api = {
-    PASTI, SOGLIA_GIORNO_OK, GIORNI_ALLARME, SOGLIA_ADERENZA_BASSA, GIORNI_STORICO, ORDINE_STATO,
+    PASTI, SOGLIA_GIORNO_OK, MOTIVI, MOTIVI_PARZIALE, MOTIVI_SALTATO, statoPasto, GIORNI_ALLARME, SOGLIA_ADERENZA_BASSA, GIORNI_STORICO, ORDINE_STATO,
     calcola, primoGiornoStorico, chiave, daChiave, differenzaGiorni,
   };
   if (typeof window !== "undefined") window.statistiche = api;

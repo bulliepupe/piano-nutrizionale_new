@@ -434,7 +434,9 @@
     }
 
     const fatti = PASTI_FATTI_OGGI;
-    const numFatti = MEAL_KEYS.filter((k) => fatti[k]).length;
+    const statoDi = (k) => window.statistiche.statoPasto(fatti, k);
+    const numFatti = MEAL_KEYS.filter((k) => statoDi(k) === "fatto").length;
+    const numParziali = MEAL_KEYS.filter((k) => statoDi(k) === "parziale").length;
 
     root.innerHTML = `
       ${renderBannerRiattivaHTML()}
@@ -447,7 +449,7 @@
         <div class="hero__meta">
           <span class="pill pill--kcal">${giorno.kcal != null ? giorno.kcal + " kcal circa" : "kcal n/d"}</span>
           <span class="pill">${escapeHTML(PIANO_ATTIVO.paziente.obiettivo || "")}</span>
-          <span class="pill pill--progress ${numFatti === MEAL_KEYS.length ? "is-complete" : ""}">${numFatti}/${MEAL_KEYS.length} pasti fatti</span>
+          <span class="pill pill--progress ${numFatti === MEAL_KEYS.length ? "is-complete" : ""}">${numFatti}/${MEAL_KEYS.length} pasti fatti${numParziali ? `, ${numParziali} in parte` : ""}</span>
         </div>
       </section>
       <div class="timeline">${renderTimelineHTML(giorno, orari, { checkable: true, fatti })}</div>
@@ -459,6 +461,9 @@
     root.querySelectorAll("[data-meal-check]").forEach((btn) => {
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));
     });
+    root.querySelectorAll("[data-meal-altro]").forEach((btn) => {
+      btn.addEventListener("click", () => apriStatoPasto(btn.dataset.mealAltro));
+    });
     collegaBannerIos();
     collegaBannerRiattiva();
     collegaContattoNutrizionista();
@@ -469,20 +474,29 @@
     const fatti = opts.fatti || {};
     return MEAL_KEYS.map((key) => {
       const meta = MEAL_META[key];
-      const isDone = !!fatti[key];
+      const stato = window.statistiche.statoPasto(fatti, key);
+      const isDone = stato === "fatto";
       const sost = trovaSostituzioneMeal(giorno[key]);
       return `
-        <article class="meal ${meta.classe} ${isDone ? "is-done" : ""}">
+        <article class="meal ${meta.classe} ${isDone ? "is-done" : ""} ${stato === "parziale" ? "is-parziale" : ""} ${stato === "saltato" ? "is-saltato" : ""}">
           <div class="meal__head">
             <span class="meal__label">${meta.label}</span>
             <span class="meal__time">${orari[key] || ""}</span>
           </div>
           <p class="meal__desc">${escapeHTML(giorno[key])}</p>
           ${opts.checkable ? `
-            <button type="button" class="meal__check" data-meal-check="${key}" aria-pressed="${isDone}">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6"/></svg>
-              <span>${isDone ? "Fatto" : "Segna come fatto"}</span>
-            </button>
+            <div class="meal__azioni">
+              ${stato === "parziale" || stato === "saltato" ? `
+                <button type="button" class="meal__check meal__check--${stato}" data-meal-altro="${key}" aria-pressed="true">
+                  ${stato === "parziale" ? `<svg class="icona-meta" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>` : `<span aria-hidden="true">✕</span>`}
+                  <span>${stato === "parziale" ? "Fatto in parte" : "Saltato"}${fatti.motivi && fatti.motivi[key] && window.statistiche.MOTIVI[fatti.motivi[key]] ? ` · ${escapeHTML(window.statistiche.MOTIVI[fatti.motivi[key]].toLowerCase())}` : ""}</span>
+                </button>` : `
+                <button type="button" class="meal__check" data-meal-check="${key}" aria-pressed="${isDone}">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6"/></svg>
+                  <span>${isDone ? "Fatto" : "Segna come fatto"}</span>
+                </button>`}
+              <button type="button" class="meal__altro" data-meal-altro="${key}">${stato ? "Modifica" : "In parte o saltato?"}</button>
+            </div>
           ` : ""}
           ${sost ? `
             <details class="meal__sostituzioni">
@@ -536,16 +550,70 @@
     });
   }
 
-  async function onToggleMealCheck(key) {
+  /** Salva lo stato di un pasto di oggi: true (fatto), "parziale", "saltato" oppure null (non segnato). */
+  async function salvaStatoPasto(key, valore, motivo) {
     const dateKey = chiaveData(new Date());
     const nuovoStato = Object.assign({}, PASTI_FATTI_OGGI);
-    nuovoStato[key] = !nuovoStato[key];
+    const motivi = Object.assign({}, nuovoStato.motivi || {});
+    if (valore === null) delete nuovoStato[key]; else nuovoStato[key] = valore;
+    if (motivo && (valore === "parziale" || valore === "saltato")) motivi[key] = motivo; else delete motivi[key];
+    if (Object.keys(motivi).length) nuovoStato.motivi = motivi; else delete nuovoStato.motivi;
     try {
       await window.cloud.salvaPastiFattiCloud(UID, dateKey, nuovoStato);
       // L'ascolto in tempo reale aggiorna la UI da solo.
     } catch (e) {
       mostraToast("Impossibile salvare: controlla la connessione");
     }
+  }
+
+  function onToggleMealCheck(key) {
+    const giaFatto = window.statistiche.statoPasto(PASTI_FATTI_OGGI, key) === "fatto";
+    salvaStatoPasto(key, giaFatto ? null : true, null);
+  }
+
+  /** Scheda per dire com'è andato un pasto: fatto, in parte o saltato, con un motivo facoltativo. */
+  function apriStatoPasto(key) {
+    const S = window.statistiche;
+    const attuale = S.statoPasto(PASTI_FATTI_OGGI, key);
+    const motivoAttuale = (PASTI_FATTI_OGGI.motivi || {})[key] || null;
+    let scelta = attuale || null;
+    let motivo = motivoAttuale;
+    const nomePasto = MEAL_META[key].label;
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">${escapeHTML(nomePasto)} di oggi</h2>
+      <p class="sheet__nota">Rispondi con sincerità: aiuta il tuo nutrizionista a capire cosa funziona e cosa adattare nel piano.</p>
+      <div class="stato-pasto" role="radiogroup" aria-label="Com'è andato il pasto">
+        <button type="button" class="stato-pasto__opzione" data-scelta="fatto" role="radio">✓ <span>Fatto come da piano</span></button>
+        <button type="button" class="stato-pasto__opzione" data-scelta="parziale" role="radio"><svg class="icona-meta" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg> <span>Fatto in parte</span></button>
+        <button type="button" class="stato-pasto__opzione" data-scelta="saltato" role="radio">✕ <span>Saltato</span></button>
+      </div>
+      <div id="stato-pasto-motivi" class="stato-pasto__motivi"></div>
+      <button type="button" class="btn" id="stato-pasto-salva">Salva</button>
+      ${attuale ? `<button type="button" class="btn btn--ghost" id="stato-pasto-togli">Togli la segnatura</button>` : ""}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    const aggiorna = () => {
+      overlay.querySelectorAll("[data-scelta]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.scelta === scelta)));
+      const box = overlay.querySelector("#stato-pasto-motivi");
+      const elenco = scelta === "parziale" ? S.MOTIVI_PARZIALE : scelta === "saltato" ? S.MOTIVI_SALTATO : [];
+      if (!elenco.includes(motivo)) motivo = null;
+      box.innerHTML = elenco.length ? `
+        <p class="stato-pasto__domanda">Com'è andata? <span>(facoltativo)</span></p>
+        <div class="ricette-filtri">${elenco.map((m) => `<button type="button" class="chip-filtro" data-motivo="${m}" aria-pressed="${motivo === m}">${escapeHTML(S.MOTIVI[m])}</button>`).join("")}</div>` : "";
+      box.querySelectorAll("[data-motivo]").forEach((b) => b.addEventListener("click", () => {
+        motivo = motivo === b.dataset.motivo ? null : b.dataset.motivo;
+        aggiorna();
+      }));
+      overlay.querySelector("#stato-pasto-salva").disabled = !scelta;
+    };
+    overlay.querySelectorAll("[data-scelta]").forEach((b) => b.addEventListener("click", () => { scelta = b.dataset.scelta; aggiorna(); }));
+    overlay.querySelector("#stato-pasto-salva").addEventListener("click", () => {
+      chiudiSheet();
+      salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo);
+    });
+    const togli = overlay.querySelector("#stato-pasto-togli");
+    if (togli) togli.addEventListener("click", () => { chiudiSheet(); salvaStatoPasto(key, null, null); });
+    aggiorna();
   }
 
   function renderCoccolaHTML(giorno) {
@@ -2106,7 +2174,7 @@
               </button>`;
           }).join("")}
         </div>
-        <p class="stat-nota">L'aderenza è la quota di pasti segnati come fatti sui giorni già conclusi. Una giornata è rispettata con almeno ${window.statistiche.SOGLIA_GIORNO_OK} pasti su 5. Il paziente è da ricontattare se non apre l'app e non segna pasti da più di ${window.statistiche.GIORNI_ALLARME} giorni.</p>
+        <p class="stat-nota">L'aderenza si calcola sui giorni già conclusi: un pasto fatto vale 1 punto, uno fatto in parte 0,5, uno saltato o non segnato 0. Una giornata è rispettata con almeno ${window.statistiche.SOGLIA_GIORNO_OK} punti su 5. Il paziente è da ricontattare se non apre l'app e non segna pasti da più di ${window.statistiche.GIORNI_ALLARME} giorni.</p>
       `}
     `;
 
@@ -2135,6 +2203,43 @@
       </div>`;
   }
 
+  /** Barra di un pasto divisa in fatto / in parte / saltato / non segnato; il numero è il punteggio. */
+  function barraPastoHTML(etichetta, p) {
+    const q = p.quote;
+    const tratto = (cls, v) => v ? `<span class="stat-quota stat-quota--${cls}" style="width:${(v * 100).toFixed(1)}%"></span>` : "";
+    return `
+      <div class="stat-barra" title="${p.conta.fatto} fatti, ${p.conta.parziale} in parte, ${p.conta.saltato} saltati, ${p.conta.nonSegnato} non segnati">
+        <span class="stat-barra__etichetta">${escapeHTML(etichetta)}</span>
+        <span class="stat-barra__traccia stat-barra__traccia--quote">${q ? tratto("fatto", q.fatto) + tratto("parziale", q.parziale) + tratto("saltato", q.saltato) : ""}</span>
+        <span class="stat-barra__valore">${perc(p.valore)}</span>
+      </div>`;
+  }
+
+  /** Riepilogo dei pasti fatti in parte o saltati, con i motivi indicati dal paziente. */
+  function imprevistiHTML(r) {
+    const S = window.statistiche;
+    const im = r.imprevisti;
+    if (!im || (!im.parziale.totale && !im.saltato.totale)) return "";
+    const riga = (gruppo, titolo) => {
+      if (!gruppo.totale) return "";
+      const pasti = Object.entries(gruppo.perPasto).sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => `${MEAL_META[k].label.toLowerCase()} ${n}`).join(", ");
+      const motivi = Object.entries(gruppo.motivi).sort((a, b) => b[1] - a[1])
+        .map(([m, n]) => `${escapeHTML(S.MOTIVI[m])} (${n})`).join(", ");
+      return `
+        <div class="stat-imprevisto">
+          <p class="stat-riga"><span>${titolo}</span><strong>${gruppo.totale}</strong></p>
+          <p class="stat-nota" style="margin:4px 0 0;">Quali: ${escapeHTML(pasti)}.${motivi ? ` Motivi indicati: ${motivi}.` : ""}</p>
+        </div>`;
+    };
+    return `
+      <section class="settings-section">
+        <h2>Pasti fatti in parte o saltati (30 giorni)</h2>
+        ${riga(im.parziale, "Fatti in parte")}
+        ${riga(im.saltato, "Saltati")}
+      </section>`;
+  }
+
   function renderStatistichePaziente(id) {
     const piano = PAZIENTI_PROF.find((p) => p.id === id);
     const x = STAT.risultati[id];
@@ -2145,7 +2250,7 @@
     document.getElementById("prof-header-titolo").textContent = piano.pazienteNome || "Paziente";
 
     const GIORNI_BREVI = ["L", "M", "M", "G", "V", "S", "D"];
-    const livello = (f) => f == null ? "vuoto" : f >= 4 ? "alto" : f >= 2 ? "medio" : f >= 1 ? "basso" : "zero";
+    const livello = (f) => f == null ? "vuoto" : f >= 4 ? "alto" : f >= 2 ? "medio" : f > 0 ? "basso" : "zero";
     const pc = r.prossimoControllo;
     const testoControllo = !pc ? "Non impostato"
       : pc.traGiorni > 1 ? `Tra ${pc.traGiorni} giorni` : pc.traGiorni === 1 ? "Domani" : pc.traGiorni === 0 ? "Oggi"
@@ -2164,19 +2269,19 @@
         <div class="stat-riquadro"><strong>${perc(r.aderenza7)}</strong><span>Aderenza 7 giorni</span></div>
         <div class="stat-riquadro"><strong>${perc(r.aderenza30)}</strong><span>Aderenza 30 giorni</span></div>
         <div class="stat-riquadro"><strong>${r.serie}</strong><span>Giorni di fila rispettati (record ${r.record})</span></div>
-        <div class="stat-riquadro"><strong>${r.fattiOggi}/5</strong><span>Pasti segnati oggi</span></div>
+        <div class="stat-riquadro"><strong>${String(r.fattiOggi).replace(".", ",")}/5</strong><span>Punti di oggi (fatto 1, in parte 0,5)</span></div>
       </div>
 
       <section class="settings-section">
         <h2>Ultime 4 settimane</h2>
         <div class="stat-calendario" role="img" aria-label="Pasti segnati giorno per giorno nelle ultime 4 settimane">
           ${GIORNI_BREVI.map((g) => `<span class="stat-calendario__intestazione">${g}</span>`).join("")}
-          ${r.calendario.map((c) => `<span class="stat-giorno stat-giorno--${livello(c.fatti)} ${c.oggi ? "is-oggi" : ""}" title="${c.chiave}: ${c.fatti == null ? "non valutato" : c.fatti + "/5 pasti"}">${c.giorno}</span>`).join("")}
+          ${r.calendario.map((c) => `<span class="stat-giorno stat-giorno--${livello(c.fatti)} ${c.oggi ? "is-oggi" : ""}" title="${c.chiave}: ${c.fatti == null ? "non valutato" : String(c.fatti).replace(".", ",") + " punti su 5"}">${c.giorno}</span>`).join("")}
         </div>
         <p class="stat-legenda">
-          <span class="stat-giorno stat-giorno--alto"></span> 4–5 pasti
-          <span class="stat-giorno stat-giorno--medio"></span> 2–3
-          <span class="stat-giorno stat-giorno--basso"></span> 1
+          <span class="stat-giorno stat-giorno--alto"></span> 4–5 punti
+          <span class="stat-giorno stat-giorno--medio"></span> 2–3,5
+          <span class="stat-giorno stat-giorno--basso"></span> meno di 2
           <span class="stat-giorno stat-giorno--zero"></span> nessuno
         </p>
       </section>
@@ -2198,11 +2303,19 @@
 
       <section class="settings-section">
         <h2>Pasti negli ultimi 30 giorni</h2>
-        ${r.perPasto.map((p) => barraHTML(MEAL_META[p.pasto].label, p.valore)).join("")}
+        ${r.perPasto.map((p) => barraPastoHTML(MEAL_META[p.pasto].label, p)).join("")}
+        <p class="stat-legenda stat-legenda--barre">
+          <span class="stat-quota stat-quota--fatto"></span> fatto
+          <span class="stat-quota stat-quota--parziale"></span> in parte
+          <span class="stat-quota stat-quota--saltato"></span> saltato
+          <span class="stat-quota stat-quota--vuoto"></span> non segnato
+        </p>
         <div style="height:10px;"></div>
         ${barraHTML("Dal lunedì al venerdì", r.feriali)}
         ${barraHTML("Sabato e domenica", r.weekend)}
       </section>
+
+      ${imprevistiHTML(r)}
 
       <section class="settings-section">
         <h2>Uso dell'app</h2>
