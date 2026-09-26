@@ -57,10 +57,11 @@ service cloud.firestore {
         (resource.data.get("professionistaUid", "") == request.auth.uid)
       );
 
-      allow create: if isSignedIn() && request.auth.uid == userId && (
-        (request.resource.data.ruolo == "professionista" && provaValida(request.resource.data.licenza)) ||
-        (request.resource.data.ruolo == "paziente" && !("licenza" in request.resource.data))
-      );
+      // Dal browser si può creare solo il profilo di un professionista (con la
+      // prova gratuita). I profili dei pazienti li crea il server (funzione
+      // creaPaziente), che controlla il limite della licenza.
+      allow create: if isSignedIn() && request.auth.uid == userId
+        && request.resource.data.ruolo == "professionista" && provaValida(request.resource.data.licenza);
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
@@ -88,8 +89,9 @@ service cloud.firestore {
       allow read: if isSignedIn() &&
         (resource.data.pazienteUid == request.auth.uid || resource.data.professionistaUid == request.auth.uid);
 
-      allow create: if isProfessionista() && licenzaAttiva()
-        && request.resource.data.professionistaUid == request.auth.uid;
+      // I piani nuovi li crea solo il server, insieme al paziente (funzione
+      // creaPaziente, che controlla il limite della licenza).
+      allow create: if false;
       allow update: if isProfessionista() && licenzaAttiva()
         && resource.data.professionistaUid == request.auth.uid
         && request.resource.data.professionistaUid == request.auth.uid;

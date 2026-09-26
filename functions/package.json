@@ -1,13 +1,13 @@
 {
   "name": "piano-nutrizionale-functions",
-  "description": "Cloud Functions: promemoria pasto push, eliminazione pazienti, licenze e pagamenti Stripe",
+  "description": "Cloud Functions: promemoria pasto push, creazione ed eliminazione pazienti, licenze e pagamenti Stripe",
   "engines": {
     "node": "22"
   },
   "main": "index.js",
   "dependencies": {
-    "firebase-admin": "^12.6.0",
-    "firebase-functions": "^6.0.1",
+    "firebase-admin": "^14.5.0",
+    "firebase-functions": "^7.4.0",
     "stripe": "^17.7.0"
   },
   "private": true

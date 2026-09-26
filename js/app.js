@@ -3494,6 +3494,18 @@
     document.getElementById("btn-crea-paziente").addEventListener("click", onCreaPaziente);
   }
 
+  /** Messaggi chiari per gli errori della funzione server creaPaziente. */
+  function traduciErroreCreazionePaziente(e) {
+    const codice = String((e && e.code) || "").replace(/^functions\//, "");
+    const messaggio = String((e && e.message) || "");
+    if (messaggio === "email-gia-usata") return "Esiste già un account con questa email: usane un'altra oppure chiedi al paziente con quale email si è registrato.";
+    if (messaggio === "licenza-non-attiva") return "La tua licenza non è attiva: attiva un abbonamento per creare nuovi pazienti.";
+    if (messaggio.startsWith("limite-raggiunto")) return `Hai raggiunto il limite del tuo piano (${messaggio.split(":")[1] || statoLicenza().max} pazienti). Per aggiungerne altri passa a un piano superiore.`;
+    if (codice === "invalid-argument" || codice === "permission-denied") return messaggio;
+    if (codice === "unavailable" || codice === "deadline-exceeded") return "Connessione assente o lenta: riprova tra poco.";
+    return "Non è stato possibile creare il paziente. Riprova tra poco.";
+  }
+
   function generaPasswordProvvisoria() {
     const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
     let out = "";
@@ -3523,18 +3535,17 @@
     btn.textContent = "Creazione in corso…";
 
     try {
-      const nuovoUid = await window.cloud.creaPaziente({ email, password, nome, professionistaUid: UID });
       const pianoBase = JSON.parse(JSON.stringify(PIANO_TEMPLATE));
       pianoBase.paziente.nome = nome;
       const contatti = PROFILO_PROF.contatti || null;
       pianoBase.paziente.nutrizionista = (contatti && contatti.nome) || PROFILO_PROF.nome || "";
       if (contatti) pianoBase.contattiNutrizionista = contatti;
       pianoBase.dataInizio = dataInizio;
-      await window.cloud.creaPiano(pianoBase, UID, nuovoUid, nome, email);
+      await window.cloud.creaPaziente({ email, password, nome, piano: pianoBase });
       mostraToast("Paziente creato — comunicagli email e password");
       renderListaPazienti();
     } catch (e) {
-      mostraErroreIn("np-error", traduciErroreAuth(e));
+      mostraErroreIn("np-error", traduciErroreCreazionePaziente(e));
       btn.disabled = false;
       btn.textContent = "Crea paziente";
     }

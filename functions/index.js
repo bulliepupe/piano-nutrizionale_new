@@ -22,12 +22,17 @@ const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https")
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const { setGlobalOptions } = require("firebase-functions/v2");
-const admin = require("firebase-admin");
+// firebase-admin 14 accetta solo le API "modulari": il vecchio stile
+// admin.firestore(), getAuth() e simili è stato rimosso.
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue, FieldPath, Timestamp } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
+const { getMessaging } = require("firebase-admin/messaging");
 const weekLogic = require("./week-logic.js");
 
-admin.initializeApp();
-const db = admin.firestore();
-const messaging = admin.messaging();
+initializeApp();
+const db = getFirestore();
+const messaging = getMessaging();
 
 // Regione europea: più vicina, e coerente con la posizione scelta per Firestore.
 setGlobalOptions({ region: "europe-west1" });
@@ -172,7 +177,7 @@ exports.controllaPromemoria = onSchedule(
             }
           });
           if (tokenDaRimuovere.length) {
-            await utenteRef.update({ fcmTokens: admin.firestore.FieldValue.arrayRemove(...tokenDaRimuovere) });
+            await utenteRef.update({ fcmTokens: FieldValue.arrayRemove(...tokenDaRimuovere) });
           }
         } catch (e) {
           console.error("Errore invio notifica a", pazienteUid, key, e);
@@ -180,7 +185,7 @@ exports.controllaPromemoria = onSchedule(
         }
 
         await trackingRef.set(
-          { pasti: admin.firestore.FieldValue.arrayUnion(key), aggiornato: admin.firestore.FieldValue.serverTimestamp() },
+          { pasti: FieldValue.arrayUnion(key), aggiornato: FieldValue.serverTimestamp() },
           { merge: true }
         );
       }
@@ -235,7 +240,7 @@ exports.eliminaPaziente = onCall(async (request) => {
 
     // 1) Account di accesso (se era già stato cancellato, si prosegue).
     try {
-      await admin.auth().deleteUser(pazienteUid);
+      await getAuth().deleteUser(pazienteUid);
     } catch (e) {
       if (e.code !== "auth/user-not-found") throw new HttpsError("internal", "Impossibile eliminare l'account di accesso.");
     }
@@ -245,7 +250,7 @@ exports.eliminaPaziente = onCall(async (request) => {
 
     // 3) Registro dei promemoria inviati (documenti "<uid>_<data>").
     const registro = await db.collection("notificheInviate")
-      .orderBy(admin.firestore.FieldPath.documentId())
+      .orderBy(FieldPath.documentId())
       .startAt(pazienteUid + "_")
       .endAt(pazienteUid + "_\uf8ff")
       .get();
@@ -259,6 +264,117 @@ exports.eliminaPaziente = onCall(async (request) => {
   // 4) Il piano, per ultimo.
   await pianoRef.delete();
   return { ok: true };
+});
+
+// =========================================================================
+// CREAZIONE DI UN PAZIENTE (con controllo del limite della licenza)
+// =========================================================================
+/**
+ * Crea account, profilo e piano di un nuovo paziente per il professionista
+ * che la chiama. Il limite di pazienti della licenza è verificato QUI, sul
+ * server: dal browser non si possono più creare profili "paziente" né piani
+ * (vedi firestore.rules), quindi il limite non si può aggirare.
+ *
+ * Dati attesi: { nome, email, password, piano } dove piano è il piano di
+ * partenza preparato dall'app (settimane, regole, dati paziente...).
+ * Ritorna { pazienteUid, pianoId }.
+ */
+const CAMPI_PIANO_RISERVATI = ["professionistaUid", "pazienteUid", "pazienteNome", "pazienteEmail", "aggiornato", "creato"];
+
+function statoLicenzaServer(licenza, adesso) {
+  if (!licenza || licenza.stato !== "attiva") return { attiva: false, max: 0 };
+  const scadenza = licenza.scadenza && typeof licenza.scadenza.toMillis === "function" ? licenza.scadenza.toMillis() : null;
+  const attiva = scadenza == null || scadenza > adesso;
+  return { attiva, max: Number(licenza.maxPazienti) || 0 };
+}
+
+exports.creaPaziente = onCall(async (request) => {
+  const uidProf = request.auth && request.auth.uid;
+  if (!uidProf) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+
+  const d = request.data || {};
+  const nome = String(d.nome || "").trim().slice(0, 120);
+  const email = String(d.email || "").trim().toLowerCase();
+  const password = String(d.password || "");
+  const piano = d.piano;
+  if (!nome || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpsError("invalid-argument", "Indica nome ed email validi.");
+  }
+  if (password.length < 6 || password.length > 128) {
+    throw new HttpsError("invalid-argument", "La password deve avere almeno 6 caratteri.");
+  }
+  if (!piano || typeof piano !== "object" || Array.isArray(piano) || !piano.settimane) {
+    throw new HttpsError("invalid-argument", "Piano di partenza non valido.");
+  }
+  if (Buffer.byteLength(JSON.stringify(piano)) > 900 * 1024) {
+    throw new HttpsError("invalid-argument", "Piano di partenza troppo grande.");
+  }
+
+  const profRef = db.collection("users").doc(uidProf);
+  const queryPazienti = db.collection("piani").where("professionistaUid", "==", uidProf);
+
+  // Controllo del limite: ripetuto dentro la transazione più sotto, qui serve
+  // solo a non creare l'account di accesso se la licenza non lo permette.
+  const verifica = async (lettore) => {
+    const prof = await lettore(profRef);
+    if (!prof.exists || prof.data().ruolo !== "professionista") {
+      throw new HttpsError("permission-denied", "Solo un professionista può creare pazienti.");
+    }
+    const lic = statoLicenzaServer(prof.data().licenza, Date.now());
+    if (!lic.attiva) throw new HttpsError("failed-precondition", "licenza-non-attiva");
+    const conteggio = await lettore(queryPazienti.count());
+    const usati = conteggio.data().count;
+    if (usati >= lic.max) throw new HttpsError("resource-exhausted", `limite-raggiunto:${lic.max}`);
+    return prof.data();
+  };
+  await verifica((x) => x.get());
+
+  // 1) Account di accesso
+  let utente;
+  try {
+    utente = await getAuth().createUser({ email, password, displayName: nome });
+  } catch (e) {
+    if (e.code === "auth/email-already-exists") throw new HttpsError("already-exists", "email-gia-usata");
+    if (e.code === "auth/invalid-email") throw new HttpsError("invalid-argument", "Email non valida.");
+    if (e.code === "auth/invalid-password") throw new HttpsError("invalid-argument", "La password deve avere almeno 6 caratteri.");
+    console.error("creaPaziente: creazione account", e);
+    throw new HttpsError("internal", "Impossibile creare l'account di accesso.");
+  }
+
+  // 2) Profilo e piano, in una transazione che ricontrolla il limite: se due
+  //    creazioni partono insieme, solo quelle che ci stanno vanno a buon fine.
+  const pianoRef = db.collection("piani").doc();
+  const pulito = Object.assign({}, piano);
+  CAMPI_PIANO_RISERVATI.forEach((k) => delete pulito[k]);
+  try {
+    await db.runTransaction(async (t) => {
+      await verifica((x) => t.get(x));
+      t.create(db.collection("users").doc(utente.uid), {
+        ruolo: "paziente",
+        nome,
+        email,
+        professionistaUid: uidProf,
+        creato: FieldValue.serverTimestamp(),
+      });
+      t.create(pianoRef, Object.assign(pulito, {
+        professionistaUid: uidProf,
+        pazienteUid: utente.uid,
+        pazienteNome: nome,
+        pazienteEmail: email,
+        creato: FieldValue.serverTimestamp(),
+        aggiornato: FieldValue.serverTimestamp(),
+      }));
+    });
+  } catch (e) {
+    // Qualcosa è andato storto: si cancella l'account appena creato, così non
+    // restano accessi "orfani" senza profilo e senza piano.
+    await getAuth().deleteUser(utente.uid).catch(() => {});
+    if (e instanceof HttpsError) throw e;
+    console.error("creaPaziente: salvataggio profilo e piano", e);
+    throw new HttpsError("internal", "Impossibile salvare il nuovo paziente.");
+  }
+
+  return { pazienteUid: utente.uid, pianoId: pianoRef.id };
 });
 
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.
@@ -323,17 +439,17 @@ function licenzaDaAbbonamento(sub) {
     // reale di chiusura. Altrimenti fine del periodo pagato + qualche giorno
     // di tolleranza per i rinnovi pagati con qualche ora di ritardo.
     scadenza: chiuso
-      ? admin.firestore.Timestamp.fromMillis(chiuso * 1000)
-      : (fine ? admin.firestore.Timestamp.fromMillis((fine + GIORNI_TOLLERANZA * 86400) * 1000) : null),
+      ? Timestamp.fromMillis(chiuso * 1000)
+      : (fine ? Timestamp.fromMillis((fine + GIORNI_TOLLERANZA * 86400) * 1000) : null),
     // Disdetta programmata: l'abbonamento resta attivo fino a questa data, poi non si rinnova.
     disdetto: !!(sub.cancel_at || sub.cancel_at_period_end),
     fineAbbonamento: sub.cancel_at
-      ? admin.firestore.Timestamp.fromMillis(sub.cancel_at * 1000)
-      : (sub.cancel_at_period_end && fine ? admin.firestore.Timestamp.fromMillis(fine * 1000) : null),
+      ? Timestamp.fromMillis(sub.cancel_at * 1000)
+      : (sub.cancel_at_period_end && fine ? Timestamp.fromMillis(fine * 1000) : null),
     stripeCustomerId: typeof sub.customer === "string" ? sub.customer : sub.customer.id,
     stripeSubscriptionId: sub.id,
     statoStripe: sub.status,
-    aggiornata: admin.firestore.FieldValue.serverTimestamp(),
+    aggiornata: FieldValue.serverTimestamp(),
   };
 }
 
@@ -448,5 +564,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo };
+  module.exports._test = { pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

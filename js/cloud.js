@@ -22,22 +22,8 @@
   const CONFIGURATO = window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey !== "INSERISCI_API_KEY";
 
   const app = firebase.initializeApp(window.FIREBASE_CONFIG);
-  // App Firebase secondaria, usata SOLO per creare l'account del nuovo paziente:
-  // firebase.auth().createUserWithEmailAndPassword effettua sempre il login
-  // automatico con l'utente appena creato — usando un'app separata evitiamo che
-  // questo disconnetta la sessione del professionista sull'app principale.
-  const secondaryApp = firebase.initializeApp(window.FIREBASE_CONFIG, "Secondaria");
-
   const auth = app.auth();
-  const secondaryAuth = secondaryApp.auth();
   const db = app.firestore();
-  // Firestore "legato" all'app secondaria: usato SOLO per scrivere il
-  // documento users/{uid} del nuovo paziente mentre è ancora autenticato
-  // come se stesso (subito dopo la creazione, prima del signOut). Le regole
-  // di sicurezza permettono a un utente di creare solo il proprio documento
-  // — passando dall'app secondaria questo resta vero anche quando è il
-  // professionista a creare l'account per lui.
-  const secondaryDb = secondaryApp.firestore();
 
   // Persistenza offline: letture disponibili anche senza connessione, con
   // sincronizzazione automatica al ritorno della rete. Fallisce silenziosamente
@@ -136,24 +122,16 @@
      * mentre il professionista è loggato: usa l'app secondaria apposta per
      * non toccare la sessione principale. Ritorna l'uid del nuovo paziente.
      */
-    async creaPaziente({ email, password, nome, professionistaUid }) {
-      const cred = await secondaryAuth.createUserWithEmailAndPassword(email.trim(), password);
-      const nuovoUid = cred.user.uid;
-
-      // Scritto tramite secondaryDb MENTRE è ancora autenticato come il
-      // nuovo paziente (non ancora disconnesso): è l'unico modo per
-      // rispettare la regola "solo l'utente stesso può creare il proprio
-      // documento" anche quando è il professionista ad avviare la creazione.
-      await secondaryDb.collection("users").doc(nuovoUid).set({
-        ruolo: "paziente",
-        nome: (nome || "").trim(),
-        email: email.trim(),
-        professionistaUid,
-        creato: FieldValue.serverTimestamp(),
-      });
-
-      await secondaryAuth.signOut();
-      return nuovoUid;
+    /**
+     * Crea un paziente (account, profilo e piano di partenza) passando dal
+     * server, che verifica licenza e limite di pazienti. Ritorna
+     * { pazienteUid, pianoId }.
+     */
+    async creaPaziente({ email, password, nome, piano }) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const chiama = funzioni.httpsCallable("creaPaziente");
+      const risultato = await chiama({ email, password, nome, piano });
+      return risultato.data;
     },
 
     /**
@@ -197,19 +175,6 @@
     // ---------------------------------------------------------------
     // Piani nutrizionali
     // ---------------------------------------------------------------
-    /** Crea un nuovo piano in cloud per un paziente. Ritorna l'id del documento. */
-    async creaPiano(pianoData, professionistaUid, pazienteUid, pazienteNome, pazienteEmail) {
-      const ref = db.collection("piani").doc();
-      await ref.set(Object.assign({}, pianoData, {
-        professionistaUid,
-        pazienteUid,
-        pazienteNome: pazienteNome || "",
-        pazienteEmail: pazienteEmail || "",
-        aggiornato: FieldValue.serverTimestamp(),
-      }));
-      return ref.id;
-    },
-
     /** Aggiorna (in blocco o parzialmente) un piano esistente. Solo il professionista può chiamarla. */
     async salvaPiano(pianoId, campi) {
       await db.collection("piani").doc(pianoId).update(Object.assign({}, campi, {
