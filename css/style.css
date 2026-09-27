@@ -1668,6 +1668,8 @@ body.ruolo-familiare #btn-notifiche { display: none; }
 
 /* Confezioni e "scegli per me" */
 .spesa-riga__qta { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
-.spesa-riga__qta small { font-size: 11px; font-weight: 600; color: var(--ink-faint); margin-top: 2px; white-space: nowrap; }
+.spesa-riga__qta { max-width: 40%; text-align: right; }
+.spesa-riga__qta small { font-size: 11px; font-weight: 600; color: var(--ink-faint); margin-top: 2px; white-space: normal; }
 .spesa-cat--scelta .spesa-cat__titolo { flex-wrap: wrap; }
 .btn-scegli-per-me { width: 100%; margin: 2px 0 10px; }
+.nota-versione { font-size: 13px; line-height: 1.45; background: color-mix(in srgb, var(--gold) 16%, var(--surface)); border: 1px solid var(--gold); border-radius: var(--radius-s); padding: 10px 12px; margin: 0 0 12px; }

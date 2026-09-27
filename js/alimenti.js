@@ -670,7 +670,7 @@
     "Latte": [1000, "ml", "1 L"], "Latte parzialmente scremato": [1000, "ml", "1 L"], "Latte scremato": [1000, "ml", "1 L"],
     "Latte senza lattosio": [1000, "ml", "1 L"], "Bevanda vegetale": [1000, "ml", "1 L"], "Kefir": [500, "ml", "500 ml"],
     "Yogurt": [125, "g", "vasetto da 125 g"], "Yogurt greco": [150, "g", "vasetto da 150 g"],
-    "Uova": [6, "pz", "confezione da 6"], "Albumi": [500, "g", "brick da 500 g"],
+    "Uova": [6, "pz", "conf. da 6"], "Albumi": [500, "g", "brick da 500 g"],
     "Mozzarella": [125, "g", "125 g"], "Ricotta": [250, "g", "250 g"], "Robiola": [100, "g", "100 g"], "Stracchino": [100, "g", "100 g"],
     "Fiocchi di latte": [200, "g", "200 g"], "Formaggio spalmabile": [150, "g", "150 g"], "Feta": [200, "g", "200 g"],
     "Parmigiano": [100, "g", "busta da 100 g"], "Grana Padano": [100, "g", "busta da 100 g"],
@@ -685,14 +685,14 @@
     "Lenticchie": [500, "g", "500 g"], "Ceci": [500, "g", "500 g"], "Fagioli": [500, "g", "500 g"],
     "Farina": [1000, "g", "1 kg"], "Farina di ceci": [500, "g", "500 g"], "Farina d'avena": [500, "g", "500 g"],
     "Pane in cassetta": [400, "g", "400 g"], "Pane in cassetta integrale": [400, "g", "400 g"],
-    "Fette biscottate": [36, "fette", "confezione da circa 36 fette"], "Fette biscottate integrali": [36, "fette", "confezione da circa 36 fette"],
-    "Crackers": [500, "g", "500 g"], "Crackers integrali": [500, "g", "500 g"], "Gallette": [130, "g", "130 g"], "Piadine": [300, "g", "confezione da 3"],
+    "Fette biscottate": [36, "fette", "conf. da 36 fette"], "Fette biscottate integrali": [36, "fette", "conf. da 36 fette"],
+    "Crackers": [500, "g", "500 g"], "Crackers integrali": [500, "g", "500 g"], "Gallette": [130, "g", "130 g"], "Piadine": [300, "g", "conf. da 3"],
     "Passata di pomodoro": [700, "g", "bottiglia da 700 g"], "Pesto": [190, "g", "vasetto da 190 g"], "Hummus": [200, "g", "200 g"],
-    "Tofu": [200, "g", "200 g"], "Burger vegetali": [200, "g", "confezione da 2"],
+    "Tofu": [200, "g", "200 g"], "Burger vegetali": [200, "g", "conf. da 2"],
     "Noci": [200, "g", "200 g"], "Mandorle": [200, "g", "200 g"], "Nocciole": [200, "g", "200 g"], "Frutta secca": [200, "g", "200 g"],
     "Cioccolato fondente": [100, "g", "tavoletta da 100 g"], "Crema spalmabile": [350, "g", "vasetto da 350 g"],
     "Marmellata": [330, "g", "vasetto da 330 g"], "Marmellata senza zuccheri": [250, "g", "vasetto da 250 g"], "Miele": [500, "g", "500 g"],
-    "Vino": [750, "ml", "bottiglia da 0,75 L"],
+    "Vino": [750, "ml", "bottiglia 0,75 L"],
   };
 
   /** "2 × 1 L", "1 × confezione da 6": quante confezioni servono, oppure null. */
@@ -1024,6 +1024,11 @@
     return [{ chiave: "x:" + radici(normalizza(nome)).join("-"), nome: nome.charAt(0).toUpperCase() + nome.slice(1), cat: "altro", icona: "🛒" }];
   }
 
+  // Versione del motore di lettura dei pasti: va aumentata a ogni modifica che
+  // cambia il risultato. Nella lista di casa serve a riconoscere gli alimenti
+  // pubblicati da un'app non ancora aggiornata.
+  const VERSIONE_MOTORE = 5;
+
   const api = {
     CATEGORIE,
     categoria: (id) => CATEGORIE.find((c) => c.id === id) || CATEGORIE[CATEGORIE.length - 1],
@@ -1041,6 +1046,7 @@
     restringiGiorni,
     unisciVoci,
     confezioniNecessarie,
+    VERSIONE_MOTORE,
     GIORNI_BREVI,
     classificaArticolo,
     normalizza,

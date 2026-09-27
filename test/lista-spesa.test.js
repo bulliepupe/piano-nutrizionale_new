@@ -127,7 +127,7 @@ ok += 2;
 // Confezioni indicative
 const conf = (nome, tot) => { const c = A.confezioniNecessarie({ nome, tot }); return c && c.testo; };
 assert.strictEqual(conf("Latte parzialmente scremato", { ml: 1400 }), "2 × 1 L");
-assert.strictEqual(conf("Uova", { pz: { pz: 5 } }), "1 × confezione da 6");
+assert.strictEqual(conf("Uova", { pz: { pz: 5 } }), "1 × conf. da 6");
 assert.strictEqual(conf("Pasta", { g: 505 }), "1 × 500 g");
 assert.strictEqual(conf("Yogurt greco", { g: 225 }), "2 × vasetto da 150 g");
 assert.strictEqual(conf("Zucchine", { g: 400 }), null);

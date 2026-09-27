@@ -856,10 +856,15 @@
     const scelte = SPESA.dati.scelte || {};
     // Fonti: il proprio piano + gli alimenti pubblicati dagli altri membri della lista di casa
     const fonti = [];
+    const vecchie = [];
+    SPESA.versioniVecchie = vecchie;
     if (PIANO_ATTIVO) fonti.push({ uid: UID, voci: A.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA) });
     if (LISTA.id) {
       Object.entries(SPESA.dati.piani || {}).forEach(([uid, p]) => {
-        if (uid !== UID && LISTA.dati && (LISTA.dati.membri || []).includes(uid) && Array.isArray(p.voci)) fonti.push({ uid, voci: p.voci });
+        if (uid !== UID && LISTA.dati && (LISTA.dati.membri || []).includes(uid) && Array.isArray(p.voci)) {
+          fonti.push({ uid, voci: p.voci });
+          if ((p.versione || 0) < A.VERSIONE_MOTORE) vecchie.push(nomeMembro(uid));
+        }
       });
     }
     const piuFonti = fonti.length > 1;
@@ -1193,6 +1198,7 @@
         : "Nessun alimento trovato nei pasti di questa settimana. Scrivi qui sotto quello che ti serve."}</div>`;
     } else {
       box.innerHTML = `
+        ${(SPESA.versioniVecchie || []).length ? `<div class="nota-versione">⚠️ Gli alimenti di <strong>${escapeHTML(SPESA.versioniVecchie.join(", "))}</strong> vengono da una versione precedente dell'app e potrebbero essere letti male. ${SPESA.versioniVecchie.length === 1 ? "Chiedi di aprire" : "Chiedete di aprire"} l'app sul proprio telefono: si aggiornano da soli.</div>` : ""}
         <p class="spesa-riepilogo">${daPrendere === 0 && !daScegliere.length ? "Hai preso tutto. Buona settimana!" : `${daPrendere} ${daPrendere === 1 ? "articolo" : "articoli"} da prendere su ${tutte.length}`}</p>
         ${daScegliere.length ? `
           <section class="spesa-cat spesa-cat--scelta">
@@ -2584,12 +2590,12 @@
       const giorni = PIANO_ATTIVO.settimane[s.settimana];
       if (!giorni) return;
       const voci = JSON.parse(JSON.stringify(window.alimenti.listaDaSettimana(giorni, CAMPI_SPESA)));
-      const impronta = JSON.stringify(voci);
+      const impronta = window.alimenti.VERSIONE_MOTORE + ":" + JSON.stringify(voci);
       const chiave = `pnut:pubblicato:${LISTA.id}:${s.docId}`;
       // niente doppioni: né se è già pubblicato, né se la stessa pubblicazione è in corso
       if (localStorage.getItem(chiave) === impronta || LISTA.inCorso[chiave] === impronta) return;
       LISTA.inCorso[chiave] = impronta;
-      window.cloud.pubblicaPianoInLista(LISTA.id, s.docId, UID, LISTA.nomeUtente || "Membro", voci)
+      window.cloud.pubblicaPianoInLista(LISTA.id, s.docId, UID, LISTA.nomeUtente || "Membro", voci, window.alimenti.VERSIONE_MOTORE)
         .then(() => localStorage.setItem(chiave, impronta))
         .catch((e) => console.warn("Pubblicazione nella lista di casa non riuscita:", e))
         .finally(() => { if (LISTA.inCorso[chiave] === impronta) delete LISTA.inCorso[chiave]; });

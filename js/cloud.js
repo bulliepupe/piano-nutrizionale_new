@@ -478,9 +478,9 @@
     },
 
     /** Il paziente pubblica nella lista di casa gli alimenti del suo piano per una settimana. */
-    async pubblicaPianoInLista(listaId, docId, uid, nome, voci) {
+    async pubblicaPianoInLista(listaId, docId, uid, nome, voci, versione) {
       await db.collection("liste").doc(listaId).collection("settimane").doc(docId).set({
-        piani: { [uid]: { nome, voci, aggiornato: FieldValue.serverTimestamp() } },
+        piani: { [uid]: { nome, voci, versione: versione || 0, aggiornato: FieldValue.serverTimestamp() } },
       }, { merge: true });
     },
 
