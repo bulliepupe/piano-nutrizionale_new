@@ -485,6 +485,13 @@
     },
 
     /** Scelta tra alternative del piano ("Carboidrato a scelta" → riso basmati). */
+    /** Più scelte insieme ("scegli per me" o "rimetti tutto da scegliere"): { chiave: scelta | null }. */
+    async impostaSceltaSpesa(uid, docId, scelte) {
+      const campo = {};
+      Object.entries(scelte).forEach(([k, v]) => { campo[k] = v || FieldValue.delete(); });
+      await refSettimanaSpesa(uid, docId).set({ scelte: campo, aggiornato: FieldValue.serverTimestamp() }, { merge: true });
+    },
+
     async scegliAlternativaSpesa(uid, docId, chiaveAlternativa, chiaveScelta) {
       await refSettimanaSpesa(uid, docId).set({
         scelte: { [chiaveAlternativa]: chiaveScelta || FieldValue.delete() },

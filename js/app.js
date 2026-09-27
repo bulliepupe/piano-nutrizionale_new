@@ -1197,6 +1197,7 @@
         ${daScegliere.length ? `
           <section class="spesa-cat spesa-cat--scelta">
             <h3 class="spesa-cat__titolo"><span aria-hidden="true">🔀</span> Scegli tu <span class="spesa-cat__conta">${daScegliere.length}</span></h3>
+            <button type="button" class="btn btn--ghost btn-scegli-per-me" id="btn-scegli-per-me">✨ Scegli per me</button>
             <p class="spesa-cat__nota">Il piano ti lascia scegliere tra più alimenti o piatti: tocca <strong>Scegli</strong> e in lista finirà solo quello che preferisci.</p>
             <ul class="spesa-lista">${daScegliere.sort((a, b) => a.nome.localeCompare(b.nome, "it")).map(rigaSceltaHTML).join("")}</ul>
           </section>` : ""}
@@ -1211,7 +1212,12 @@
             <p class="spesa-cat__nota">Di solito ci sono già in casa: spunta se li hai o se li compri.</p>
             ${vista === "blocchi" ? `<div class="spesa-blocchi">${dispensa.map(bloccoSpesaHTML).join("")}</div>` : `<ul class="spesa-lista">${dispensa.map(rigaSpesaHTML).join("")}</ul>`}
           </section>` : ""}
-        <p class="stat-nota" style="margin:12px 2px 0;">Le quantità sono quelle del piano (di solito peso netto): per frutta e verdura considera lo scarto.</p>`;
+        ${Object.keys(SPESA.dati.scelte || {}).length ? `<button type="button" class="link-btn" id="btn-annulla-scelte" style="margin-top:8px;">Rimetti tutto da scegliere</button>` : ""}
+        <p class="stat-nota" style="margin:12px 2px 0;">Le quantità sono quelle del piano (di solito peso netto): per frutta e verdura considera lo scarto. Le confezioni sono indicative: i formati cambiano tra marche e negozi.</p>`;
+      const perMe = document.getElementById("btn-scegli-per-me");
+      if (perMe) perMe.addEventListener("click", scegliPerMe);
+      const annScelte = document.getElementById("btn-annulla-scelte");
+      if (annScelte) annScelte.addEventListener("click", annullaScelte);
     }
 
     // Azioni in fondo: riporta tutto da prendere, articoli nascosti
@@ -1236,7 +1242,9 @@
   function quantitaVoceHTML(v) {
     const A = window.alimenti;
     const q = A.formattaQuantita(v.tot);
-    return q ? `<span class="spesa-riga__qta">${escapeHTML(q)}</span>` : "";
+    if (!q) return "";
+    const c = A.confezioniNecessarie(v);
+    return `<span class="spesa-riga__qta">${escapeHTML(q)}${c ? `<small>${escapeHTML(c.testo)}</small>` : ""}</span>`;
   }
 
   function dettaglioVoceHTML(v) {
@@ -1287,6 +1295,43 @@
         <span class="spesa-blocco__nome">${escapeHTML(v.nome)}</span>
         ${q ? `<span class="spesa-blocco__qta">${escapeHTML(q)}</span>` : ""}
       </button>`;
+  }
+
+  /**
+   * "Scegli per me": per ogni scelta aperta prende l'opzione che usa più
+   * alimenti già in lista (così si compra meno roba diversa); a parità, la
+   * prima proposta dal piano.
+   */
+  async function scegliPerMe() {
+    const voci = SPESA.voci || [];
+    const inLista = new Set(voci.filter((v) => !v.alternativa && !v.nascosto).map((v) => v.chiave));
+    const nuove = {};
+    voci.filter((v) => v.alternativa && !v.nascosto).forEach((alt) => {
+      let migliore = alt.opzioni[0], punti = -1;
+      alt.opzioni.forEach((o) => {
+        const chiavi = o.piatto ? (o.voci || []).map((iv) => iv.chiave) : [o.chiave];
+        const p = chiavi.filter((k) => inLista.has(k)).length / Math.max(1, chiavi.length);
+        if (p > punti) { punti = p; migliore = o; }
+      });
+      nuove[alt.chiave] = migliore.chiave;
+    });
+    if (!Object.keys(nuove).length) return;
+    SPESA.dati.scelte = Object.assign({}, SPESA.dati.scelte || {}, nuove);
+    disegnaContenutoSpesa();
+    mostraToast(`Fatte ${Object.keys(nuove).length} scelte: puoi cambiarle da ogni articolo`, 3500);
+    try { await window.cloud.impostaSceltaSpesa(destinazioneSpesa(), SPESA.docId, nuove); }
+    catch (e) { mostraToast("Scelte non salvate: controlla la connessione"); }
+  }
+
+  async function annullaScelte() {
+    const vecchie = SPESA.dati.scelte || {};
+    const via = {};
+    // tutte le scelte della settimana (nella lista di casa valgono per tutti i membri)
+    Object.keys(vecchie).forEach((k) => { via[k] = null; });
+    SPESA.dati.scelte = {};
+    disegnaContenutoSpesa();
+    try { await window.cloud.impostaSceltaSpesa(destinazioneSpesa(), SPESA.docId, via); }
+    catch (e) { mostraToast("Non riuscito: controlla la connessione"); }
   }
 
   /** Scheda per scegliere tra le alternative del piano (o cambiare la scelta). */
@@ -1489,7 +1534,8 @@
     const riga = (v) => {
       const q = A.formattaQuantita(v.tot);
       const g = v.giorni && Object.keys(v.giorni).length > 1 ? ` (${A.testoGiorni(v)})` : "";
-      return `- ${v.nome}${q ? " " + q : ""}${g}`;
+      const c = A.confezioniNecessarie(v);
+      return `- ${v.nome}${q ? " " + q : ""}${c ? ` [${c.testo}]` : ""}${g}`;
     };
     const perCategorie = (voci) => A.CATEGORIE.map((cat) => {
       const qui = voci.filter((v) => v.cat === cat.id && !v.dispensa).sort((a, b) => a.nome.localeCompare(b.nome, "it"));

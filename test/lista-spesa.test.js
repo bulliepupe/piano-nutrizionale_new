@@ -124,4 +124,13 @@ assert.deepStrictEqual(venerdi[0].opzioni.map((o) => o.etichetta), ["Orata fresc
 assert.deepStrictEqual(venerdi[0].opzioni[1].voci.map((v) => `${v.voce.nome} ${q(v)}`), ["Polpette di merluzzo Frosta 120 g", "Olio extravergine d'oliva 5 g"]);
 ok += 2;
 
+// Confezioni indicative
+const conf = (nome, tot) => { const c = A.confezioniNecessarie({ nome, tot }); return c && c.testo; };
+assert.strictEqual(conf("Latte parzialmente scremato", { ml: 1400 }), "2 × 1 L");
+assert.strictEqual(conf("Uova", { pz: { pz: 5 } }), "1 × confezione da 6");
+assert.strictEqual(conf("Pasta", { g: 505 }), "1 × 500 g");
+assert.strictEqual(conf("Yogurt greco", { g: 225 }), "2 × vasetto da 150 g");
+assert.strictEqual(conf("Zucchine", { g: 400 }), null);
+ok += 5;
+
 console.log(`OK: ${ok} verifiche superate`);
