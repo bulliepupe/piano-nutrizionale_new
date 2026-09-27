@@ -161,7 +161,7 @@
     ["Manzo", CP, "🥩", "manzo|bovino|vitellone|tagliata di manzo|bistecca|filetto di manzo|scamone|girello|fettine di manzo|carpaccio"],
     ["Roastbeef", CP, "🥩", "roastbeef|roast beef|rosbif"],
     ["Macinato magro", CP, "🥩", "macinato|carne macinata|macinato vitellone|ragu di vitellone|ragu di carne|ragu"],
-    ["Vitello", CP, "🥩", "vitello|fesa di vitello|scaloppine"],
+    ["Vitello", CP, "🥩", "vitello|fesa di vitello|scaloppine di vitello"],
     ["Maiale", CP, "🥩", "maiale|lonza|arista|filetto di maiale"],
     ["Coniglio", CP, "🍗", "coniglio"],
     ["Agnello", CP, "🥩", "agnello"],
@@ -187,12 +187,13 @@
     ["Rombo", CP, "🐟", "rombo"],
     ["Dentice", CP, "🐟", "dentice"],
     ["Gamberi", CP, "🦐", "gambero|gamberi|gamberetti|mazzancolle"],
-    ["Calamari", CP, "🦑", "calamaro|calamari|totani|seppia|seppie"],
+    ["Calamari", CP, "🦑", "calamaro|calamari|totani"],
+    ["Seppie", CP, "🦑", "seppia|seppie|seppioline"],
     ["Polpo", CP, "🐙", "polpo|moscardini"],
     ["Cozze e vongole", CP, "🦪", "cozze|cozza|vongole|vongola|frutti di mare"],
 
     // ---------- Ingredienti & Spezie ----------
-    ["Olio extravergine d'oliva", IS, "🫒", "olio|olio evo|olio extravergine|olio extravergine d oliva|olio d oliva|evo"],
+    ["Olio extravergine d'oliva", IS, "🫒", "olio|olio evo|olio extravergine|olio extravergine d oliva|olio d oliva|olio di oliva|olio di oliva extravergine|olio extravergine di oliva|olio extra|olio extra vergine|olio extra vergine di oliva|evo"],
     ["Aceto", IS, "🍶", "aceto|aceto di vino"],
     ["Aceto di mele", IS, "🍶", "aceto di mele"],
     ["Aceto balsamico", IS, "🍶", "aceto balsamico|balsamico|glassa balsamica"],
@@ -208,7 +209,8 @@
     ["Tonno al naturale", IS, "🥫", "tonno in scatola|tonno al naturale|scatoletta di tonno|scatolette di tonno|tonno in scatoletta|scatoletta di tonno al naturale"],
     ["Tonno sott'olio", IS, "🥫", "tonno sott olio|tonno sottolio|tonno in vetro|tonno sott olio in vetro|tonno all olio|tonno in olio"],
     ["Mais", IS, "🌽", "mais|granella di mais"],
-    ["Olive", IS, "🫒", "oliva|olive"],
+    ["Olive", IS, "🫒", "oliva|olive|olive taggiasche"],
+    ["Paté di olive", IS, "🫒", "pate di olive|pate d olive|crema di olive|pate olive"],
     ["Capperi", IS, "🫙", "cappero|capperi"],
     ["Senape", IS, "🫙", "senape"],
     ["Salsa di soia", IS, "🫙", "salsa di soia|soia sauce|tamari"],
@@ -230,7 +232,7 @@
     ["Tofu", PS, "🧈", "tofu"],
     ["Seitan", PS, "🥩", "seitan"],
     ["Tempeh", PS, "🥩", "tempeh"],
-    ["Hummus", PS, "🧆", "hummus"],
+    ["Hummus", PS, "🧆", "hummus|hummus di ceci|hummus di lenticchie"],
     ["Bastoncini di pesce", PS, "🐟", "bastoncini di pesce|bastoncini"],
     ["Pizza surgelata", PS, "🍕", "pizza surgelata"],
 
@@ -285,6 +287,8 @@
     ["Biscotti", SD, "🍪", "biscotto|biscotti|frollini"],
     ["Barrette", SD, "🍫", "barretta|barrette|barretta proteica|barrette proteiche"],
     ["Popcorn", SD, "🍿", "popcorn|pop corn"],
+    ["Snack di legumi", SD, "🫘", "triangolini di legumi|snack di legumi|chips di legumi|sfogliette di legumi|crackers di legumi"],
+    ["Cocco rapè", SD, "🥥", "cocco rape|cocco grattugiato|cocco disidratato|cocco essiccato"],
     ["Patatine", SD, "🥔", "patatine|chips|patatine fritte"],
     ["Gelato", PS, "🍨", "gelato|gelati|ghiacciolo|ghiaccioli"],
 
@@ -323,6 +327,12 @@
     ["Cibo per gatti", ANI, "🐈", "cibo per gatti|crocchette per gatti|scatolette per gatti"],
     ["Lettiera", ANI, "🐾", "lettiera|sabbietta"],
   ];
+
+  // Forme di piatto: "insalata di seppie" sono seppie, "scaloppina di pollo" è pollo.
+  const FORME_DI = new Set(["insalata", "scaloppina", "scaloppine", "anelli", "burger", "hamburger", "polpette", "polpetta",
+    "crocchette", "medaglioni", "tortino", "sformato", "spiedini", "straccetti", "bocconcini", "filetti", "trancio", "carpaccio", "tartare"]);
+  // Prodotti pronti di marca: si comprano così come sono
+  const RE_MARCHE_PRONTI = /\b(frosta|findus|4 salti|quattro salti|valsoia|kioene|garden gourmet|beyond meat)\b/i;
 
   // Prodotti trasformati: "farina di X" è una farina, non X.
   const TRASFORMATI = {
@@ -363,6 +373,7 @@
   // ---------------------------------------------------------------------
   function normalizza(testo) {
     let s = String(testo || "");
+    s = s.replace(/\bdii\b/gi, "di").replace(/(\d)(porzion)/gi, "$1 $2");
     // "NO PANE", "NO PASTA" scritti in maiuscolo nel menu: sono divieti, non acquisti.
     s = s.replace(/\bNO\s+[A-ZÀ-Ü][A-ZÀ-Ü' ]*\b/g, " ");
     s = s.toLowerCase().replace(/[’`´]/g, "'");
@@ -375,6 +386,8 @@
       .replace(/\bint\b\.?/g, " integrale ")
       .replace(/\bintegral[ei]\b/g, " integrale ")
       .replace(/\bin insalata\b/g, " ")
+      .replace(/\b(rigoni di asiago|mulino bianco|barilla|de cecco|granarolo|parmalat|yomo|muller|danone|fage|misura|galbusera)\b/g, " ")
+      .replace(/\ball\W?acqua\b/g, " ")
       .replace(/\b(piccol[oaie]|grand[ei]|confezionat[oaie]|sgocciolat[oaie])\b/g, " ")
       .replace(/\b(senza|no)\s+[a-z]+/g, " ")
       .replace(/[^a-z0-9]+/g, " ")
@@ -450,6 +463,10 @@
       // "farina di farro", "succo di mela": un prodotto diverso dall'ingrediente
       // (salvo voci del catalogo più lunghe, come "farina di ceci")
       const parole = norm.split(" ");
+      if (FORME_DI.has(parole[i]) && (parole[i + 1] === "di" || parole[i + 1] === "d") && parole[i + 2] && (!presa || presa.radici.length === 1)) {
+        i += 2;
+        continue;
+      }
       const trasformato = TRASFORMATI[parole[i]] && (parole[i + 1] === "di" || parole[i + 1] === "d") && parole[i + 2];
       if (presa && !(trasformato && presa.radici.length === 1)) {
         trovate.push(presa.voce);
@@ -465,7 +482,7 @@
       }
       // errori di battitura: "zuchine", "melanznae"… solo per parole lunghe
       if (r[i].length >= 5 && !PAROLE_VUOTE.has(norm.split(" ")[i])) {
-        const simile = CHIAVI_SINGOLE.find((c) => distanza(c.radice, r[i]) <= 1);
+        const simile = CHIAVI_SINGOLE.find((c) => c.radice[0] === r[i][0] && distanza(c.radice, r[i]) <= 1);
         if (simile) trovate.push(simile.voce);
       }
       i++;
@@ -480,7 +497,7 @@
     // Usa le parole originali (con accenti) quando possibile
     const originale = String(testo).replace(/\([^)]*\)/g, " ").replace(/\d+([.,]\d+)?\s*(g|gr|kg|ml|l|cl)\b\.?/gi, " ")
       .replace(/\b\d+\b/g, " ").replace(/\s+/g, " ").trim();
-    const nome = originale && originale.split(" ").length <= 5 ? originale : parole.join(" ");
+    const nome = etichettaPiatto(String(testo)) || (originale && originale.split(" ").length <= 5 ? originale : parole.join(" "));
     return nome.charAt(0).toUpperCase() + nome.slice(1);
   }
 
@@ -584,6 +601,8 @@
         qta[ultima.chiave] = q;
       }
     });
+    // un solo alimento nel pezzo: la quantità scritta è sua (anche per i prodotti di marca)
+    if (voci.length === 1 && !qta[voci[0].chiave]) { const q = leggiQuantita(pezzo); if (q) qta[voci[0].chiave] = q; }
     // la quantità di una voce generica ("Frutta secca 20g") vale per gli alimenti precisi della stessa categoria
     voci.forEach((v) => { if (!qta[v.chiave] && qtaGenerica[v.cat]) qta[v.chiave] = qtaGenerica[v.cat]; });
     const alternativo = /\s(o|oppure)\s|\//i.test(pezzo);
@@ -679,7 +698,158 @@
     if (!occorrenze) return null;
     const copia = Object.assign({}, voce, { giorni, tot, occorrenze, senza });
     if (voce.opzioni) copia.opzioni = voce.opzioni.map((o) => restringiGiorni(o, indici)).filter(Boolean);
+    if (voce.voci) copia.voci = voce.voci.map((v) => restringiGiorni(v, indici)).filter(Boolean);
     return copia;
+  }
+
+
+  // ---------------------------------------------------------------------
+  // Lettura di un intero pasto: righe, "e"/"o", alternative tra piatti
+  // ---------------------------------------------------------------------
+  const RE_PASTO_LIBERO = /pasto libero|piatto a piacere|stai sognando|\bpizza\b/i;
+  const ETICHETTE_PASTO = { colazione: "Colazione", spuntinoMattina: "Spuntino", pranzo: "Pranzo", spuntinoPomeriggio: "Merenda", cena: "Cena", coccola: "Coccola" };
+
+  /** Nome leggibile di un piatto: "1 porzione di pollo alle mandorle (120 g)" → "Pollo alle mandorle". */
+  function etichettaPiatto(testo) {
+    let t = String(testo || "")
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/\+.*$/, " ")
+      .replace(/^\s*(o|oppure|e)\s+/i, "")
+      .replace(/^\s*\d+(?:[.,/]\d+)?\s*(porzion[ei]|grammi|gr|g|ml|fett[ae]|vasett[oi]|pacchett[oi]|scatolett[ae]|cucchiai[no]?|cucchiain[oi])?\s*(di\s+|d')?/i, "")
+      .replace(/^\s*(porzione|porzioni)\s+(di\s+)?/i, "")
+      .replace(/\b\d+(?:[.,]\d+)?\s*(kg|grammi|gr|g|ml)\b/gi, " ")
+      .replace(/^\s*(di|d')\s+/i, "")
+      .replace(/\s+/g, " ").replace(/[.,;\s]+$/, "").trim();
+    if (!t) return "";
+    if (t === t.toUpperCase()) t = t.toLowerCase();
+    t = t.charAt(0).toUpperCase() + t.slice(1);
+    return t.length > 70 ? t.slice(0, 67) + "…" : t;
+  }
+
+  /** Divide un testo sulle "o"/"oppure" fuori dalle parentesi. */
+  function dividiAlternativeInRiga(riga) {
+    const parti = [];
+    let corrente = "", prof = 0;
+    const t = " " + riga + " ";
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (ch === "(") prof++;
+      if (ch === ")") prof = Math.max(0, prof - 1);
+      if (prof === 0) {
+        const m = t.slice(i).match(/^\s(o|oppure)\s/i);
+        if (m && corrente.trim()) { parti.push(corrente); corrente = ""; i += m[0].length - 2; continue; }
+      }
+      corrente += ch;
+    }
+    parti.push(corrente);
+    return parti.map((p) => p.trim()).filter(Boolean);
+  }
+
+  /**
+   * Righe "logiche" di un pasto scritto su più righe: unisce le righe spezzate
+   * (parentesi aperte, "+" o "di" in fondo), toglie istruzioni e righe vuote.
+   * Ritorna gruppi: ogni gruppo è un elenco di alternative (1 = alimento/piatto fisso).
+   */
+  function gruppiDelPasto(testo) {
+    const t = String(testo || "").replace(/\r/g, "")
+      .replace(/\(\s*(\d+(?:[.,]\d+)?)\s*9\s*\)/g, "($1 g)")
+      .replace(/\bdii\b/gi, "di").replace(/(\d)(porzion)/gi, "$1 $2");
+    const multiriga = /\n/.test(t.trim());
+    // Pasto su una riga sola (stile "Pollo 220g + Zucchine"): pezzi separati da "+"
+    const righe = [];
+    if (!multiriga) {
+      pezziDelPasto(t).forEach((p) => righe.push(p));
+    } else {
+      let buf = "";
+      t.split("\n").map((r) => r.trim()).forEach((r) => {
+        if (!r || r === ".") return;
+        buf = buf ? buf + " " + r : r;
+        const aperte = (buf.match(/\(/g) || []).length - (buf.match(/\)/g) || []).length;
+        if (aperte > 0 || /(\+|\bdi|\bcon|\bdel|\bdella|\bal|\balla)\s*$/i.test(buf)) return;
+        righe.push(buf); buf = "";
+      });
+      if (buf) righe.push(buf);
+    }
+    const gruppi = [];
+    let attuale = null, prossimoO = false;
+    righe.forEach((r) => {
+      const riga = r.trim();
+      if (/^(e|ed|\+)$/i.test(riga)) { prossimoO = false; attuale = null; return; }
+      if (/^(o|0|oppure)$/i.test(riga)) { prossimoO = true; return; }
+      if (/^se\s/i.test(riga)) return; // istruzioni ("Se scegli questo riduci l'olio…")
+      let testoRiga = riga;
+      let conO = prossimoO;
+      const inizioO = testoRiga.match(/^(o|0|oppure)\s+/i);
+      if (inizioO) { conO = true; testoRiga = testoRiga.slice(inizioO[0].length); }
+      testoRiga = testoRiga.replace(/^(e|ed)\s+/i, "");
+      const opzioni = multiriga ? dividiAlternativeInRiga(testoRiga) : [testoRiga];
+      if (conO && attuale) attuale.push(...opzioni);
+      else { attuale = opzioni.slice(); gruppi.push(attuale); }
+      prossimoO = false;
+    });
+    return gruppi;
+  }
+
+  /** Voci (con quantità) di un'opzione, anche composta ("polpette Frosta + olio"). */
+  function vociOpzione(testo) {
+    const out = [];
+    pezziDelPasto(testo).forEach((p) => analizzaPezzo(p).forEach((el) => {
+      if (el.tipo === "voce") out.push({ voce: el.voce, qta: el.qta, testo: p });
+      else out.push({ voce: el.opzioni[0].voce, qta: el.opzioni[0].qta, testo: p, alternative: el.opzioni.slice(1).map((o) => o.voce.nome) });
+    }));
+    return out;
+  }
+
+  function chiaveOpzione(o) {
+    return o.voci.length === 1 ? o.voci[0].voce.chiave : "p:" + radici(normalizza(o.etichetta)).join("-");
+  }
+
+  /** Chiave stabile di un gruppo di alternative (uguale nella spesa e nel meal prep). */
+  function chiaveAlternativa(el) {
+    return "alt:" + el.opzioni.map((o) => (o.voce ? o.voce.chiave : o.chiave)).sort().join("|");
+  }
+
+  /**
+   * Analizza un pasto intero. Elementi:
+   *  { tipo: "voce", voce, qta, testo }
+   *  { tipo: "alternativa", gruppo, opzioni: [{ voce, qta, testo }] }            (alimenti singoli)
+   *  { tipo: "alternativa", gruppo: "piatto", opzioni: [{ chiave, etichetta, testo, voci: [{ voce, qta, testo }] }] }
+   */
+  function analizzaPasto(testo) {
+    const t = String(testo || "");
+    if (!t.trim() || RE_PASTO_LIBERO.test(t)) return [];
+    const out = [];
+    gruppiDelPasto(t).forEach((gruppo) => {
+      if (gruppo.length === 1) {
+        pezziDelPasto(gruppo[0]).forEach((p) => analizzaPezzo(p).forEach((el) => out.push(Object.assign({ testo: p }, el))));
+        return;
+      }
+      // Alternative: ogni opzione con le sue voci; opzioni identiche si fondono
+      const viste = new Map();
+      const opzioni = [];
+      gruppo.map((testoOpz) => ({ testo: testoOpz, etichetta: etichettaPiatto(testoOpz), voci: vociOpzione(testoOpz) }))
+        .filter((o) => o.voci.length)
+        .forEach((o) => {
+          const k = o.voci.map((v) => v.voce.chiave).sort().join("|");
+          const gia = viste.get(k);
+          // "hummus di ceci o hummus Noa (88 g)": stessa cosa, si tiene la quantità dove c'è
+          if (gia) { o.voci.forEach((v, n) => { if (!gia.voci[n].qta && v.qta) gia.voci[n].qta = v.qta; }); return; }
+          viste.set(k, o); opzioni.push(o);
+        });
+      if (!opzioni.length) return;
+      if (opzioni.length === 1) { opzioni[0].voci.forEach((v) => out.push({ tipo: "voce", voce: v.voce, qta: v.qta, testo: v.testo })); return; }
+      if (opzioni.every((o) => o.voci.length === 1)) {
+        const singole = opzioni.map((o) => o.voci[0]);
+        // Condimenti in alternativa ("olio o olive"): niente scelta, si prende il primo
+        if (singole.every((v) => DISPENSA.has(v.voce.nome))) { out.push({ tipo: "voce", voce: singole[0].voce, qta: singole[0].qta, testo: singole[0].testo }); return; }
+        const note = [...new Set(singole.map((v) => v.qta).filter(Boolean).map((q) => JSON.stringify(q)))];
+        const condivisa = note.length === 1 ? JSON.parse(note[0]) : null;
+        out.push({ tipo: "alternativa", gruppo: gruppoDi(singole[0].voce), opzioni: singole.map((v) => ({ voce: v.voce, qta: v.qta || condivisa, testo: v.testo })) });
+        return;
+      }
+      out.push({ tipo: "alternativa", gruppo: "piatto", opzioni: opzioni.map((o) => Object.assign(o, { chiave: chiaveOpzione(o) })) });
+    });
+    return out;
   }
 
   /** Divide un pasto sui "+" (fuori dalle parentesi): ogni pezzo è analizzato a sé. */
@@ -701,6 +871,10 @@
   function vociDaPezzo(pezzo) {
     // Parentesi che iniziano con "no"/"senza" sono indicazioni, non ingredienti
     const pulito = pezzo.replace(/\(\s*(no|senza)\b[^)]*\)/gi, " ");
+    if (RE_MARCHE_PRONTI.test(pulito)) {
+      const nome = etichettaPiatto(pulito);
+      if (nome) return [{ chiave: "x:" + radici(normalizza(nome)).join("-"), nome, cat: "pronti-surgelati", icona: "🧊" }];
+    }
     let voci = trovaVoci(pulito);
     if (voci.length) {
       // 1) le generiche cedono il posto alle voci precise della stessa categoria
@@ -721,8 +895,14 @@
   /** Voci da un intero pasto (testo libero del menu). */
   function vociDaPasto(testoPasto) {
     const t = String(testoPasto || "");
-    if (!t.trim() || /pasto libero/i.test(t)) return [];
-    return pezziDelPasto(t).flatMap(vociDaPezzo);
+    if (!t.trim() || RE_PASTO_LIBERO.test(t)) return [];
+    if (!/\n/.test(t.trim())) return pezziDelPasto(t).flatMap(vociDaPezzo);
+    const viste = new Set(), out = [];
+    analizzaPasto(t).forEach((el) => {
+      const voci = el.tipo === "voce" ? [el.voce] : el.gruppo === "piatto" ? el.opzioni.flatMap((o) => o.voci.map((v) => v.voce)) : el.opzioni.map((o) => o.voce);
+      voci.forEach((v) => { if (!viste.has(v.chiave)) { viste.add(v.chiave); out.push({ chiave: v.chiave, nome: v.nome, cat: v.cat, icona: v.icona }); } });
+    });
+    return out;
   }
 
   /**
@@ -735,43 +915,55 @@
   function listaDaSettimana(giorni, campi) {
     const voci = new Map();
     const alternative = new Map();
+    const nuovaVoce = (v) => nuovoAccumulo({ chiave: v.chiave, nome: v.nome, cat: v.cat, icona: v.icona, dispensa: DISPENSA.has(v.nome) });
     (giorni || []).forEach((g, indice) => {
       campi.forEach((k) => {
-        const testo = String((g && g[k]) || "");
-        if (!testo.trim() || /pasto libero/i.test(testo)) return;
-        pezziDelPasto(testo).forEach((pezzo) => {
-          analizzaPezzo(pezzo).forEach((el) => {
-            if (el.tipo === "voce") {
-              const v = el.voce;
-              if (!voci.has(v.chiave)) voci.set(v.chiave, nuovoAccumulo({ chiave: v.chiave, nome: v.nome, cat: v.cat, icona: v.icona, dispensa: DISPENSA.has(v.nome) }));
-              accumula(voci.get(v.chiave), indice, el.qta);
-            } else {
-              const chiavi = el.opzioni.map((o) => o.voce.chiave).sort();
-              const chiave = "alt:" + chiavi.join("|");
-              if (!alternative.has(chiave)) {
-                const nomi = el.opzioni.map((o) => o.voce.nome);
-                alternative.set(chiave, nuovoAccumulo({
-                  chiave, alternativa: true, gruppo: el.gruppo, cat: "scelta", icona: "🔀",
-                  nome: nomi.length === 2 ? `${nomi[0]} o ${nomi[1].charAt(0).toLowerCase() + nomi[1].slice(1)}` : (ETICHETTE_GRUPPO[el.gruppo] || "Alimento a scelta"),
-                  opzioniMappa: new Map(),
-                }));
-              }
-              const alt = alternative.get(chiave);
-              // quantità del gruppo: quella comune a tutte le opzioni, se c'è
-              const q = el.opzioni.map((o) => JSON.stringify(o.qta));
-              accumula(alt, indice, new Set(q).size === 1 && el.opzioni[0].qta ? el.opzioni[0].qta : null);
-              el.opzioni.forEach((o) => {
-                const v = o.voce;
-                if (!alt.opzioniMappa.has(v.chiave)) alt.opzioniMappa.set(v.chiave, nuovoAccumulo({ chiave: v.chiave, nome: v.nome, cat: v.cat, icona: v.icona, dispensa: DISPENSA.has(v.nome) }));
-                accumula(alt.opzioniMappa.get(v.chiave), indice, o.qta);
+        analizzaPasto(g && g[k]).forEach((el) => {
+          if (el.tipo === "voce") {
+            const v = el.voce;
+            if (!voci.has(v.chiave)) voci.set(v.chiave, nuovaVoce(v));
+            accumula(voci.get(v.chiave), indice, el.qta);
+            return;
+          }
+          const chiave = chiaveAlternativa(el);
+          const piatti = el.gruppo === "piatto";
+          if (!alternative.has(chiave)) {
+            const nomi = el.opzioni.map((o) => (piatti ? o.etichetta : o.voce.nome));
+            alternative.set(chiave, nuovoAccumulo({
+              chiave, alternativa: true, piatti, gruppo: el.gruppo, cat: "scelta", icona: piatti ? "🍽️" : "🔀",
+              nome: piatti ? `${ETICHETTE_PASTO[k] || "Pasto"}: piatto a scelta`
+                : nomi.length === 2 ? `${nomi[0]} o ${nomi[1].charAt(0).toLowerCase() + nomi[1].slice(1)}` : (ETICHETTE_GRUPPO[el.gruppo] || "Alimento a scelta"),
+              opzioniMappa: new Map(),
+            }));
+          }
+          const alt = alternative.get(chiave);
+          if (piatti) {
+            accumula(alt, indice, null);
+            el.opzioni.forEach((o) => {
+              if (!alt.opzioniMappa.has(o.chiave)) alt.opzioniMappa.set(o.chiave, nuovoAccumulo({ chiave: o.chiave, nome: o.etichetta, icona: "🍽️", piatto: true, vociMappa: new Map() }));
+              const opz = alt.opzioniMappa.get(o.chiave);
+              accumula(opz, indice, null);
+              o.voci.forEach(({ voce, qta }) => {
+                if (!opz.vociMappa.has(voce.chiave)) opz.vociMappa.set(voce.chiave, nuovaVoce(voce));
+                accumula(opz.vociMappa.get(voce.chiave), indice, qta);
               });
-            }
+            });
+            return;
+          }
+          const q = el.opzioni.map((o) => JSON.stringify(o.qta));
+          accumula(alt, indice, new Set(q).size === 1 && el.opzioni[0].qta ? el.opzioni[0].qta : null);
+          el.opzioni.forEach((o) => {
+            if (!alt.opzioniMappa.has(o.voce.chiave)) alt.opzioniMappa.set(o.voce.chiave, nuovaVoce(o.voce));
+            accumula(alt.opzioniMappa.get(o.voce.chiave), indice, o.qta);
           });
         });
       });
     });
     const alt = Array.from(alternative.values()).map((a) => {
-      a.opzioni = Array.from(a.opzioniMappa.values());
+      a.opzioni = Array.from(a.opzioniMappa.values()).map((o) => {
+        if (o.vociMappa) { o.voci = Array.from(o.vociMappa.values()); delete o.vociMappa; }
+        return o;
+      });
       delete a.opzioniMappa;
       return a;
     });
@@ -795,6 +987,9 @@
     vociDaPasto,
     listaDaSettimana,
     analizzaPezzo,
+    analizzaPasto,
+    chiaveAlternativa,
+    etichettaPiatto,
     leggiQuantita,
     formattaQuantita,
     testoGiorni,

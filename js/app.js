@@ -879,6 +879,10 @@
         // alternative: ognuno sceglie tra le proprie
         const chiave = LISTA.id ? `${uid}|${v.chiave}` : v.chiave;
         const opz = scelte[chiave] && v.opzioni.find((o) => o.chiave === scelte[chiave]);
+        if (opz && opz.piatto) {
+          (opz.voci || []).forEach((iv) => aggiungi(Object.assign({}, iv, { sceltaDa: chiave, numAlternative: v.opzioni.length, piattoScelto: opz.nome }), uid));
+          return;
+        }
         if (opz) { aggiungi(Object.assign({}, opz, { sceltaDa: chiave, numAlternative: v.opzioni.length }), uid); return; }
         mappa.set(chiave, Object.assign({}, v, {
           chiave, daPiano: true, testiExtra: [],
@@ -972,7 +976,12 @@
     const box = document.getElementById("prep-contenuto");
     if (!box || !SPESA.contesto) return;
     const M = window.mealPrep;
-    const r = M.calcola(SPESA.contesto.giorni);
+    const proprie = {};
+    Object.entries(SPESA.dati.scelte || {}).forEach(([k, v]) => {
+      if (!LISTA.id) proprie[k] = v;
+      else if (k.startsWith(UID + "|")) proprie[k.slice(UID.length + 1)] = v;
+    });
+    const r = M.calcola(SPESA.contesto.giorni, proprie);
     const fatti = new Set((SPESA.dati.prep || []).filter((k) => !LISTA.id || k.startsWith(UID + ":")).map((k) => (LISTA.id ? k.slice(UID.length + 1) : k)));
     const tutte = r.sessioni.flatMap((s) => s.gruppi.flatMap((g) => g.voci));
     const completate = tutte.filter((v) => fatti.has(v.chiave)).length;
@@ -1188,7 +1197,7 @@
         ${daScegliere.length ? `
           <section class="spesa-cat spesa-cat--scelta">
             <h3 class="spesa-cat__titolo"><span aria-hidden="true">🔀</span> Scegli tu <span class="spesa-cat__conta">${daScegliere.length}</span></h3>
-            <p class="spesa-cat__nota">Il piano ti lascia scegliere tra più alimenti: tocca <strong>Scegli</strong> e in lista finirà solo quello che preferisci.</p>
+            <p class="spesa-cat__nota">Il piano ti lascia scegliere tra più alimenti o piatti: tocca <strong>Scegli</strong> e in lista finirà solo quello che preferisci.</p>
             <ul class="spesa-lista">${daScegliere.sort((a, b) => a.nome.localeCompare(b.nome, "it")).map(rigaSceltaHTML).join("")}</ul>
           </section>` : ""}
         ${blocchiSpesa.map((b) => b.tempo ? `
@@ -1235,7 +1244,7 @@
     const giorni = v.giorni && Object.keys(v.giorni).length ? A.testoGiorni(v) : "";
     const membri = LISTA.id && v.perMembro && Object.keys(v.perMembro).length > 1 && tempiSpesa() === 1
       ? " · " + Object.entries(v.perMembro).map(([uid, t]) => `${nomeMembro(uid)} ${A.formattaQuantita(t)}`.trim()).join(", ") : "";
-    const scelta = v.sceltaDa ? ` · <button type="button" class="link-inline link-inline--piccolo" data-scegli="${escapeHTML(v.sceltaDa)}">scelto tra ${v.numAlternative}: cambia</button>` : "";
+    const scelta = v.sceltaDa ? ` · <button type="button" class="link-inline link-inline--piccolo" data-scegli="${escapeHTML(v.sceltaDa)}">${v.piattoScelto ? `per ${escapeHTML(v.piattoScelto.toLowerCase())}` : `scelto tra ${v.numAlternative}`}: cambia</button>` : "";
     return giorni || scelta || membri ? `<span class="spesa-riga__giorni">${escapeHTML(giorni + membri)}${scelta}</span>` : "";
   }
 
@@ -1258,10 +1267,10 @@
   function rigaSceltaHTML(v) {
     const A = window.alimenti;
     const q = A.formattaQuantita(v.tot);
-    const opzioni = v.opzioni.map((o) => o.nome.toLowerCase()).join(", ");
+    const opzioni = v.opzioni.map((o) => o.nome.toLowerCase()).join(v.piatti ? " · " : ", ");
     return `
       <li class="spesa-riga spesa-riga--scelta">
-        <span class="spesa-riga__icona" aria-hidden="true">🔀</span>
+        <span class="spesa-riga__icona" aria-hidden="true">${v.piatti ? "🍽️" : "🔀"}</span>
         <span class="spesa-riga__testo">
           <span class="spesa-riga__nome">${escapeHTML(v.nome)}${q ? ` · ${escapeHTML(q)}` : ""}</span>
           <span class="spesa-riga__giorni">${escapeHTML(opzioni)} · ${escapeHTML(Object.keys(v.giorni || {}).map(Number).sort((x, y) => x - y).map((i) => A.GIORNI_BREVI[i]).join(", "))}</span>
@@ -1289,12 +1298,14 @@
     const attuale = (SPESA.dati.scelte || {})[chiaveAlt] || null;
     const overlay = apriSheet(`
       <h2 class="sheet__titolo">${escapeHTML(alt.nome)}</h2>
-      <p class="sheet__nota">Il piano ti lascia scegliere: in lista finirà solo quello che preferisci, con le quantità e i giorni giusti. Puoi cambiare idea quando vuoi.</p>
+      <p class="sheet__nota">${alt.piatti ? "Il piano propone più piatti: scegli quello che cucinerai e in lista finiranno i suoi ingredienti. La scelta vale anche per il meal prep." : "Il piano ti lascia scegliere: in lista finirà solo quello che preferisci, con le quantità e i giorni giusti."} Puoi cambiare idea quando vuoi.</p>
       <div class="stato-pasto">
         ${alt.opzioni.map((o) => `
           <button type="button" class="stato-pasto__opzione scelta-opzione" data-opzione="${escapeHTML(o.chiave)}" aria-checked="${o.chiave === attuale}">
             <span aria-hidden="true">${o.icona}</span>
-            <span class="scelta-opzione__testo"><span>${escapeHTML(o.nome)}</span><small>${escapeHTML([A.formattaQuantita(o.tot), A.testoGiorni(o)].filter(Boolean).join(" · "))}</small></span>
+            <span class="scelta-opzione__testo"><span>${escapeHTML(o.nome)}</span><small>${escapeHTML(o.piatto
+              ? "In lista: " + (o.voci || []).map((iv) => `${iv.nome.toLowerCase()}${A.formattaQuantita(iv.tot) ? " " + A.formattaQuantita(iv.tot) : ""}`).join(", ")
+              : [A.formattaQuantita(o.tot), A.testoGiorni(o)].filter(Boolean).join(" · "))}</small></span>
           </button>`).join("")}
       </div>
       ${attuale ? `<button type="button" class="btn btn--ghost" id="scelta-annulla">Torna a "da scegliere"</button>` : ""}

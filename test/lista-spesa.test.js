@@ -73,4 +73,55 @@ const soloGiovedi = A.restringiGiorni(pollo, [3, 4, 5, 6]);
 assert.strictEqual(A.formattaQuantita(soloGiovedi.tot), "250 g");
 ok += 3;
 
+// ---------------------------------------------------------------------
+// Casi dai piani reali (pasti scritti su più righe, con "e" / "o" / "0")
+// ---------------------------------------------------------------------
+const reali = [
+  ["1 cucchiaino di olio di oliva extravergine (5 g)", ["Olio extravergine d'oliva"]],
+  ["1 pacchetto di crackers integrali (30 g)", ["Crackers integrali"]],
+  ["1 porzione di croccole", ["Croccole"]],
+  ["1/2 porzione di muffin all'acqua cioccolatosi", ["Muffin all'acqua cioccolatosi"]],
+  ["1 porzione di marmellata senza zuccheri aggiunti Rigoni di Asiago (20 g)", ["Marmellata senza zuccheri"]],
+  ["1 porzione di hummus di ceci", ["Hummus"]],
+  ["1 porzione di insalata di seppie con carote, sedano e ravanelli", ["Seppie", "Carote", "Sedano", "Ravanelli"]],
+  ["1 porzione di scaloppina di pollo al limone", ["Pollo", "Limoni"]],
+  ["1 porzione di merluzzo con olive taggiasche", ["Merluzzo", "Olive"]],
+  ["1 pacchetto di triangolini di legumi Fiorentini (20 g)", ["Snack di legumi"]],
+  ["2 fette di pan bauletto integrale Mulino Bianco (50 g)", ["Pane in cassetta integrale"]],
+  ["125 grammi dii latte di soia senza zuccheri aggiunti", ["Bevanda vegetale"]],
+  ["10 grammi di cocco rapè", ["Cocco rapè"]],
+];
+reali.forEach(([testo, attesi]) => { assert.deepStrictEqual(nomi(testo), attesi, `"${testo}"`); ok++; });
+const unico = (testo) => A.analizzaPasto(testo);
+// prodotti pronti di marca restano prodotti
+assert.strictEqual(unico("2 burger di merluzzo Frosta")[0].voce.nome, "Burger di merluzzo Frosta"); ok++;
+// refuso "9" al posto di "g"
+assert.strictEqual(q(unico("1 porzione di ricotta di vacca (100 9)")[0]), "100 g"); ok++;
+// "o" dentro le parentesi non è un'alternativa
+const frutta = unico("1 porzione di frutta (1 frutto grande o 2 piccoli) (150 g)");
+assert.deepStrictEqual(frutta.map((e) => `${e.tipo} ${e.voce && e.voce.nome} ${q(e)}`), ["voce Frutta fresca 150 g"]); ok++;
+// pasto libero
+assert.deepStrictEqual(unico("PIATTO A PIACERE + SE VUOI UN CONTORNO DI VERDURE DA CONDIRE CON\n1 CUCCHIAINO DI OLIO (e\nlimone/aceto se preferisci)"), []); ok++;
+// hummus di ceci o hummus Noa (88 g): un solo articolo con la quantità
+const hummus = unico("1 porzione di hummus di ceci o 1/2 porzione di hummus Noa (88 g)\ne\n80 grammi di pane integrale (un panino)");
+assert.deepStrictEqual(hummus.map((e) => `${e.voce.nome} ${q(e)}`), ["Hummus 88 g", "Pane integrale 80 g"]); ok++;
+// giovedì a pranzo: 9 carboidrati e 3 proteine a scelta, istruzione ignorata, verdura e olio fissi
+const giovedi = "60 grammi di pasta di semola integrale\no\n60 grammi di riso basmati o 60 grammi di riso venere\no \n60 grammi di cous cous\no \n60 grammi di orzo perlato\no \n60 grammi di frisella\no \n60 grammi di pasta di mais\no \n60 grammi di quinoa\no \npasta di quinoa\ne\n1 scatoletta piccola di tonno confezionato al naturale (56 g)\no \n1 fetta di salmone affumicato (40 g)\no \n50 grammi di tonno sott'olio, sgocciolato (in vetro).\nSe scegli questo riduci l'olio ad 1 cucchiaino (5 g)\ne\n1 porzione di media di verdura (200 g)\ne\n1 cucchiaio di olio di oliva extravergine (10 g)";
+const gv = unico(giovedi);
+assert.deepStrictEqual(gv.map((e) => (e.tipo === "voce" ? `${e.voce.nome} ${q(e)}` : `${e.gruppo}: ${e.opzioni.length}`)),
+  ["carboidrato: 9", "proteina: 3", "Verdure di stagione 200 g", "Olio extravergine d'oliva 10 g"]); ok++;
+// cena: quattro piatti alternativi, ognuno con i suoi ingredienti
+const cena = unico("1 porzione di bocconcini di pollo cremosi con limone e zenzero\n0 \n1 porzione di pollo alle mandorle\n0\n1 porzione di burger di riso e fagioli\n0\n1 porzione di polpette di pollo e zucchine\ne\n1 porzione di media di verdura (200 g)\ne\n1 cucchiaio di olio di oliva extravergine (10 g)");
+assert.strictEqual(cena[0].gruppo, "piatto");
+assert.deepStrictEqual(cena[0].opzioni.map((o) => `${o.etichetta}: ${o.voci.map((v) => v.voce.nome).join("+")}`), [
+  "Bocconcini di pollo cremosi con limone e zenzero: Pollo+Limoni+Zenzero", "Pollo alle mandorle: Pollo+Mandorle",
+  "Burger di riso e fagioli: Riso+Fagioli", "Polpette di pollo e zucchine: Pollo+Zucchine"]);
+assert.deepStrictEqual(cena.slice(1).map((e) => `${e.voce.nome} ${q(e)}`), ["Verdure di stagione 200 g", "Olio extravergine d'oliva 10 g"]);
+ok += 3;
+// riga spezzata a metà e opzione composta con "+"
+const venerdi = unico("230 grammi di orata fresca\no \n1/2 porzione di polpette di merluzzo Frosta (120 g) +\n1 cucchiaino di olio extra (5g)\no \n1 porzione di polpette di lenticchie o 1 porzione di\npolpette di piselli");
+assert.deepStrictEqual(venerdi[0].opzioni.map((o) => o.etichetta), ["Orata fresca", "Polpette di merluzzo Frosta", "Polpette di lenticchie", "Polpette di piselli"]);
+assert.deepStrictEqual(venerdi[0].opzioni[1].voci.map((v) => `${v.voce.nome} ${q(v)}`), ["Polpette di merluzzo Frosta 120 g", "Olio extravergine d'oliva 5 g"]);
+ok += 2;
+
 console.log(`OK: ${ok} verifiche superate`);

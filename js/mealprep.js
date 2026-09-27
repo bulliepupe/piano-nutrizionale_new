@@ -127,44 +127,49 @@
    * @param giorni  i 7 giorni della settimana del piano (lunedì → domenica)
    * @returns { sessioni: [{ id, perGiorni, gruppi: [{ tipo, titolo, icona, voci }] }], vuoto }
    */
-  function calcola(giorni) {
+  /**
+   * @param giorni  i 7 giorni della settimana del piano (lunedì → domenica)
+   * @param scelte  scelte fatte nella lista della spesa tra alternative ({ chiaveAlternativa: chiaveOpzione });
+   *                senza scelta si prepara la prima opzione proposta dal piano
+   */
+  function calcola(giorni, scelte) {
+    const sc = scelte || {};
     const perSessione = { s1: new Map(), s2: new Map() };
+    const aggiungi = (indice, v, qta, testo, alternative) => {
+      const tipo = tipoDi(v, testo || "");
+      if (!tipo) return;
+      // le uova si preparano in anticipo solo se sono sode
+      if (tipo === "uova" && !/\bsod[eoia]|rassodat/i.test(testo || "")) return;
+      // uova sode e porzioni di frutta secca: tutto nella prima sessione
+      const sessione = tipo === "uova" || tipo === "porzionare" || indice <= 2 ? "s1" : "s2";
+      const mappa = perSessione[sessione];
+      const chiave = `${sessione}:${tipo}:${v.chiave}`;
+      if (!mappa.has(chiave)) {
+        mappa.set(chiave, { chiave, nome: v.nome, icona: v.icona, tipo, porzioni: 0, grammi: 0, unita: 0, senzaQuantita: 0, giorni: new Set(), alternative: new Set() });
+      }
+      const voce = mappa.get(chiave);
+      (alternative || []).forEach((n) => voce.alternative.add(n));
+      voce.porzioni++;
+      voce.giorni.add(indice);
+      if (qta && qta.g) voce.grammi += qta.g;
+      else if (qta && qta.pz && (qta.unita === "pz" || v.nome === "Uova")) voce.unita += qta.pz;
+      else voce.senzaQuantita++;
+    };
     (giorni || []).slice(0, 7).forEach((g, indice) => {
       if (!g) return;
       CAMPI.forEach((campo) => {
-        const testo = g[campo];
-        if (!testo || /pasto libero/i.test(testo)) return;
-        pezziDelPasto(testo).forEach((pezzo) => {
-          const voci = A.vociDaPasto(pezzo);
-          const quantita = quantitaNelPezzo(pezzo, voci);
-          // Alternative ("Pollo/Tacchino", "branzino o orata", "seitan o tofu"):
-          // tra alimenti dello stesso tipo nello stesso pezzo si prepara solo
-          // il primo, segnalando gli altri come alternativa.
-          const alternativo = /\/|\s(o|oppure)\s/i.test(pezzo);
-          const primiPerTipo = {};
-          voci.forEach((v) => {
-            const tipo = tipoDi(v, pezzo);
-            if (!tipo) return;
-            // le uova si preparano in anticipo solo se sono sode
-            if (tipo === "uova" && !/\bsod[eoia]|rassodat/i.test(pezzo)) return;
-            if (alternativo && primiPerTipo[tipo]) { primiPerTipo[tipo].alternative.add(v.nome); return; }
-            // uova sode e porzioni di frutta secca: tutto nella prima sessione
-            const sessione = tipo === "uova" || tipo === "porzionare" || indice <= 2 ? "s1" : "s2";
-            const mappa = perSessione[sessione];
-            const chiave = `${sessione}:${tipo}:${v.chiave}`;
-            if (!mappa.has(chiave)) {
-              mappa.set(chiave, { chiave, nome: v.nome, icona: v.icona, tipo, porzioni: 0, grammi: 0, unita: 0, senzaQuantita: 0, giorni: new Set() });
-            }
-            const voce = mappa.get(chiave);
-            if (!voce.alternative) voce.alternative = new Set();
-            primiPerTipo[tipo] = voce;
-            voce.porzioni++;
-            voce.giorni.add(indice);
-            const qv = quantita[v.chiave];
-            if (qv && qv.grammi) voce.grammi += qv.grammi;
-            else if (qv && qv.unita) voce.unita += qv.unita;
-            else voce.senzaQuantita++;
-          });
+        A.analizzaPasto(g[campo]).forEach((el) => {
+          if (el.tipo === "voce") { aggiungi(indice, el.voce, el.qta, el.testo); return; }
+          const chiaveAlt = A.chiaveAlternativa(el);
+          if (el.gruppo === "piatto") {
+            // si prepara il piatto scelto nella spesa, altrimenti il primo proposto
+            const opz = el.opzioni.find((o) => o.chiave === sc[chiaveAlt]) || el.opzioni[0];
+            opz.voci.forEach((v) => aggiungi(indice, v.voce, v.qta, v.testo || opz.testo));
+            return;
+          }
+          const scelta = el.opzioni.find((o) => o.voce.chiave === sc[chiaveAlt]);
+          const opz = scelta || el.opzioni[0];
+          aggiungi(indice, opz.voce, opz.qta, opz.testo, scelta ? [] : el.opzioni.slice(1).map((o) => o.voce.nome));
         });
       });
     });
