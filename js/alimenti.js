@@ -117,7 +117,8 @@
     // ---------- Panetteria ----------
     ["Pane", PAN, "🍞", "pane|pagnotta|pane comune|pane casereccio|pane di semola|panino|panini"],
     ["Pane integrale", PAN, "🍞", "pane integrale|pane di segale|pane ai cereali|pane multicereali", { b: "Pane" }],
-    ["Pane in cassetta", PAN, "🍞", "pane in cassetta|pancarre|pan carre|pane per toast"],
+    ["Pane in cassetta", PAN, "🍞", "pane in cassetta|pancarre|pan carre|pane per toast|pan bauletto|bauletto|pane bauletto"],
+    ["Pane in cassetta integrale", PAN, "🍞", "pane in cassetta integrale|pancarre integrale|pan carre integrale|pan bauletto integrale|bauletto integrale|pane bauletto integrale", { b: "Pane in cassetta" }],
     ["Fette biscottate", PAN, "🥯", "fette biscottate|fetta biscottata"],
     ["Fette biscottate integrali", PAN, "🥯", "fette biscottate integrali|fetta biscottata integrale", { b: "Fette biscottate" }],
     ["Crackers", PAN, "🍘", "cracker|crackers"],
@@ -204,14 +205,19 @@
     ["Cannella", IS, "🧂", "cannella"],
     ["Passata di pomodoro", IS, "🥫", "passata|passata di pomodoro|salsa di pomodoro|sugo|sugo di pomodoro|crema di pomodoro|polpa di pomodoro|pelati|pomodori pelati"],
     ["Pesto", IS, "🌿", "pesto|pesto alla genovese"],
-    ["Tonno in scatola", IS, "🥫", "tonno in scatola|tonno al naturale|tonno sott olio|tonno in vetro"],
+    ["Tonno al naturale", IS, "🥫", "tonno in scatola|tonno al naturale|scatoletta di tonno|scatolette di tonno|tonno in scatoletta|scatoletta di tonno al naturale"],
+    ["Tonno sott'olio", IS, "🥫", "tonno sott olio|tonno sottolio|tonno in vetro|tonno sott olio in vetro|tonno all olio|tonno in olio"],
     ["Mais", IS, "🌽", "mais|granella di mais"],
     ["Olive", IS, "🫒", "oliva|olive"],
     ["Capperi", IS, "🫙", "cappero|capperi"],
     ["Senape", IS, "🫙", "senape"],
     ["Salsa di soia", IS, "🫙", "salsa di soia|soia sauce|tamari"],
     ["Dado vegetale", IS, "🥣", "dado|dado vegetale|brodo vegetale|brodo|granulare"],
-    ["Farina", IS, "🌾", "farina|farina integrale|farina di avena|farina di riso|amido di mais|maizena"],
+    ["Farina", IS, "🌾", "farina|farina 00|farina integrale|amido di mais|maizena"],
+    ["Farina di ceci", IS, "🌾", "farina di ceci|cecina|cecine|farinata|panelle|panella"],
+    ["Farina d'avena", IS, "🌾", "farina di avena|farina d avena|avena in farina"],
+    ["Farina di riso", IS, "🌾", "farina di riso"],
+    ["Tahina", IS, "🫙", "tahina|tahini|crema di sesamo|salsa tahina"],
     ["Lievito", IS, "🌾", "lievito|lievito per dolci|lievito di birra"],
     ["Zucchero", IS, "🧂", "zucchero|zucchero di canna"],
     ["Dolcificante", IS, "🧂", "dolcificante|stevia|eritritolo"],
@@ -229,12 +235,17 @@
     ["Pizza surgelata", PS, "🍕", "pizza surgelata"],
 
     // ---------- Pasta, Riso & Cereali (e legumi) ----------
-    ["Pasta", PRC, "🍝", "pasta|spaghetti|penne|fusilli|rigatoni|farfalle|linguine|ditalini|ditali|mezze maniche|tagliatelle|orecchiette|gnocchetti sardi|gnocchetti|conchiglie|paccheri|trofie|pennette|mafalde|pastina|sedanini|tubetti"],
-    ["Pasta integrale", PRC, "🍝", "pasta integrale|spaghetti integrali|penne integrali|fusilli integrali", { b: "Pasta" }],
+    ["Pasta", PRC, "🍝", "pasta|pasta di semola|spaghetti|penne|fusilli|rigatoni|farfalle|linguine|ditalini|ditali|mezze maniche|tagliatelle|orecchiette|gnocchetti sardi|gnocchetti|conchiglie|paccheri|trofie|pennette|mafalde|pastina|sedanini|tubetti"],
+    ["Pasta integrale", PRC, "🍝", "pasta integrale|pasta di semola integrale|pasta semola integrale|pasta integrale di semola|spaghetti integrali|penne integrali|fusilli integrali", { b: "Pasta" }],
+    ["Pasta di mais", PRC, "🍝", "pasta di mais|pasta di mais e riso|pasta di riso e mais|pasta senza glutine", { b: "Pasta" }],
+    ["Pasta di quinoa", PRC, "🍝", "pasta di quinoa", { b: "Pasta" }],
     ["Pasta di legumi", PRC, "🍝", "pasta di legumi|pasta di lenticchie|pasta di ceci|pasta di piselli", { b: "Pasta" }],
     ["Tortellini", PRC, "🥟", "tortellini|tortelloni|ravioli|pasta ripiena|tortellini di magro"],
     ["Gnocchi di patate", PRC, "🥟", "gnocchi|gnocchi di patate"],
-    ["Riso", PRC, "🍚", "riso|riso basmati|riso carnaroli|riso arborio|riso parboiled|riso venere|risotto|riso rosso"],
+    ["Riso", PRC, "🍚", "riso|riso carnaroli|riso arborio|riso parboiled|risotto"],
+    ["Riso basmati", PRC, "🍚", "riso basmati|basmati", { b: "Riso" }],
+    ["Riso venere", PRC, "🍚", "riso venere|riso nero|venere", { b: "Riso" }],
+    ["Riso rosso", PRC, "🍚", "riso rosso", { b: "Riso" }],
     ["Riso integrale", PRC, "🍚", "riso integrale", { b: "Riso" }],
     ["Riso soffiato", PRC, "🍚", "riso soffiato"],
     ["Cous cous", PRC, "🍚", "cous cous|couscous|cuscus"],
@@ -267,6 +278,7 @@
     ["Semi oleosi", SD, "🌻", "semi|semi di chia|chia|semi di lino|semi di zucca|semi di girasole|semi misti|sesamo"],
     ["Frutta essiccata", SD, "🍑", "frutta essiccata|uvetta|datteri|dattero|albicocche secche|prugne secche|fichi secchi"],
     ["Cioccolato fondente", SD, "🍫", "cioccolato|cioccolato fondente|fondente|cioccolata"],
+    ["Crema spalmabile", SD, "🍫", "crema spalmabile|crema novi|novi|nutella|crema di nocciole|crema gianduia|crema al cacao|crema spalmabile al cacao"],
     ["Miele", SD, "🍯", "miele"],
     ["Marmellata", SD, "🍯", "marmellata|confettura|composta di frutta|marmellate"],
     ["Marmellata senza zuccheri", SD, "🍯", "marmellata sz|confettura sz|composta sz|marmellata extra sz", { b: "Marmellata" }],
@@ -308,9 +320,16 @@
 
     // ---------- Animali ----------
     ["Cibo per cani", ANI, "🐕", "cibo per cani|crocchette per cani|scatolette per cani"],
-    ["Cibo per gatti", ANI, "🐈", "cibo per gatti|crocchette per gatti|scatolette per gatti|crocchette|scatolette"],
+    ["Cibo per gatti", ANI, "🐈", "cibo per gatti|crocchette per gatti|scatolette per gatti"],
     ["Lettiera", ANI, "🐾", "lettiera|sabbietta"],
   ];
+
+  // Prodotti trasformati: "farina di X" è una farina, non X.
+  const TRASFORMATI = {
+    farina: { cat: "ingredienti-spezie", icona: "🌾" },
+    succo: { cat: "bevande", icona: "🧃" },
+    sciroppo: { cat: "ingredienti-spezie", icona: "🍯" },
+  };
 
   // Radici forzate per evitare collisioni tra parole con la stessa radice
   // (pesce ≠ pesca, pasto ≠ pasta, cotto ≠ cotta).
@@ -356,6 +375,7 @@
       .replace(/\bint\b\.?/g, " integrale ")
       .replace(/\bintegral[ei]\b/g, " integrale ")
       .replace(/\bin insalata\b/g, " ")
+      .replace(/\b(piccol[oaie]|grand[ei]|confezionat[oaie]|sgocciolat[oaie])\b/g, " ")
       .replace(/\b(senza|no)\s+[a-z]+/g, " ")
       .replace(/[^a-z0-9]+/g, " ")
       .replace(/\s+/g, " ")
@@ -427,9 +447,20 @@
       for (const c of candidati) {
         if (c.radici.every((x, j) => r[i + j] === x)) { presa = c; break; }
       }
-      if (presa) {
+      // "farina di farro", "succo di mela": un prodotto diverso dall'ingrediente
+      // (salvo voci del catalogo più lunghe, come "farina di ceci")
+      const parole = norm.split(" ");
+      const trasformato = TRASFORMATI[parole[i]] && (parole[i + 1] === "di" || parole[i + 1] === "d") && parole[i + 2];
+      if (presa && !(trasformato && presa.radici.length === 1)) {
         trovate.push(presa.voce);
         i += presa.radici.length;
+        continue;
+      }
+      if (trasformato && (parole[i + 1] === "di" || parole[i + 1] === "d") && parole[i + 2]) {
+        const t = TRASFORMATI[parole[i]];
+        const nome = `${parole[i].charAt(0).toUpperCase() + parole[i].slice(1)} di ${parole[i + 2]}`;
+        trovate.push({ chiave: "x:" + [r[i], "di", r[i + 2]].join("-"), nome, cat: t.cat, icona: t.icona, generica: false, base: null });
+        i += 3;
         continue;
       }
       // errori di battitura: "zuchine", "melanznae"… solo per parole lunghe
@@ -451,6 +482,204 @@
       .replace(/\b\d+\b/g, " ").replace(/\s+/g, " ").trim();
     const nome = originale && originale.split(" ").length <= 5 ? originale : parole.join(" ");
     return nome.charAt(0).toUpperCase() + nome.slice(1);
+  }
+
+
+  // ---------------------------------------------------------------------
+  // Quantità e alternative
+  // ---------------------------------------------------------------------
+  const GIORNI_BREVI = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"];
+  const RE_PESO = /(\d+(?:[.,]\d+)?)\s*(kg|grammi|grammo|gr|g|ml|cl|litri|litro|l)\b/i;
+  const RE_PEZZI = /\b(\d+)\s+(?:[a-zàèéìòù']+\s+){0,2}?(uov[oa]|album[ei]|mel[ae]|per[ae]|banan[ae]|kiwi|arance|arancia|pesch[ae]|pesca|mandarin[oi]|clementin[ae]|fett[ae]|vasett[oi]|scatolett[ae]|cucchiai[no]?|cucchiain[oi]|bicchier[ei]|tazz[ae]|tazzin[ae]|panin[oi])\b/i;
+  const UNITA_CONTATE = [
+    [/^fett/, "fette"], [/^vasett/, "vasetti"], [/^scatolett/, "scatolette"], [/^cucchiain/, "cucchiaini"],
+    [/^cucchiai/, "cucchiai"], [/^bicchier/, "bicchieri"], [/^tazzin/, "tazzine"], [/^tazz/, "tazze"],
+  ];
+
+  /** Quantità scritta in un frammento: { g }, { ml } oppure { pz, unita }. */
+  function leggiQuantita(testo) {
+    const t = String(testo || "");
+    const p = t.match(RE_PESO);
+    if (p) {
+      const n = Number(p[1].replace(",", "."));
+      const u = p[2].toLowerCase();
+      if (u === "kg") return { g: n * 1000 };
+      if (u === "ml") return { ml: n };
+      if (u === "cl") return { ml: n * 10 };
+      if (u === "l" || u === "litri" || u === "litro") return { ml: n * 1000 };
+      return { g: n };
+    }
+    const c = t.match(RE_PEZZI);
+    if (c) {
+      const parola = c[2].toLowerCase();
+      const unita = (UNITA_CONTATE.find(([re]) => re.test(parola)) || [null, "pz"])[1];
+      return { pz: Number(c[1]), unita };
+    }
+    return null;
+  }
+
+  // Gruppi "nutrizionali" usati per riconoscere le alternative di un pasto
+  const FRUTTA = new Set(["Frutta fresca", "Mele", "Pere", "Arance", "Mandarini", "Limoni", "Banane", "Kiwi", "Pesche", "Albicocche",
+    "Prugne", "Frutti di bosco", "Fragole", "Ciliegie", "Uva", "Ananas", "Melone", "Anguria", "Fichi", "Cachi", "Mango", "Melagrana"]);
+  const PROTEINE_EXTRA = new Set(["Lenticchie", "Ceci", "Fagioli", "Fagioli cannellini", "Fave", "Legumi misti", "Edamame", "Tofu", "Seitan",
+    "Tempeh", "Burger vegetali", "Hummus", "Tonno al naturale", "Tonno sott'olio", "Uova", "Albumi", "Bastoncini di pesce"]);
+  const ETICHETTE_GRUPPO = {
+    carboidrato: "Carboidrato a scelta", proteina: "Proteina a scelta", latticino: "Latticino a scelta",
+    frutta: "Frutta a scelta", verdura: "Verdura a scelta", fruttaSecca: "Frutta secca a scelta",
+  };
+  function gruppoDi(v) {
+    if (v.cat === "carne-pesce" || PROTEINE_EXTRA.has(v.nome)) return "proteina";
+    if (v.cat === "pasta-riso-cereali" || v.cat === "panetteria") return "carboidrato";
+    if (v.cat === "latte-formaggi") return "latticino";
+    if (v.cat === "frutta-verdura") return FRUTTA.has(v.nome) ? "frutta" : "verdura";
+    if (["Frutta secca", "Noci", "Mandorle", "Nocciole", "Pistacchi", "Anacardi", "Arachidi", "Semi oleosi"].includes(v.nome)) return "fruttaSecca";
+    return v.cat;
+  }
+
+  // Condimenti e scorte: di solito ci sono già in casa
+  const DISPENSA = new Set(["Olio extravergine d'oliva", "Aceto", "Aceto di mele", "Aceto balsamico", "Sale", "Pepe", "Spezie", "Origano",
+    "Curry", "Zafferano", "Cannella", "Dado vegetale", "Lievito", "Zucchero", "Dolcificante", "Cacao amaro", "Capperi", "Senape", "Salsa di soia"]);
+
+  /** Collega una voce trovata in un frammento a quella del pezzo (anche tra variante e base). */
+  function vocePezzoCorrispondente(v, vociPezzo) {
+    const esatta = vociPezzo.find((p) => p.chiave === v.chiave);
+    if (esatta) return esatta;
+    return vociPezzo.find((p) => {
+      const cp = VOCE_PER_CHIAVE.get(p.chiave);
+      return cp && (cp.base === v.nome || v.base === cp.nome);
+    }) || null;
+  }
+
+  /**
+   * Analizza un pezzo di pasto: restituisce gli alimenti con la loro quantità
+   * e, se il pezzo propone alternative ("riso o pasta o farro", "Pollo/Tacchino"),
+   * raggruppa quelle dello stesso gruppo in un'unica voce "a scelta".
+   * Elementi: { tipo: "voce", voce, qta } | { tipo: "alternativa", gruppo, opzioni: [{ voce, qta }] }
+   */
+  function analizzaPezzo(pezzoGrezzo) {
+    const pezzo = String(pezzoGrezzo || "")
+      .replace(/\(\s*(no|senza)\b[^)]*\)/gi, " ")
+      .replace(/\(\s*(\d+(?:[.,]\d+)?)\s*(kg|grammi|gr|g|ml|cl|l)\s*\)/gi, " $1 $2 ");
+    const voci = vociDaPezzo(pezzo);
+    if (!voci.length) return [];
+    // Quantità: ogni frammento con UN alimento e una quantità le lega tra loro
+    const qta = {};
+    const qtaGenerica = {};
+    let ultima = null;
+    pezzo.split(/[,;()\/+]|\s(?:o|oppure|e|ed|con)\s|\s[-–—]\s/i).map((f) => f.trim()).filter(Boolean).forEach((f) => {
+      const q = leggiQuantita(f);
+      const corrisp = [];
+      trovaVoci(f).forEach((v) => {
+        const p = vocePezzoCorrispondente(v, voci);
+        if (p && !corrisp.includes(p)) corrisp.push(p);
+      });
+      if (!corrisp.length && q) {
+        const generica = trovaVoci(f).find((v) => v.generica);
+        if (generica && !qtaGenerica[generica.cat]) { qtaGenerica[generica.cat] = q; return; }
+      }
+      if (corrisp.length) {
+        ultima = corrisp[0];
+        if (q && !qta[ultima.chiave]) qta[ultima.chiave] = q;
+      } else if (q && ultima && !qta[ultima.chiave]) {
+        qta[ultima.chiave] = q;
+      }
+    });
+    // la quantità di una voce generica ("Frutta secca 20g") vale per gli alimenti precisi della stessa categoria
+    voci.forEach((v) => { if (!qta[v.chiave] && qtaGenerica[v.cat]) qta[v.chiave] = qtaGenerica[v.cat]; });
+    const alternativo = /\s(o|oppure)\s|\//i.test(pezzo);
+    if (!alternativo) return voci.map((v) => ({ tipo: "voce", voce: v, qta: qta[v.chiave] || null }));
+    const perGruppo = new Map();
+    voci.forEach((v) => {
+      const g = gruppoDi(v);
+      if (!perGruppo.has(g)) perGruppo.set(g, []);
+      perGruppo.get(g).push(v);
+    });
+    const out = [];
+    perGruppo.forEach((lista, gruppo) => {
+      if (lista.length < 2) { out.push({ tipo: "voce", voce: lista[0], qta: qta[lista[0].chiave] || null }); return; }
+      // "Pollo/Tacchino 250g": la quantità vale per tutte le alternative
+      const note = [...new Set(lista.map((v) => qta[v.chiave]).filter(Boolean).map((q) => JSON.stringify(q)))];
+      const condivisa = note.length === 1 ? JSON.parse(note[0]) : null;
+      out.push({ tipo: "alternativa", gruppo, opzioni: lista.map((v) => ({ voce: v, qta: qta[v.chiave] || condivisa })) });
+    });
+    return out;
+  }
+
+  function sommaQuantita(tot, q) {
+    if (!q) return;
+    if (q.g) tot.g = (tot.g || 0) + q.g;
+    if (q.ml) tot.ml = (tot.ml || 0) + q.ml;
+    if (q.pz) { tot.pz = tot.pz || {}; tot.pz[q.unita] = (tot.pz[q.unita] || 0) + q.pz; }
+  }
+
+  const SINGOLARI = { fette: "fetta", vasetti: "vasetto", scatolette: "scatoletta", cucchiai: "cucchiaio", cucchiaini: "cucchiaino", bicchieri: "bicchiere", tazze: "tazza", tazzine: "tazzina" };
+  const numero = (n) => (Math.round(n * 10) / 10).toString().replace(".", ",");
+  /** "500 g", "1,2 kg", "1,5 L", "4 pz", "2 fette" — combinate con " + " se servono più unità. */
+  function formattaQuantita(tot) {
+    if (!tot) return "";
+    const parti = [];
+    if (tot.g) parti.push(tot.g >= 1000 ? `${numero(tot.g / 1000)} kg` : `${Math.round(tot.g)} g`);
+    if (tot.ml) parti.push(tot.ml >= 1000 ? `${numero(tot.ml / 1000)} L` : `${Math.round(tot.ml)} ml`);
+    if (tot.pz) Object.entries(tot.pz).forEach(([u, n]) => parti.push(u === "pz" ? `${n} pz` : `${n} ${n === 1 ? (SINGOLARI[u] || u) : u}`));
+    return parti.join(" + ");
+  }
+
+  function nuovoAccumulo(base) {
+    return Object.assign(base, { occorrenze: 0, tot: {}, senza: 0, giorni: {} });
+  }
+  function accumula(acc, indice, q) {
+    acc.occorrenze++;
+    const g = acc.giorni[indice] || (acc.giorni[indice] = { tot: {}, senza: 0, n: 0 });
+    g.n++;
+    if (q) { sommaQuantita(acc.tot, q); sommaQuantita(g.tot, q); } else { acc.senza++; g.senza++; }
+  }
+
+  /** "lun 250 g · gio 250 g" (i giorni senza quantità compaiono senza numero). */
+  function testoGiorni(acc) {
+    return Object.keys(acc.giorni).map(Number).sort((a, b) => a - b).map((i) => {
+      const g = acc.giorni[i];
+      const q = formattaQuantita(g.tot);
+      return q ? `${GIORNI_BREVI[i]} ${q}` : GIORNI_BREVI[i];
+    }).join(" · ");
+  }
+
+  /** Somma due voci dello stesso alimento (quantità e giorni). */
+  function unisciVoci(a, b) {
+    const out = Object.assign({}, a, { tot: {}, giorni: {}, occorrenze: (a.occorrenze || 0) + (b.occorrenze || 0), senza: (a.senza || 0) + (b.senza || 0) });
+    const aggiungiTot = (dest, t) => {
+      if (!t) return;
+      if (t.g) sommaQuantita(dest, { g: t.g });
+      if (t.ml) sommaQuantita(dest, { ml: t.ml });
+      if (t.pz) Object.entries(t.pz).forEach(([u, n]) => sommaQuantita(dest, { pz: n, unita: u }));
+    };
+    [a, b].forEach((v) => {
+      aggiungiTot(out.tot, v.tot);
+      Object.entries(v.giorni || {}).forEach(([i, g]) => {
+        const d = out.giorni[i] || (out.giorni[i] = { tot: {}, senza: 0, n: 0 });
+        d.n += g.n; d.senza += g.senza;
+        aggiungiTot(d.tot, g.tot);
+      });
+    });
+    return out;
+  }
+
+  /** Copia di una voce ristretta ad alcuni giorni (per la spesa in due tempi); null se non serve in quei giorni. */
+  function restringiGiorni(voce, indici) {
+    const giorni = {};
+    const tot = {};
+    let occorrenze = 0, senza = 0;
+    indici.forEach((i) => {
+      const g = voce.giorni && voce.giorni[i];
+      if (!g) return;
+      giorni[i] = g; occorrenze += g.n; senza += g.senza;
+      sommaQuantita(tot, g.tot.g ? { g: g.tot.g } : null);
+      sommaQuantita(tot, g.tot.ml ? { ml: g.tot.ml } : null);
+      if (g.tot.pz) Object.entries(g.tot.pz).forEach(([u, n]) => sommaQuantita(tot, { pz: n, unita: u }));
+    });
+    if (!occorrenze) return null;
+    const copia = Object.assign({}, voce, { giorni, tot, occorrenze, senza });
+    if (voce.opzioni) copia.opzioni = voce.opzioni.map((o) => restringiGiorni(o, indici)).filter(Boolean);
+    return copia;
   }
 
   /** Divide un pasto sui "+" (fuori dalle parentesi): ogni pezzo è analizzato a sé. */
@@ -497,20 +726,56 @@
   }
 
   /**
-   * Lista della spesa di una settimana: una voce per alimento, senza
-   * duplicati. `campi` = chiavi dei pasti da leggere in ogni giorno.
+   * Lista della spesa di una settimana (giorni[0] = lunedì … giorni[6] = domenica).
+   * Voci normali: { chiave, nome, cat, icona, dispensa, occorrenze, tot, senza, giorni }
+   * dove tot è la quantità totale ({ g, ml, pz }) e giorni[i] quella del giorno i.
+   * Voci "a scelta": { chiave: "alt:…", alternativa: true, gruppo, nome, cat: "scelta",
+   * opzioni: [voci come sopra, ciascuna con le proprie quantità] }.
    */
   function listaDaSettimana(giorni, campi) {
-    const mappa = new Map();
-    (giorni || []).forEach((g) => {
+    const voci = new Map();
+    const alternative = new Map();
+    (giorni || []).forEach((g, indice) => {
       campi.forEach((k) => {
-        vociDaPasto(g && g[k]).forEach((v) => {
-          if (!mappa.has(v.chiave)) mappa.set(v.chiave, Object.assign({ occorrenze: 0 }, v));
-          mappa.get(v.chiave).occorrenze++;
+        const testo = String((g && g[k]) || "");
+        if (!testo.trim() || /pasto libero/i.test(testo)) return;
+        pezziDelPasto(testo).forEach((pezzo) => {
+          analizzaPezzo(pezzo).forEach((el) => {
+            if (el.tipo === "voce") {
+              const v = el.voce;
+              if (!voci.has(v.chiave)) voci.set(v.chiave, nuovoAccumulo({ chiave: v.chiave, nome: v.nome, cat: v.cat, icona: v.icona, dispensa: DISPENSA.has(v.nome) }));
+              accumula(voci.get(v.chiave), indice, el.qta);
+            } else {
+              const chiavi = el.opzioni.map((o) => o.voce.chiave).sort();
+              const chiave = "alt:" + chiavi.join("|");
+              if (!alternative.has(chiave)) {
+                const nomi = el.opzioni.map((o) => o.voce.nome);
+                alternative.set(chiave, nuovoAccumulo({
+                  chiave, alternativa: true, gruppo: el.gruppo, cat: "scelta", icona: "🔀",
+                  nome: nomi.length === 2 ? `${nomi[0]} o ${nomi[1].charAt(0).toLowerCase() + nomi[1].slice(1)}` : (ETICHETTE_GRUPPO[el.gruppo] || "Alimento a scelta"),
+                  opzioniMappa: new Map(),
+                }));
+              }
+              const alt = alternative.get(chiave);
+              // quantità del gruppo: quella comune a tutte le opzioni, se c'è
+              const q = el.opzioni.map((o) => JSON.stringify(o.qta));
+              accumula(alt, indice, new Set(q).size === 1 && el.opzioni[0].qta ? el.opzioni[0].qta : null);
+              el.opzioni.forEach((o) => {
+                const v = o.voce;
+                if (!alt.opzioniMappa.has(v.chiave)) alt.opzioniMappa.set(v.chiave, nuovoAccumulo({ chiave: v.chiave, nome: v.nome, cat: v.cat, icona: v.icona, dispensa: DISPENSA.has(v.nome) }));
+                accumula(alt.opzioniMappa.get(v.chiave), indice, o.qta);
+              });
+            }
+          });
         });
       });
     });
-    return Array.from(mappa.values());
+    const alt = Array.from(alternative.values()).map((a) => {
+      a.opzioni = Array.from(a.opzioniMappa.values());
+      delete a.opzioniMappa;
+      return a;
+    });
+    return Array.from(voci.values()).concat(alt);
   }
 
   /** Classifica un articolo scritto a mano dal paziente ("zucchine 500g", "detersivo"). */
@@ -529,6 +794,13 @@
     voceDaNome: (nome) => VOCE_PER_NOME.get(nome) || null,
     vociDaPasto,
     listaDaSettimana,
+    analizzaPezzo,
+    leggiQuantita,
+    formattaQuantita,
+    testoGiorni,
+    restringiGiorni,
+    unisciVoci,
+    GIORNI_BREVI,
     classificaArticolo,
     normalizza,
     _interni: { radice, trovaVoci, VOCI },

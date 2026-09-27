@@ -722,7 +722,7 @@
     docId: null,          // data del lunedì, es. "2026-09-28"
     unsub: null,
     unsubPref: null,
-    dati: { spuntate: [], extra: [], prep: [] },
+    dati: { spuntate: [], extra: [], prep: [], scelte: {} },
     pref: { categoria: {}, nome: {}, nascosti: [] },
     contesto: null,       // { giorni, etichetta } della settimana mostrata
     voci: [],             // ultime voci disegnate (servono a opzioni e copia)
@@ -737,7 +737,7 @@
     if (SPESA.unsubPref) { SPESA.unsubPref(); SPESA.unsubPref = null; }
     SPESA.docId = null;
     SPESA.offset = 0;
-    SPESA.dati = { spuntate: [], extra: [], prep: [] };
+    SPESA.dati = { spuntate: [], extra: [], prep: [], scelte: {} };
     SPESA.pref = { categoria: {}, nome: {}, nascosti: [] };
   }
 
@@ -768,10 +768,10 @@
     if (SPESA.docId === docId && SPESA.unsub) return;
     if (SPESA.unsub) SPESA.unsub();
     SPESA.docId = docId;
-    SPESA.dati = { spuntate: [], extra: [], prep: [] };
+    SPESA.dati = { spuntate: [], extra: [], prep: [], scelte: {} };
     SPESA.unsub = window.cloud.ascoltaSpesa(UID, docId, (d) => {
       if (SPESA.docId !== docId) return;
-      SPESA.dati = { spuntate: d.spuntate || [], extra: d.extra || [], prep: d.prep || [] };
+      SPESA.dati = { spuntate: d.spuntate || [], extra: d.extra || [], prep: d.prep || [], scelte: d.scelte || {} };
       ridisegnaSpesaSeVisibile();
     });
   }
@@ -783,27 +783,55 @@
   }
 
   /** Voci da mostrare: piano + articoli aggiunti a mano, con le correzioni del paziente applicate. */
+  const LS_TEMPI_SPESA = "pnut:spesa-tempi"; // "1" | "2"
+  const TEMPI_SPESA = [
+    { id: "t1", titolo: "Spesa 1", per: "per lunedì, martedì e mercoledì", giorni: [0, 1, 2] },
+    { id: "t2", titolo: "Spesa 2", per: "per giovedì, venerdì, sabato e domenica", giorni: [3, 4, 5, 6] },
+  ];
+  function tempiSpesa() { return localStorage.getItem(LS_TEMPI_SPESA) === "2" ? 2 : 1; }
+
+  /**
+   * Voci della settimana: piano (con quantità e giorni) + scelte fatte tra le
+   * alternative + articoli aggiunti a mano, con le correzioni del paziente.
+   * Le alternative non ancora scelte restano voci "a scelta".
+   */
   function calcolaVociSpesa() {
+    const A = window.alimenti;
     const mappa = new Map();
-    window.alimenti.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA).forEach((v) => {
-      mappa.set(v.chiave, Object.assign({}, v, { daPiano: true, testiExtra: [] }));
+    const scelte = SPESA.dati.scelte || {};
+    A.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA).forEach((v) => {
+      if (v.alternativa && scelte[v.chiave]) {
+        const opz = v.opzioni.find((o) => o.chiave === scelte[v.chiave]);
+        if (opz) {
+          const scelta = Object.assign({}, opz, { sceltaDa: v.chiave, numAlternative: v.opzioni.length });
+          if (mappa.has(opz.chiave)) mappa.set(opz.chiave, Object.assign(A.unisciVoci(mappa.get(opz.chiave), scelta), { sceltaDa: v.chiave, numAlternative: v.opzioni.length }));
+          else mappa.set(opz.chiave, Object.assign(scelta, { daPiano: true, testiExtra: [] }));
+          return;
+        }
+      }
+      if (mappa.has(v.chiave)) mappa.set(v.chiave, Object.assign(A.unisciVoci(mappa.get(v.chiave), v), { sceltaDa: mappa.get(v.chiave).sceltaDa }));
+      else mappa.set(v.chiave, Object.assign({}, v, { daPiano: true, testiExtra: [] }));
     });
     SPESA.dati.extra.forEach((testo) => {
-      window.alimenti.classificaArticolo(testo).forEach((v) => {
-        if (!mappa.has(v.chiave)) mappa.set(v.chiave, Object.assign({}, v, { daPiano: false, testiExtra: [] }));
+      A.classificaArticolo(testo).forEach((v) => {
+        if (!mappa.has(v.chiave)) mappa.set(v.chiave, Object.assign({}, v, { daPiano: false, testiExtra: [], extra: true }));
         mappa.get(v.chiave).testiExtra.push(testo);
       });
     });
     const nascosti = new Set(SPESA.pref.nascosti);
-    const spuntate = new Set(SPESA.dati.spuntate);
     return Array.from(mappa.values()).map((v) => Object.assign(v, {
       nomeOriginale: v.nome,
       catOriginale: v.cat,
       nome: SPESA.pref.nome[v.chiave] || v.nome,
-      cat: SPESA.pref.categoria[v.chiave] || v.cat,
+      cat: v.alternativa ? "scelta" : (SPESA.pref.categoria[v.chiave] || v.cat),
       nascosto: nascosti.has(v.chiave) && v.daPiano,
-      spuntata: spuntate.has(v.chiave),
     }));
+  }
+
+  /** Voci con lo stato della spunta (chiave con prefisso per la spesa in due tempi). */
+  function conSpunta(voci, prefisso) {
+    const spuntate = new Set(SPESA.dati.spuntate);
+    return voci.map((v) => Object.assign({}, v, { chiaveSpunta: prefisso + v.chiave, spuntata: spuntate.has(prefisso + v.chiave) }));
   }
 
   // ---------------------------------------------------------------------
@@ -962,6 +990,10 @@
             <button type="button" data-vista="lista" aria-pressed="${vista === "lista"}" title="Vista a lista">☰ Lista</button>
             <button type="button" data-vista="blocchi" aria-pressed="${vista === "blocchi"}" title="Vista a blocchi">▦ Blocchi</button>
           </div>
+          <div class="spesa-vista" role="group" aria-label="Quante spese">
+            <button type="button" data-tempi="1" aria-pressed="${tempiSpesa() === 1}" title="Una spesa per tutta la settimana">Una spesa</button>
+            <button type="button" data-tempi="2" aria-pressed="${tempiSpesa() === 2}" title="Due spese: lunedì–mercoledì e giovedì–domenica">Due spese</button>
+          </div>
         </div>
       </section>
       <p class="hint" style="margin:0 0 12px;">Un articolo per alimento, ricavato dai pasti della settimana. ${vista === "blocchi"
@@ -986,6 +1018,10 @@
     });
     collegaInterruttoreModo();
 
+    root.querySelectorAll("[data-tempi]").forEach((b) => b.addEventListener("click", () => {
+      localStorage.setItem(LS_TEMPI_SPESA, b.dataset.tempi);
+      renderSpesa();
+    }));
     root.querySelectorAll("[data-vista]").forEach((b) => b.addEventListener("click", () => {
       localStorage.setItem(LS_VISTA_SPESA, b.dataset.vista);
       renderSpesa();
@@ -1017,41 +1053,79 @@
     disegnaContenutoSpesa();
   }
 
+  function sezioniCategorieHTML(voci, vista) {
+    return window.alimenti.CATEGORIE.map((cat) => {
+      const qui = voci.filter((v) => v.cat === cat.id).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
+      if (!qui.length) return "";
+      const mancanti = qui.filter((v) => !v.spuntata).length;
+      const corpo = vista === "blocchi"
+        ? `<div class="spesa-blocchi">${qui.map(bloccoSpesaHTML).join("")}</div>`
+        : `<ul class="spesa-lista">${qui.map(rigaSpesaHTML).join("")}</ul>`;
+      return `
+        <section class="spesa-cat ${mancanti === 0 ? "is-completa" : ""}">
+          <h3 class="spesa-cat__titolo"><span aria-hidden="true">${cat.icona}</span> ${escapeHTML(cat.nome)}
+            <span class="spesa-cat__conta">${mancanti === 0 ? "✓" : mancanti}</span></h3>
+          ${corpo}
+        </section>`;
+    }).join("");
+  }
+
   function disegnaContenutoSpesa() {
     const box = document.getElementById("spesa-contenuto");
     if (!box || !SPESA.contesto) return;
+    const A = window.alimenti;
     const vista = vistaSpesa();
+    const tempi = tempiSpesa();
     const voci = calcolaVociSpesa();
     SPESA.voci = voci;
     const visibili = voci.filter((v) => !v.nascosto);
-    const daPrendere = visibili.filter((v) => !v.spuntata).length;
+    const daScegliere = visibili.filter((v) => v.alternativa);
+    const dispensa = conSpunta(visibili.filter((v) => !v.alternativa && v.dispensa), "");
+    const normali = visibili.filter((v) => !v.alternativa && !v.dispensa);
 
-    if (!visibili.length) {
+    // Blocchi da mostrare: una spesa sola, oppure due (ciascuna con i suoi giorni)
+    let blocchiSpesa;
+    if (tempi === 2) {
+      blocchiSpesa = TEMPI_SPESA.map((t, n) => ({
+        tempo: t,
+        voci: conSpunta(normali.map((v) => (v.daPiano ? A.restringiGiorni(v, t.giorni) : (n === 0 ? v : null))).filter(Boolean), t.id + ":"),
+      }));
+    } else {
+      blocchiSpesa = [{ tempo: null, voci: conSpunta(normali, "") }];
+    }
+    SPESA.righe = blocchiSpesa.flatMap((b) => b.voci).concat(dispensa);
+    const tutte = SPESA.righe;
+    const daPrendere = tutte.filter((v) => !v.spuntata).length;
+
+    if (!tutte.length && !daScegliere.length) {
       box.innerHTML = `<div class="empty" style="padding:28px 12px;">Nessun alimento trovato nei pasti di questa settimana. Scrivi qui sotto quello che ti serve.</div>`;
     } else {
-      const sezioni = window.alimenti.CATEGORIE.map((cat) => {
-        const qui = visibili.filter((v) => v.cat === cat.id).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
-        if (!qui.length) return "";
-        const mancanti = qui.filter((v) => !v.spuntata).length;
-        const corpo = vista === "blocchi"
-          ? `<div class="spesa-blocchi">${qui.map(bloccoSpesaHTML).join("")}</div>`
-          : `<ul class="spesa-lista">${qui.map(rigaSpesaHTML).join("")}</ul>`;
-        return `
-          <section class="spesa-cat ${mancanti === 0 ? "is-completa" : ""}">
-            <h3 class="spesa-cat__titolo"><span aria-hidden="true">${cat.icona}</span> ${escapeHTML(cat.nome)}
-              <span class="spesa-cat__conta">${mancanti === 0 ? "✓" : mancanti}</span></h3>
-            ${corpo}
-          </section>`;
-      }).join("");
       box.innerHTML = `
-        <p class="spesa-riepilogo">${daPrendere === 0 ? "Hai preso tutto. Buona settimana!" : `${daPrendere} ${daPrendere === 1 ? "articolo" : "articoli"} da prendere su ${visibili.length}`}</p>
-        ${sezioni}`;
+        <p class="spesa-riepilogo">${daPrendere === 0 && !daScegliere.length ? "Hai preso tutto. Buona settimana!" : `${daPrendere} ${daPrendere === 1 ? "articolo" : "articoli"} da prendere su ${tutte.length}`}</p>
+        ${daScegliere.length ? `
+          <section class="spesa-cat spesa-cat--scelta">
+            <h3 class="spesa-cat__titolo"><span aria-hidden="true">🔀</span> Scegli tu <span class="spesa-cat__conta">${daScegliere.length}</span></h3>
+            <p class="spesa-cat__nota">Il piano ti lascia scegliere tra più alimenti: tocca <strong>Scegli</strong> e in lista finirà solo quello che preferisci.</p>
+            <ul class="spesa-lista">${daScegliere.sort((a, b) => a.nome.localeCompare(b.nome, "it")).map(rigaSceltaHTML).join("")}</ul>
+          </section>` : ""}
+        ${blocchiSpesa.map((b) => b.tempo ? `
+          <section class="spesa-tempo">
+            <h3 class="spesa-tempo__titolo">${b.tempo.titolo} <span>${b.tempo.per}</span></h3>
+            ${b.voci.length ? sezioniCategorieHTML(b.voci, vista) : `<p class="spesa-cat__nota">Niente da comprare per questi giorni.</p>`}
+          </section>` : sezioniCategorieHTML(b.voci, vista)).join("")}
+        ${dispensa.length ? `
+          <section class="spesa-cat spesa-cat--dispensa">
+            <h3 class="spesa-cat__titolo"><span aria-hidden="true">🫙</span> Da controllare in dispensa <span class="spesa-cat__conta">${dispensa.filter((v) => !v.spuntata).length || "✓"}</span></h3>
+            <p class="spesa-cat__nota">Di solito ci sono già in casa: spunta se li hai o se li compri.</p>
+            ${vista === "blocchi" ? `<div class="spesa-blocchi">${dispensa.map(bloccoSpesaHTML).join("")}</div>` : `<ul class="spesa-lista">${dispensa.map(rigaSpesaHTML).join("")}</ul>`}
+          </section>` : ""}
+        <p class="stat-nota" style="margin:12px 2px 0;">Le quantità sono quelle del piano (di solito peso netto): per frutta e verdura considera lo scarto.</p>`;
     }
 
     // Azioni in fondo: riporta tutto da prendere, articoli nascosti
     const extraBox = document.getElementById("spesa-azioni-extra");
     if (extraBox) {
-      const numSpuntate = visibili.filter((v) => v.spuntata).length;
+      const numSpuntate = (SPESA.righe || []).filter((v) => v.spuntata).length;
       const numNascosti = SPESA.pref.nascosti.length;
       extraBox.innerHTML = `
         ${numSpuntate ? `<button type="button" class="btn btn--ghost" id="btn-azzera-spesa">Rimetti tutto da prendere</button>` : ""}
@@ -1067,24 +1141,91 @@
     }
   }
 
+  function quantitaVoceHTML(v) {
+    const A = window.alimenti;
+    const q = A.formattaQuantita(v.tot);
+    return q ? `<span class="spesa-riga__qta">${escapeHTML(q)}</span>` : "";
+  }
+
+  function dettaglioVoceHTML(v) {
+    const A = window.alimenti;
+    const giorni = v.giorni && Object.keys(v.giorni).length ? A.testoGiorni(v) : "";
+    const scelta = v.sceltaDa ? ` · <button type="button" class="link-inline link-inline--piccolo" data-scegli="${escapeHTML(v.sceltaDa)}">scelto tra ${v.numAlternative}: cambia</button>` : "";
+    return giorni || scelta ? `<span class="spesa-riga__giorni">${escapeHTML(giorni)}${scelta}</span>` : "";
+  }
+
   function rigaSpesaHTML(v) {
     return `
       <li class="spesa-riga ${v.spuntata ? "is-spuntata" : ""}">
         <label>
-          <input type="checkbox" data-spunta="${escapeHTML(v.chiave)}" ${v.spuntata ? "checked" : ""}>
+          <input type="checkbox" data-spunta="${escapeHTML(v.chiaveSpunta || v.chiave)}" ${v.spuntata ? "checked" : ""}>
           <span class="spesa-riga__icona" aria-hidden="true">${v.icona}</span>
-          <span class="spesa-riga__nome">${escapeHTML(v.nome)}</span>
+          <span class="spesa-riga__testo">
+            <span class="spesa-riga__nome">${escapeHTML(v.nome)}</span>
+            ${dettaglioVoceHTML(v)}
+          </span>
         </label>
+        ${quantitaVoceHTML(v)}
         <button type="button" class="spesa-opzioni" data-opzioni="${escapeHTML(v.chiave)}" aria-label="Opzioni per ${escapeHTML(v.nome)}">⋯</button>
       </li>`;
   }
 
-  function bloccoSpesaHTML(v) {
+  function rigaSceltaHTML(v) {
+    const A = window.alimenti;
+    const q = A.formattaQuantita(v.tot);
+    const opzioni = v.opzioni.map((o) => o.nome.toLowerCase()).join(", ");
     return `
-      <button type="button" class="spesa-blocco ${v.spuntata ? "is-spuntata" : ""}" data-blocco="${escapeHTML(v.chiave)}" aria-pressed="${v.spuntata}">
+      <li class="spesa-riga spesa-riga--scelta">
+        <span class="spesa-riga__icona" aria-hidden="true">🔀</span>
+        <span class="spesa-riga__testo">
+          <span class="spesa-riga__nome">${escapeHTML(v.nome)}${q ? ` · ${escapeHTML(q)}` : ""}</span>
+          <span class="spesa-riga__giorni">${escapeHTML(opzioni)} · ${escapeHTML(Object.keys(v.giorni || {}).map(Number).sort((x, y) => x - y).map((i) => A.GIORNI_BREVI[i]).join(", "))}</span>
+        </span>
+        <button type="button" class="btn btn-scegli" data-scegli="${escapeHTML(v.chiave)}">Scegli</button>
+      </li>`;
+  }
+
+  function bloccoSpesaHTML(v) {
+    const q = window.alimenti.formattaQuantita(v.tot);
+    return `
+      <button type="button" class="spesa-blocco ${v.spuntata ? "is-spuntata" : ""}" data-blocco="${escapeHTML(v.chiaveSpunta || v.chiave)}" data-chiave="${escapeHTML(v.chiave)}" aria-pressed="${v.spuntata}">
         <span class="spesa-blocco__icona" aria-hidden="true">${v.icona}</span>
         <span class="spesa-blocco__nome">${escapeHTML(v.nome)}</span>
+        ${q ? `<span class="spesa-blocco__qta">${escapeHTML(q)}</span>` : ""}
       </button>`;
+  }
+
+  /** Scheda per scegliere tra le alternative del piano (o cambiare la scelta). */
+  function apriSceltaAlternativa(chiaveAlt) {
+    const A = window.alimenti;
+    const alt = A.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA).find((v) => v.chiave === chiaveAlt);
+    if (!alt) return;
+    const attuale = (SPESA.dati.scelte || {})[chiaveAlt] || null;
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">${escapeHTML(alt.nome)}</h2>
+      <p class="sheet__nota">Il piano ti lascia scegliere: in lista finirà solo quello che preferisci, con le quantità e i giorni giusti. Puoi cambiare idea quando vuoi.</p>
+      <div class="stato-pasto">
+        ${alt.opzioni.map((o) => `
+          <button type="button" class="stato-pasto__opzione scelta-opzione" data-opzione="${escapeHTML(o.chiave)}" aria-checked="${o.chiave === attuale}">
+            <span aria-hidden="true">${o.icona}</span>
+            <span class="scelta-opzione__testo"><span>${escapeHTML(o.nome)}</span><small>${escapeHTML([A.formattaQuantita(o.tot), A.testoGiorni(o)].filter(Boolean).join(" · "))}</small></span>
+          </button>`).join("")}
+      </div>
+      ${attuale ? `<button type="button" class="btn btn--ghost" id="scelta-annulla">Torna a "da scegliere"</button>` : ""}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    const salva = async (valore) => {
+      const scelte = Object.assign({}, SPESA.dati.scelte || {});
+      if (valore) scelte[chiaveAlt] = valore; else delete scelte[chiaveAlt];
+      SPESA.dati.scelte = scelte;
+      chiudiSheet();
+      disegnaContenutoSpesa();
+      try { await window.cloud.scegliAlternativaSpesa(UID, SPESA.docId, chiaveAlt, valore); }
+      catch (e) { mostraToast("Scelta non salvata: controlla la connessione"); }
+    };
+    overlay.querySelectorAll("[data-opzione]").forEach((b) => b.addEventListener("click", () => salva(b.dataset.opzione)));
+    const ann = overlay.querySelector("#scelta-annulla");
+    if (ann) ann.addEventListener("click", () => salva(null));
   }
 
   async function spuntaVoceSpesa(chiave, spuntata) {
@@ -1106,6 +1247,8 @@
     });
 
     box.addEventListener("click", (e) => {
+      const sc = e.target.closest("[data-scegli]");
+      if (sc) { e.preventDefault(); apriSceltaAlternativa(sc.dataset.scegli); return; }
       const opz = e.target.closest("[data-opzioni]");
       if (opz) { apriOpzioniSpesa(opz.dataset.opzioni); return; }
       const blocco = e.target.closest("[data-blocco]");
@@ -1126,7 +1269,7 @@
       timer = setTimeout(() => {
         pressioneLunga = true;
         if (navigator.vibrate) navigator.vibrate(15);
-        apriOpzioniSpesa(blocco.dataset.blocco);
+        apriOpzioniSpesa(blocco.dataset.chiave || blocco.dataset.blocco);
       }, 550);
     });
     box.addEventListener("pointermove", (e) => {
@@ -1137,7 +1280,7 @@
       const blocco = e.target.closest("[data-blocco]");
       if (!blocco) return;
       e.preventDefault();
-      if (!pressioneLunga) { annulla(); pressioneLunga = true; apriOpzioniSpesa(blocco.dataset.blocco); }
+      if (!pressioneLunga) { annulla(); pressioneLunga = true; apriOpzioniSpesa(blocco.dataset.chiave || blocco.dataset.blocco); }
     });
   }
 
@@ -1242,13 +1385,32 @@
   }
 
   async function copiaListaSpesa() {
-    const daPrendere = SPESA.voci.filter((v) => !v.nascosto && !v.spuntata);
-    if (!daPrendere.length) { mostraToast("Non c'è niente da prendere"); return; }
-    const blocchi = window.alimenti.CATEGORIE.map((cat) => {
-      const qui = daPrendere.filter((v) => v.cat === cat.id).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
-      return qui.length ? `${cat.nome}\n` + qui.map((v) => `- ${v.nome}`).join("\n") : "";
-    }).filter(Boolean);
-    const testo = `Lista della spesa (${SPESA.contesto.etichetta})\n\n` + blocchi.join("\n\n");
+    const A = window.alimenti;
+    const righe = (SPESA.righe || []).filter((v) => !v.spuntata);
+    const scelte = (SPESA.voci || []).filter((v) => v.alternativa && !v.nascosto);
+    if (!righe.length && !scelte.length) { mostraToast("Non c'è niente da prendere"); return; }
+    const riga = (v) => {
+      const q = A.formattaQuantita(v.tot);
+      const g = v.giorni && Object.keys(v.giorni).length > 1 ? ` (${A.testoGiorni(v)})` : "";
+      return `- ${v.nome}${q ? " " + q : ""}${g}`;
+    };
+    const perCategorie = (voci) => A.CATEGORIE.map((cat) => {
+      const qui = voci.filter((v) => v.cat === cat.id && !v.dispensa).sort((a, b) => a.nome.localeCompare(b.nome, "it"));
+      return qui.length ? `${cat.nome}\n` + qui.map(riga).join("\n") : "";
+    }).filter(Boolean).join("\n\n");
+    const parti = [];
+    if (scelte.length) parti.push("Da scegliere\n" + scelte.map((v) => `- ${v.nome}${A.formattaQuantita(v.tot) ? " " + A.formattaQuantita(v.tot) : ""}: ${v.opzioni.map((o) => o.nome.toLowerCase()).join(" / ")}`).join("\n"));
+    if (tempiSpesa() === 2) {
+      TEMPI_SPESA.forEach((t) => {
+        const qui = righe.filter((v) => v.chiaveSpunta && v.chiaveSpunta.startsWith(t.id + ":"));
+        if (qui.length) parti.push(`${t.titolo.toUpperCase()} (${t.per})\n\n` + perCategorie(qui));
+      });
+    } else {
+      parti.push(perCategorie(righe));
+    }
+    const disp = righe.filter((v) => v.dispensa);
+    if (disp.length) parti.push("Da controllare in dispensa\n" + disp.map(riga).join("\n"));
+    const testo = `Lista della spesa (${SPESA.contesto.etichetta})\n\n` + parti.filter(Boolean).join("\n\n");
     try {
       await navigator.clipboard.writeText(testo);
       mostraToast("Lista copiata negli appunti");
@@ -1256,6 +1418,7 @@
       mostraToast("Impossibile copiare automaticamente su questo browser");
     }
   }
+
 
   // ---------------------------------------------------------------------
   // Vista "Impostazioni" (paziente) — solo consultazione, niente modifiche al piano

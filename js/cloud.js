@@ -438,6 +438,14 @@
       }, { merge: true });
     },
 
+    /** Scelta tra alternative del piano ("Carboidrato a scelta" → riso basmati). */
+    async scegliAlternativaSpesa(uid, docId, chiaveAlternativa, chiaveScelta) {
+      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+        scelte: { [chiaveAlternativa]: chiaveScelta || FieldValue.delete() },
+        aggiornato: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    },
+
     /** Checklist del meal prep: stesso documento della lista della spesa di quella settimana. */
     async spuntaPrep(uid, docId, chiave, fatto) {
       await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
