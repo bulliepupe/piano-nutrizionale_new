@@ -91,9 +91,19 @@
   // ---------------------------------------------------------------------
   // Avvio
   // ---------------------------------------------------------------------
+  // Codice di invito a una lista di casa arrivato con un link (?invito=…): letto prima dell'accesso
+  const LS_INVITO = "pnut:invito-lista";
   init();
 
+  function memorizzaInvitoDalLink() {
+    const codice = new URLSearchParams(location.search).get("invito");
+    if (!codice) return;
+    sessionStorage.setItem(LS_INVITO, codice.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+    history.replaceState(null, "", location.pathname + location.hash);
+  }
+
   function init() {
+    memorizzaInvitoDalLink();
     mostraSchermata("loading");
     collegaFormAutenticazione();
 
@@ -142,6 +152,8 @@
     RUOLO = utenteDati.ruolo;
     if (RUOLO === "professionista") {
       avviaProfessionista(utenteDati);
+    } else if (RUOLO === "familiare") {
+      avviaFamiliare(utenteDati);
     } else {
       avviaPaziente(utenteDati);
     }
@@ -163,6 +175,8 @@
     scollegaRicettario();
     scollegaRichiestePaziente();
     scollegaRichiesteProfessionista();
+    scollegaListaCasa();
+    document.body.classList.remove("ruolo-familiare");
     if (unsubPazienti) { unsubPazienti(); unsubPazienti = null; }
     pazienteSelezionatoId = null;
     vistaProfCorrente = "lista";
@@ -213,12 +227,47 @@
     const SUB_REGISTRAZIONE = "Crea il tuo account professionista: dopo potrai aggiungere i tuoi pazienti.";
     function modalitaRegistrazione(attiva) {
       document.getElementById("blocco-signup-professionista").hidden = attiva;
+      document.getElementById("blocco-signup-familiare").hidden = attiva;
       document.getElementById("form-login").hidden = attiva;
       document.getElementById("btn-password-dimenticata").hidden = attiva;
       document.getElementById("form-signup").hidden = !attiva;
       document.getElementById("auth-sub").textContent = attiva ? SUB_REGISTRAZIONE : SUB_ACCESSO;
     }
     document.getElementById("btn-mostra-signup").addEventListener("click", () => modalitaRegistrazione(true));
+
+    // Registrazione del familiare (solo spesa condivisa)
+    const SUB_FAMILIARE = "Crea il tuo account per la spesa condivisa: vedrai solo la lista della spesa di casa.";
+    function modalitaFamiliare(attiva) {
+      document.getElementById("blocco-signup-professionista").hidden = attiva;
+      document.getElementById("blocco-signup-familiare").hidden = attiva;
+      document.getElementById("form-login").hidden = attiva;
+      document.getElementById("btn-password-dimenticata").hidden = attiva;
+      document.getElementById("form-signup-familiare").hidden = !attiva;
+      document.getElementById("auth-sub").textContent = attiva ? SUB_FAMILIARE : SUB_ACCESSO;
+    }
+    document.getElementById("btn-mostra-signup-familiare").addEventListener("click", () => modalitaFamiliare(true));
+    document.getElementById("btn-annulla-signup-familiare").addEventListener("click", () => modalitaFamiliare(false));
+    document.getElementById("form-signup-familiare").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector('button[type="submit"]');
+      document.getElementById("fam-error").hidden = true;
+      btn.disabled = true;
+      try {
+        await window.cloud.registraFamiliare(
+          document.getElementById("fam-email").value,
+          document.getElementById("fam-password").value,
+          document.getElementById("fam-nome").value
+        );
+      } catch (err) {
+        mostraErroreIn("fam-error", traduciErroreAuth(err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    if (sessionStorage.getItem(LS_INVITO)) {
+      const avviso = document.getElementById("avviso-invito");
+      avviso.hidden = false;
+    }
     document.getElementById("btn-annulla-signup").addEventListener("click", () => modalitaRegistrazione(false));
 
     // Link legali presi da config.json (così si cambiano in un posto solo)
@@ -301,10 +350,14 @@
     unsubPiano = window.cloud.ascoltaPianoPaziente(UID, (piano) => {
       PIANO_ATTIVO = piano;
       if (piano) collegaRicettePaziente();
+      if (piano) pubblicaPianoInLista();
       if (currentView === "oggi" || currentView === "settimana" || currentView === "impostazioni") render();
     });
     collegaAscoltoPastiOggi();
     collegaRichiestePaziente();
+    LISTA.nomeUtente = String(utenteDati.nome || "").trim().split(/\s+/)[0];
+    collegaListaCasa(utenteDati.listaCasa || null);
+    gestisciInvitoInSospeso();
 
     // Notifiche push ricevute mentre l'app è aperta: quelle ad app chiusa le
     // mostra invece il service worker (vedi service-worker.js).
@@ -749,12 +802,12 @@
       inizio.setDate(inizio.getDate() + 7 * k);
       const fine = new Date(inizio);
       fine.setDate(fine.getDate() + 6);
-      const { settimana } = window.weekLogic.calcolaSettimanaGiorno(inizio, CONFIG, PIANO_ATTIVO);
+      const settimana = PIANO_ATTIVO ? window.weekLogic.calcolaSettimanaGiorno(inizio, CONFIG, PIANO_ATTIVO).settimana : null;
       const intervallo = inizio.getMonth() === fine.getMonth()
         ? `${inizio.getDate()}–${fine.getDate()} ${MESI_BREVI[fine.getMonth()]}`
         : `${inizio.getDate()} ${MESI_BREVI[inizio.getMonth()]} – ${fine.getDate()} ${MESI_BREVI[fine.getMonth()]}`;
       const quando = ["Questa settimana", "Prossima settimana", "Tra 2 settimane", "Tra 3 settimane"][k];
-      return { k, settimana, docId: chiaveData(inizio), intervallo, etichetta: `${quando}, ${intervallo} (settimana ${settimana})` };
+      return { k, settimana, docId: chiaveData(inizio), intervallo, etichetta: `${quando}, ${intervallo}${settimana ? ` (settimana ${settimana})` : ""}` };
     });
   }
 
@@ -765,13 +818,15 @@
         ridisegnaSpesaSeVisibile();
       });
     }
-    if (SPESA.docId === docId && SPESA.unsub) return;
+    const destinazione = destinazioneSpesa();
+    if (SPESA.docId === docId && SPESA.destinazione === destinazione && SPESA.unsub) return;
     if (SPESA.unsub) SPESA.unsub();
     SPESA.docId = docId;
+    SPESA.destinazione = destinazione;
     SPESA.dati = { spuntate: [], extra: [], prep: [], scelte: {} };
-    SPESA.unsub = window.cloud.ascoltaSpesa(UID, docId, (d) => {
-      if (SPESA.docId !== docId) return;
-      SPESA.dati = { spuntate: d.spuntate || [], extra: d.extra || [], prep: d.prep || [], scelte: d.scelte || {} };
+    SPESA.unsub = window.cloud.ascoltaSpesa(destinazione, docId, (d) => {
+      if (SPESA.docId !== docId || SPESA.destinazione !== destinazione) return;
+      SPESA.dati = { spuntate: d.spuntate || [], extra: d.extra || [], prep: d.prep || [], scelte: d.scelte || {}, piani: d.piani || {} };
       ridisegnaSpesaSeVisibile();
     });
   }
@@ -799,18 +854,37 @@
     const A = window.alimenti;
     const mappa = new Map();
     const scelte = SPESA.dati.scelte || {};
-    A.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA).forEach((v) => {
-      if (v.alternativa && scelte[v.chiave]) {
-        const opz = v.opzioni.find((o) => o.chiave === scelte[v.chiave]);
-        if (opz) {
-          const scelta = Object.assign({}, opz, { sceltaDa: v.chiave, numAlternative: v.opzioni.length });
-          if (mappa.has(opz.chiave)) mappa.set(opz.chiave, Object.assign(A.unisciVoci(mappa.get(opz.chiave), scelta), { sceltaDa: v.chiave, numAlternative: v.opzioni.length }));
-          else mappa.set(opz.chiave, Object.assign(scelta, { daPiano: true, testiExtra: [] }));
-          return;
-        }
-      }
-      if (mappa.has(v.chiave)) mappa.set(v.chiave, Object.assign(A.unisciVoci(mappa.get(v.chiave), v), { sceltaDa: mappa.get(v.chiave).sceltaDa }));
-      else mappa.set(v.chiave, Object.assign({}, v, { daPiano: true, testiExtra: [] }));
+    // Fonti: il proprio piano + gli alimenti pubblicati dagli altri membri della lista di casa
+    const fonti = [];
+    if (PIANO_ATTIVO) fonti.push({ uid: UID, voci: A.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA) });
+    if (LISTA.id) {
+      Object.entries(SPESA.dati.piani || {}).forEach(([uid, p]) => {
+        if (uid !== UID && LISTA.dati && (LISTA.dati.membri || []).includes(uid) && Array.isArray(p.voci)) fonti.push({ uid, voci: p.voci });
+      });
+    }
+    const piuFonti = fonti.length > 1;
+    const aggiungi = (v, uid) => {
+      const con = Object.assign({}, v, { daPiano: true, testiExtra: [], perMembro: { [uid]: v.tot || {} } });
+      if (!mappa.has(v.chiave)) { mappa.set(v.chiave, con); return; }
+      const prima = mappa.get(v.chiave);
+      const unita = A.unisciVoci(prima, con);
+      unita.perMembro = Object.assign({}, prima.perMembro, { [uid]: A.unisciVoci({ tot: (prima.perMembro || {})[uid] || {}, giorni: {} }, { tot: v.tot || {}, giorni: {} }).tot });
+      unita.sceltaDa = prima.sceltaDa || v.sceltaDa;
+      unita.numAlternative = prima.numAlternative || v.numAlternative;
+      mappa.set(v.chiave, unita);
+    };
+    fonti.forEach(({ uid, voci }) => {
+      voci.forEach((v) => {
+        if (!v.alternativa) { aggiungi(v, uid); return; }
+        // alternative: ognuno sceglie tra le proprie
+        const chiave = LISTA.id ? `${uid}|${v.chiave}` : v.chiave;
+        const opz = scelte[chiave] && v.opzioni.find((o) => o.chiave === scelte[chiave]);
+        if (opz) { aggiungi(Object.assign({}, opz, { sceltaDa: chiave, numAlternative: v.opzioni.length }), uid); return; }
+        mappa.set(chiave, Object.assign({}, v, {
+          chiave, daPiano: true, testiExtra: [],
+          nome: piuFonti ? `${v.nome} (${nomeMembro(uid)})` : v.nome,
+        }));
+      });
     });
     SPESA.dati.extra.forEach((testo) => {
       A.classificaArticolo(testo).forEach((v) => {
@@ -843,6 +917,7 @@
   const LS_MODO_SPESA = "pnut:spesa-modo"; // "lista" | "prep"
 
   function mealPrepAttivo() {
+    if (RUOLO === "familiare" || !PIANO_ATTIVO) return false;
     return !(PIANO_ATTIVO && PIANO_ATTIVO.mealPrep && PIANO_ATTIVO.mealPrep.attivo === false);
   }
 
@@ -888,7 +963,7 @@
     const contenuto = document.getElementById("prep-contenuto");
     contenuto.addEventListener("change", (e) => {
       const chk = e.target.closest("[data-prep]");
-      if (chk) spuntaVocePrep(chk.dataset.prep, chk.checked);
+      if (chk) spuntaVocePrep(prefissoPrep() + chk.dataset.prep, chk.checked);
     });
     disegnaMealPrep();
   }
@@ -898,7 +973,7 @@
     if (!box || !SPESA.contesto) return;
     const M = window.mealPrep;
     const r = M.calcola(SPESA.contesto.giorni);
-    const fatti = new Set(SPESA.dati.prep || []);
+    const fatti = new Set((SPESA.dati.prep || []).filter((k) => !LISTA.id || k.startsWith(UID + ":")).map((k) => (LISTA.id ? k.slice(UID.length + 1) : k)));
     const tutte = r.sessioni.flatMap((s) => s.gruppi.flatMap((g) => g.voci));
     const completate = tutte.filter((v) => fatti.has(v.chiave)).length;
     const nota = PIANO_ATTIVO && PIANO_ATTIVO.mealPrep && PIANO_ATTIVO.mealPrep.note;
@@ -952,23 +1027,25 @@
     `;
   }
 
+  function prefissoPrep() { return LISTA.id ? UID + ":" : ""; }
+
   async function spuntaVocePrep(chiave, fatto) {
     const set = new Set(SPESA.dati.prep || []);
     if (fatto) set.add(chiave); else set.delete(chiave);
     SPESA.dati.prep = Array.from(set);
     disegnaMealPrep();
-    try { await window.cloud.spuntaPrep(UID, SPESA.docId, chiave, fatto); }
+    try { await window.cloud.spuntaPrep(destinazioneSpesa(), SPESA.docId, chiave, fatto); }
     catch (e) { mostraToast("Spunta non salvata: controlla la connessione"); }
   }
 
   function renderSpesa() {
-    if (!PIANO_ATTIVO) {
+    if (!PIANO_ATTIVO && RUOLO !== "familiare") {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
       return;
     }
     const settimane = settimaneSpesa();
     const sel = settimane[SPESA.offset] || settimane[0];
-    const giorni = PIANO_ATTIVO.settimane[sel.settimana];
+    const giorni = PIANO_ATTIVO ? PIANO_ATTIVO.settimane[sel.settimana] : [];
     if (!giorni) {
       root.innerHTML = `<div class="empty">La settimana ${sel.settimana} non è presente nel piano caricato.</div>`;
       return;
@@ -981,7 +1058,10 @@
     root.innerHTML = `
       ${interruttoreModoHTML("lista")}
       <section class="hero" style="border-bottom:none; margin-bottom:8px; padding-bottom:6px;">
-        <div class="hero__eyebrow"><span class="dot"></span> Lista della spesa</div>
+        <div class="spesa-intestazione">
+          <div class="hero__eyebrow"><span class="dot"></span> ${LISTA.dati ? escapeHTML(LISTA.dati.nome || "Lista di casa") : "Lista della spesa"}</div>
+          <button type="button" class="btn-casa ${LISTA.dati ? "is-attiva" : ""}" id="btn-lista-casa-spesa">👥 ${LISTA.dati ? `${(LISTA.dati.membri || []).length} in lista` : "Condividi"}</button>
+        </div>
         <div class="spesa-testata">
           <select id="sel-settimana-spesa" aria-label="Settimana">
             ${settimane.map((s) => `<option value="${s.k}" ${s.k === sel.k ? "selected" : ""}>${escapeHTML(s.etichetta)}</option>`).join("")}
@@ -996,7 +1076,7 @@
           </div>
         </div>
       </section>
-      <p class="hint" style="margin:0 0 12px;">Un articolo per alimento, ricavato dai pasti della settimana. ${vista === "blocchi"
+      <p class="hint" style="margin:0 0 12px;">${LISTA.dati ? "Lista condivisa: gli alimenti dei piani dei membri, sommati, più quello che aggiunge ciascuno." : "Un articolo per alimento, ricavato dai pasti della settimana."} ${vista === "blocchi"
         ? "Tocca un riquadro quando lo metti nel carrello; tienilo premuto per cambiarne nome o categoria."
         : "Spunta un articolo quando lo metti nel carrello; tocca ⋯ per cambiarne nome o categoria."}</p>
 
@@ -1018,6 +1098,7 @@
     });
     collegaInterruttoreModo();
 
+    document.getElementById("btn-lista-casa-spesa").addEventListener("click", apriListaCasa);
     root.querySelectorAll("[data-tempi]").forEach((b) => b.addEventListener("click", () => {
       localStorage.setItem(LS_TEMPI_SPESA, b.dataset.tempi);
       renderSpesa();
@@ -1040,7 +1121,7 @@
       }
       SPESA.dati.extra = SPESA.dati.extra.concat([testo]);
       disegnaContenutoSpesa();
-      try { await window.cloud.aggiungiArticoloSpesa(UID, SPESA.docId, testo); }
+      try { await window.cloud.aggiungiArticoloSpesa(destinazioneSpesa(), SPESA.docId, testo); }
       catch (e) { mostraToast("Articolo non salvato: controlla la connessione"); }
     };
     document.getElementById("btn-aggiungi-spesa").addEventListener("click", aggiungi);
@@ -1098,7 +1179,9 @@
     const daPrendere = tutte.filter((v) => !v.spuntata).length;
 
     if (!tutte.length && !daScegliere.length) {
-      box.innerHTML = `<div class="empty" style="padding:28px 12px;">Nessun alimento trovato nei pasti di questa settimana. Scrivi qui sotto quello che ti serve.</div>`;
+      box.innerHTML = `<div class="empty" style="padding:28px 12px;">${RUOLO === "familiare" && !LISTA.id
+        ? "Entra nella lista di casa con il codice che hai ricevuto (pulsante 👥 in alto), oppure scrivi qui sotto quello che ti serve."
+        : "Nessun alimento trovato nei pasti di questa settimana. Scrivi qui sotto quello che ti serve."}</div>`;
     } else {
       box.innerHTML = `
         <p class="spesa-riepilogo">${daPrendere === 0 && !daScegliere.length ? "Hai preso tutto. Buona settimana!" : `${daPrendere} ${daPrendere === 1 ? "articolo" : "articoli"} da prendere su ${tutte.length}`}</p>
@@ -1134,7 +1217,7 @@
       if (az) az.addEventListener("click", async () => {
         SPESA.dati.spuntate = [];
         disegnaContenutoSpesa();
-        try { await window.cloud.azzeraSpunteSpesa(UID, SPESA.docId); } catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
+        try { await window.cloud.azzeraSpunteSpesa(destinazioneSpesa(), SPESA.docId); } catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
       });
       const na = document.getElementById("btn-nascosti-spesa");
       if (na) na.addEventListener("click", apriNascostiSpesa);
@@ -1150,8 +1233,10 @@
   function dettaglioVoceHTML(v) {
     const A = window.alimenti;
     const giorni = v.giorni && Object.keys(v.giorni).length ? A.testoGiorni(v) : "";
+    const membri = LISTA.id && v.perMembro && Object.keys(v.perMembro).length > 1 && tempiSpesa() === 1
+      ? " · " + Object.entries(v.perMembro).map(([uid, t]) => `${nomeMembro(uid)} ${A.formattaQuantita(t)}`.trim()).join(", ") : "";
     const scelta = v.sceltaDa ? ` · <button type="button" class="link-inline link-inline--piccolo" data-scegli="${escapeHTML(v.sceltaDa)}">scelto tra ${v.numAlternative}: cambia</button>` : "";
-    return giorni || scelta ? `<span class="spesa-riga__giorni">${escapeHTML(giorni)}${scelta}</span>` : "";
+    return giorni || scelta || membri ? `<span class="spesa-riga__giorni">${escapeHTML(giorni + membri)}${scelta}</span>` : "";
   }
 
   function rigaSpesaHTML(v) {
@@ -1198,7 +1283,8 @@
   /** Scheda per scegliere tra le alternative del piano (o cambiare la scelta). */
   function apriSceltaAlternativa(chiaveAlt) {
     const A = window.alimenti;
-    const alt = A.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA).find((v) => v.chiave === chiaveAlt);
+    const alt = (SPESA.voci || []).find((v) => v.chiave === chiaveAlt && v.alternativa)
+      || A.listaDaSettimana(SPESA.contesto.giorni, CAMPI_SPESA).find((v) => v.chiave === chiaveAlt);
     if (!alt) return;
     const attuale = (SPESA.dati.scelte || {})[chiaveAlt] || null;
     const overlay = apriSheet(`
@@ -1220,7 +1306,7 @@
       SPESA.dati.scelte = scelte;
       chiudiSheet();
       disegnaContenutoSpesa();
-      try { await window.cloud.scegliAlternativaSpesa(UID, SPESA.docId, chiaveAlt, valore); }
+      try { await window.cloud.scegliAlternativaSpesa(destinazioneSpesa(), SPESA.docId, chiaveAlt, valore); }
       catch (e) { mostraToast("Scelta non salvata: controlla la connessione"); }
     };
     overlay.querySelectorAll("[data-opzione]").forEach((b) => b.addEventListener("click", () => salva(b.dataset.opzione)));
@@ -1233,7 +1319,7 @@
     if (spuntata) set.add(chiave); else set.delete(chiave);
     SPESA.dati.spuntate = Array.from(set);
     disegnaContenutoSpesa();
-    try { await window.cloud.spuntaSpesa(UID, SPESA.docId, chiave, spuntata); }
+    try { await window.cloud.spuntaSpesa(destinazioneSpesa(), SPESA.docId, chiave, spuntata); }
     catch (e) { mostraToast("Spunta non salvata: controlla la connessione"); }
   }
 
@@ -1345,7 +1431,7 @@
       SPESA.dati.extra = SPESA.dati.extra.filter((t) => !testi.includes(t));
       chiudiSheet();
       disegnaContenutoSpesa();
-      try { for (const t of testi) await window.cloud.rimuoviArticoloSpesa(UID, SPESA.docId, t); }
+      try { for (const t of testi) await window.cloud.rimuoviArticoloSpesa(destinazioneSpesa(), SPESA.docId, t); }
       catch (e) { mostraToast("Modifica non salvata: controlla la connessione"); }
     });
   }
@@ -1424,6 +1510,7 @@
   // Vista "Impostazioni" (paziente) — solo consultazione, niente modifiche al piano
   // ---------------------------------------------------------------------
   function renderImpostazioni() {
+    if (RUOLO === "familiare") { renderImpostazioniFamiliare(); return; }
     const p = (PIANO_ATTIVO && PIANO_ATTIVO.paziente) || {};
     const orari = orariEffettivi();
     const attive = notificheAttive();
@@ -1460,6 +1547,12 @@
             <input type="time" data-key="${key}" class="input-orario" value="${orari[key]}">
           </div>
         `).join("")}
+      </section>
+
+      <section class="settings-section">
+        <h2>Spesa condivisa</h2>
+        <p class="hint">${LISTA.dati ? `Fai parte di <strong>${escapeHTML(LISTA.dati.nome || "una lista di casa")}</strong>: la lista della spesa è condivisa con ${(LISTA.dati.membri || []).length - 1} ${(LISTA.dati.membri || []).length === 2 ? "altra persona" : "altre persone"}.` : "Fai la spesa insieme a chi vive con te: una sola lista, aggiornata in tempo reale su ogni telefono."}</p>
+        <button type="button" class="btn btn--ghost" id="btn-lista-casa-imp">${LISTA.dati ? "Gestisci la lista di casa" : "Condividi la lista della spesa"}</button>
       </section>
 
       <section class="settings-section">
@@ -1503,6 +1596,7 @@
       }
       mostraToast("Anticipo aggiornato");
     });
+    document.getElementById("btn-lista-casa-imp").addEventListener("click", apriListaCasa);
     document.getElementById("sel-tema").value = localStorage.getItem(LS_KEYS.tema) || "sistema";
     document.getElementById("sel-tema").addEventListener("change", (e) => {
       localStorage.setItem(LS_KEYS.tema, e.target.value);
@@ -2122,7 +2216,7 @@
       const testi = (r.ingredienti || []).map((t) => t.trim().slice(0, 80)).filter(Boolean);
       chiudiSheet();
       try {
-        await window.cloud.aggiungiArticoliSpesa(UID, s.docId, testi);
+        await window.cloud.aggiungiArticoliSpesa(destinazioneSpesa(), s.docId, testi);
         mostraToast(`Ingredienti aggiunti alla spesa di ${s.k === 0 ? "questa settimana" : "la prossima settimana"}`);
       } catch (e) {
         mostraToast("Non aggiunti: controlla la connessione");
@@ -2382,6 +2476,249 @@
           <span>${escapeHTML(MODALITA_APPUNTAMENTO[a.modalita] || "")}${a.note ? ` · ${escapeHTML(a.note)}` : ""}</span>
         </div>
       </div>`;
+  }
+
+  // ---------------------------------------------------------------------
+  // Lista di casa (spesa condivisa con familiari o con un altro paziente)
+  // ---------------------------------------------------------------------
+  // Membri e inviti li gestisce il server (Cloud Functions). Ogni paziente
+  // membro pubblica nella lista solo gli alimenti del suo piano (quantità e
+  // giorni); spunte, articoli aggiunti e scelte sono di tutti.
+  const LISTA = { id: null, dati: null, unsub: null, nomeUtente: "", inCorso: {} };
+
+  function destinazioneSpesa() {
+    return LISTA.id ? "lista:" + LISTA.id : UID;
+  }
+
+  function scollegaListaCasa() {
+    if (LISTA.unsub) { LISTA.unsub(); LISTA.unsub = null; }
+    LISTA.id = null; LISTA.dati = null;
+  }
+
+  function collegaListaCasa(listaId) {
+    if (LISTA.unsub) { LISTA.unsub(); LISTA.unsub = null; }
+    LISTA.id = listaId || null;
+    LISTA.dati = null;
+    if (!listaId) return;
+    LISTA.unsub = window.cloud.ascoltaListaCasa(listaId, (dati) => {
+      if (!dati || !(dati.membri || []).includes(UID)) {
+        // Lista sciolta o membro rimosso: si torna alla lista personale
+        const eraMembro = !!LISTA.dati;
+        scollegaListaCasa();
+        if (eraMembro) mostraToast("Non fai più parte della lista di casa", 3500);
+      } else {
+        LISTA.dati = dati;
+        pubblicaPianoInLista();
+      }
+      if (currentView === "spesa") renderSpesa();
+      if (currentView === "impostazioni") render();
+    });
+  }
+
+  function nomeMembro(uid) {
+    if (uid === UID) return "tu";
+    return (LISTA.dati && LISTA.dati.nomiMembri && LISTA.dati.nomiMembri[uid]) || "un membro";
+  }
+
+  /** Pubblica gli alimenti del proprio piano nelle prossime settimane della lista (solo se cambiati). */
+  function pubblicaPianoInLista() {
+    if (!LISTA.id || !PIANO_ATTIVO || RUOLO !== "paziente") return;
+    settimaneSpesa().forEach((s) => {
+      const giorni = PIANO_ATTIVO.settimane[s.settimana];
+      if (!giorni) return;
+      const voci = JSON.parse(JSON.stringify(window.alimenti.listaDaSettimana(giorni, CAMPI_SPESA)));
+      const impronta = JSON.stringify(voci);
+      const chiave = `pnut:pubblicato:${LISTA.id}:${s.docId}`;
+      // niente doppioni: né se è già pubblicato, né se la stessa pubblicazione è in corso
+      if (localStorage.getItem(chiave) === impronta || LISTA.inCorso[chiave] === impronta) return;
+      LISTA.inCorso[chiave] = impronta;
+      window.cloud.pubblicaPianoInLista(LISTA.id, s.docId, UID, LISTA.nomeUtente || "Membro", voci)
+        .then(() => localStorage.setItem(chiave, impronta))
+        .catch((e) => console.warn("Pubblicazione nella lista di casa non riuscita:", e))
+        .finally(() => { if (LISTA.inCorso[chiave] === impronta) delete LISTA.inCorso[chiave]; });
+    });
+  }
+
+  function erroreLista(e) {
+    const m = String((e && e.message) || "");
+    if (m === "codice-non-valido") return "Codice non valido o scaduto: chiedine uno nuovo a chi ti ha invitato.";
+    if (m === "gia-in-lista") return "Fai già parte di una lista di casa: esci da quella prima di entrare in un'altra.";
+    if (m === "lista-piena") return "Questa lista ha già il numero massimo di membri (6).";
+    if (e && /permission/.test(String(e.code))) return m || "Operazione non consentita.";
+    return "Non riuscito: controlla la connessione e riprova.";
+  }
+
+  function linkInvito(codice) {
+    return `${location.origin}${location.pathname.replace(/index\.html$/, "")}?invito=${codice}`;
+  }
+
+  /** Testo del consenso per i pazienti: cosa vedranno gli altri membri. */
+  function consensoPazienteHTML() {
+    if (RUOLO !== "paziente") return "";
+    return `<label class="ric-scelta consenso-lista"><input type="checkbox" id="lista-consenso"> <span>Acconsento che gli altri membri della lista vedano gli alimenti del mio piano, con quantità e giorni (non vedranno il piano completo, gli orari né altri miei dati).</span></label>`;
+  }
+
+  function apriListaCasa() {
+    if (!LISTA.id) { apriIngressoListaCasa(""); return; }
+    const d = LISTA.dati || {};
+    const proprietario = d.proprietario === UID;
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">👥 ${escapeHTML(d.nome || "Lista di casa")}</h2>
+      <p class="sheet__nota">Una sola lista per tutti: spunte, articoli aggiunti e scelte si vedono in tempo reale su ogni telefono.${RUOLO === "paziente" ? " Gli alimenti del tuo piano compaiono sommati a quelli degli altri." : ""}</p>
+      <ul class="spesa-lista" style="margin-bottom:12px;">
+        ${(d.membri || []).map((uid) => `
+          <li class="spesa-riga">
+            <span class="spesa-riga__icona" aria-hidden="true">${uid === d.proprietario ? "⭐" : "👤"}</span>
+            <span class="spesa-riga__nome" style="flex:1;">${escapeHTML(uid === UID ? `${LISTA.nomeUtente || "Tu"} (tu)` : nomeMembro(uid))}</span>
+            ${proprietario && uid !== UID ? `<button type="button" class="link-btn" style="width:auto;padding:0 6px;" data-rimuovi-membro="${escapeHTML(uid)}">Togli</button>` : ""}
+          </li>`).join("")}
+      </ul>
+      ${(d.membri || []).length < 6 ? `
+        <p class="stato-pasto__domanda">Invita qualcuno</p>
+        <p class="sheet__nota" style="margin-top:0;">Codice <strong class="codice-invito">${escapeHTML(d.codiceInvito || "—")}</strong>, valido 14 giorni. Chi lo riceve apre il link, accede (o si registra come familiare) e conferma.</p>
+        <button type="button" class="btn" id="lista-invita-wa">Invia l'invito con WhatsApp</button>
+        <button type="button" class="btn btn--ghost" id="lista-copia">Copia il link di invito</button>
+        <button type="button" class="link-btn" id="lista-nuovo-codice">Crea un nuovo codice (quello vecchio smette di funzionare)</button>` : `<p class="sheet__nota">La lista ha già 6 membri, il massimo.</p>`}
+      <button type="button" class="btn btn--ghost" id="lista-esci" style="margin-top:10px;">Esci dalla lista</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>
+    `);
+    const testoInvito = () => `Ciao! Facciamo la spesa insieme con Il mio Piano: apri questo link ed entra nella nostra lista di casa (codice ${LISTA.dati.codiceInvito}).\n${linkInvito(LISTA.dati.codiceInvito)}`;
+    const wa = overlay.querySelector("#lista-invita-wa");
+    if (wa) wa.addEventListener("click", () => window.open("https://wa.me/?text=" + encodeURIComponent(testoInvito()), "_blank", "noopener"));
+    const cp = overlay.querySelector("#lista-copia");
+    if (cp) cp.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(linkInvito(LISTA.dati.codiceInvito)); mostraToast("Link copiato"); }
+      catch (e) { mostraToast("Copia non riuscita"); }
+    });
+    const nc = overlay.querySelector("#lista-nuovo-codice");
+    if (nc) nc.addEventListener("click", async () => {
+      nc.disabled = true;
+      try { await window.cloud.chiamaFunzioneLista("nuovoInvitoLista"); mostraToast("Nuovo codice creato"); chiudiSheet(); }
+      catch (e) { nc.disabled = false; mostraToast(erroreLista(e), 4000); }
+    });
+    overlay.querySelectorAll("[data-rimuovi-membro]").forEach((b) => b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await window.cloud.chiamaFunzioneLista("rimuoviMembroLista", { uid: b.dataset.rimuoviMembro }); mostraToast("Membro tolto dalla lista"); chiudiSheet(); }
+      catch (e) { b.disabled = false; mostraToast(erroreLista(e), 4000); }
+    }));
+    overlay.querySelector("#lista-esci").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await window.cloud.chiamaFunzioneLista("esciDaLista");
+        chiudiSheet();
+        scollegaListaCasa();
+        mostraToast("Sei uscito dalla lista di casa: torni alla tua lista personale", 3500);
+        render();
+      } catch (err) { btn.disabled = false; mostraToast(erroreLista(err), 4000); }
+    });
+  }
+
+  /** Crea una lista oppure entra con un codice (anche arrivato da un link di invito). */
+  function apriIngressoListaCasa(codiceIniziale) {
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">👥 Spesa condivisa</h2>
+      <p class="sheet__nota">Una lista della spesa unica con chi vive con te: spunte, articoli aggiunti e scelte si vedono in tempo reale su ogni telefono. ${RUOLO === "paziente" ? "Se anche l'altra persona ha un piano, gli alimenti si sommano." : ""}</p>
+      ${consensoPazienteHTML()}
+      <p class="stato-pasto__domanda">${codiceIniziale ? "Hai ricevuto un invito" : "Hai un codice di invito?"}</p>
+      <div class="editor-campo" style="flex-direction:row; gap:8px; align-items:stretch;">
+        <input type="text" id="lista-codice" maxlength="12" placeholder="Es. K7M2QX9P" value="${escapeHTML(codiceIniziale || "")}" style="flex:1; text-transform:uppercase;" autocomplete="off">
+        <button type="button" class="btn" id="lista-entra" style="width:auto; padding:0 16px;">Entra</button>
+      </div>
+      ${codiceIniziale ? "" : `
+        <p class="stato-pasto__domanda" style="margin-top:14px;">Oppure crea tu la lista e invita gli altri</p>
+        <button type="button" class="btn btn--ghost" id="lista-crea">Crea la lista di casa</button>`}
+      <p id="lista-errore" class="auth-error" hidden></p>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    const errore = (msg) => { const el = overlay.querySelector("#lista-errore"); el.textContent = msg; el.hidden = false; };
+    const consensoOk = () => {
+      const c = overlay.querySelector("#lista-consenso");
+      if (c && !c.checked) { errore("Per condividere la lista serve il tuo consenso qui sopra."); return false; }
+      return true;
+    };
+    const dopo = (listaId, messaggio) => {
+      sessionStorage.removeItem(LS_INVITO);
+      chiudiSheet();
+      collegaListaCasa(listaId);
+      mostraToast(messaggio, 3500);
+      currentView = "spesa";
+      document.querySelectorAll(".tabbar__btn").forEach((b) => b.classList.toggle("is-active", b.dataset.view === "spesa"));
+      render();
+    };
+    overlay.querySelector("#lista-entra").addEventListener("click", async (e) => {
+      const codice = overlay.querySelector("#lista-codice").value.trim();
+      if (!codice) { errore("Scrivi il codice di invito."); return; }
+      if (!consensoOk()) return;
+      e.currentTarget.disabled = true;
+      try {
+        const r = await window.cloud.chiamaFunzioneLista("entraInLista", { codice });
+        dopo(r.listaId, r.nome ? `Sei entrato in "${r.nome}"` : "Sei nella lista di casa");
+      } catch (err) { e.currentTarget.disabled = false; errore(erroreLista(err)); }
+    });
+    const crea = overlay.querySelector("#lista-crea");
+    if (crea) crea.addEventListener("click", async () => {
+      if (!consensoOk()) return;
+      crea.disabled = true;
+      try {
+        const r = await window.cloud.chiamaFunzioneLista("creaListaCasa");
+        dopo(r.listaId, "Lista di casa creata: ora invita chi fa la spesa con te");
+        setTimeout(apriListaCasa, 600);
+      } catch (err) { crea.disabled = false; errore(erroreLista(err)); }
+    });
+  }
+
+  /** Invito ricevuto con un link: dopo l'accesso chiede conferma. */
+  function gestisciInvitoInSospeso() {
+    const codice = sessionStorage.getItem(LS_INVITO);
+    if (!codice) return;
+    if (RUOLO === "professionista") { sessionStorage.removeItem(LS_INVITO); return; }
+    if (LISTA.id) { sessionStorage.removeItem(LS_INVITO); mostraToast("Fai già parte di una lista di casa", 3500); return; }
+    setTimeout(() => apriIngressoListaCasa(codice), 500);
+  }
+
+  // ---------------------------------------------------------------------
+  // Account familiare: solo la spesa condivisa
+  // ---------------------------------------------------------------------
+  async function avviaFamiliare(utenteDati) {
+    mostraSchermata("paziente");
+    document.body.classList.add("ruolo-familiare");
+    applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
+    CONFIG = await caricaConfig();
+    aggiornaEyebrowData();
+    registraServiceWorker();
+    collegaTabbar();
+    PIANO_ATTIVO = null;
+    LISTA.nomeUtente = String(utenteDati.nome || "").trim().split(/\s+/)[0];
+    collegaListaCasa(utenteDati.listaCasa || null);
+    currentView = "spesa";
+    document.querySelectorAll(".tabbar__btn").forEach((b) => b.classList.toggle("is-active", b.dataset.view === "spesa"));
+    render();
+    gestisciInvitoInSospeso();
+  }
+
+  function renderImpostazioniFamiliare() {
+    const d = LISTA.dati;
+    root.innerHTML = `
+      <section class="settings-section">
+        <h2>Spesa condivisa</h2>
+        ${d ? `<p class="hint">Fai parte di <strong>${escapeHTML(d.nome || "una lista di casa")}</strong> con ${(d.membri || []).length - 1} ${(d.membri || []).length === 2 ? "altra persona" : "altre persone"}.</p>`
+          : `<p class="hint">Non fai ancora parte di una lista di casa: entra con il codice che hai ricevuto, oppure creane una.</p>`}
+        <button type="button" class="btn" id="btn-lista-casa">${d ? "Gestisci la lista di casa" : "Entra o crea una lista"}</button>
+      </section>
+      <section class="settings-section">
+        <h2>Aspetto</h2>
+        <div class="field-row"><span class="field-row__label">Tema</span>
+          <select id="sel-tema-fam">
+            <option value="sistema">Segue il sistema</option><option value="chiaro">Chiaro</option><option value="scuro">Scuro</option>
+          </select></div>
+      </section>
+      <p class="hint">Account familiare: vedi solo la lista della spesa condivisa. Il piano nutrizionale resta privato di chi lo segue.</p>
+    `;
+    document.getElementById("btn-lista-casa").addEventListener("click", apriListaCasa);
+    const sel = document.getElementById("sel-tema-fam");
+    sel.value = localStorage.getItem(LS_KEYS.tema) || "sistema";
+    sel.addEventListener("change", () => { localStorage.setItem(LS_KEYS.tema, sel.value); applyTema(sel.value); });
   }
 
   // =======================================================================

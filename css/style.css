@@ -1648,3 +1648,20 @@ p.stat-motivi { padding-left: 0; }
 .scelta-opzione__testo { display: flex; flex-direction: column; gap: 1px; }
 .scelta-opzione__testo small { font-size: 12px; font-weight: 500; color: var(--ink-soft); }
 .spesa-testata .spesa-vista { flex: none; }
+
+/* Lista di casa e account familiare */
+body.ruolo-familiare .tabbar__btn[data-view="oggi"],
+body.ruolo-familiare .tabbar__btn[data-view="settimana"],
+body.ruolo-familiare .tabbar__btn[data-view="ricette"],
+body.ruolo-familiare #btn-notifiche { display: none; }
+.spesa-intestazione { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.btn-casa {
+  flex: none; font-family: var(--font-body); font-size: 13px; font-weight: 600; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; cursor: pointer;
+}
+.btn-casa.is-attiva { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.codice-invito { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; letter-spacing: 0.12em; color: var(--ink); }
+.consenso-lista { align-items: flex-start; font-size: 13.5px; line-height: 1.45; background: var(--bg); border-radius: var(--radius-s); padding: 10px 12px; margin: 4px 0 12px; }
+.consenso-lista input { margin-top: 2px; }
+.avviso-invito { font-size: 13.5px; line-height: 1.45; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border: 1px solid var(--border); border-radius: var(--radius-s); padding: 10px 12px; margin: 0 0 12px; }
+#blocco-signup-familiare { margin-top: 12px; }

@@ -50,6 +50,24 @@
 
     <hr class="auth-sep">
 
+    <p class="avviso-invito" id="avviso-invito" hidden>👥 Hai ricevuto un invito a una <strong>lista della spesa condivisa</strong>: accedi con il tuo account, oppure registrati qui sotto come familiare.</p>
+
+    <div id="blocco-signup-familiare">
+      <p class="hint">Fai la spesa con un paziente di Il mio Piano?</p>
+      <button type="button" class="btn btn--ghost" id="btn-mostra-signup-familiare">Registrati come familiare</button>
+    </div>
+
+    <form id="form-signup-familiare" class="auth-form" hidden>
+      <label class="auth-field"><span>Nome</span><input type="text" id="fam-nome" required autocomplete="given-name"></label>
+      <label class="auth-field"><span>Email</span><input type="email" id="fam-email" required autocomplete="email"></label>
+      <label class="auth-field"><span>Password (almeno 6 caratteri)</span><input type="password" id="fam-password" required minlength="6" autocomplete="new-password"></label>
+      <p class="auth-error" id="fam-error" hidden></p>
+      <p class="hint">Gratuito. Con questo account vedi e compili solo la lista della spesa condivisa con chi ti ha invitato.</p>
+      <label class="auth-check"><input type="checkbox" required> <span>Ho letto l'<a href="https://ilmiopiano.it/privacy.html" target="_blank" rel="noopener" data-link="privacy">Informativa privacy</a></span></label>
+      <button type="submit" class="btn">Crea account familiare</button>
+      <button type="button" class="link-btn" id="btn-annulla-signup-familiare">Torna all'accesso</button>
+    </form>
+
     <div id="blocco-signup-professionista">
       <p class="hint">Sei un professionista (dietista/nutrizionista)?</p>
       <button type="button" class="btn btn--ghost" id="btn-mostra-signup">Registrati come professionista</button>

@@ -60,12 +60,17 @@ service cloud.firestore {
       // Dal browser si può creare solo il profilo di un professionista (con la
       // prova gratuita). I profili dei pazienti li crea il server (funzione
       // creaPaziente), che controlla il limite della licenza.
-      allow create: if isSignedIn() && request.auth.uid == userId
-        && request.resource.data.ruolo == "professionista" && provaValida(request.resource.data.licenza);
+      allow create: if isSignedIn() && request.auth.uid == userId && (
+        (request.resource.data.ruolo == "professionista" && provaValida(request.resource.data.licenza)) ||
+        // Familiare: solo lista della spesa condivisa, niente licenza né professionista
+        (request.resource.data.ruolo == "familiare"
+          && !("licenza" in request.resource.data) && !("professionistaUid" in request.resource.data)
+          && !("listaCasa" in request.resource.data))
+      );
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa"]);
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
@@ -133,6 +138,20 @@ service cloud.firestore {
         && request.resource.data.get("messaggio", "") is string
         && request.resource.data.get("messaggio", "").size() <= 1000;
       allow update: if false;
+    }
+
+    // Lista della spesa condivisa ("lista di casa"). La leggono solo i suoi
+    // membri; membri e inviti li gestisce il server (funzioni creaListaCasa,
+    // entraInLista, esciDaLista, rimuoviMembroLista, nuovoInvitoLista). Le
+    // settimane (spunte, articoli, scelte, alimenti pubblicati) le compilano
+    // tutti i membri.
+    match /liste/{listaId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.membri;
+      allow write: if false;
+      match /settimane/{settimanaId} {
+        allow read, write: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/liste/$(listaId)).data.membri;
+      }
     }
 
     // Tutto il resto (licenze in attesa, registro notifiche) è solo per il server.

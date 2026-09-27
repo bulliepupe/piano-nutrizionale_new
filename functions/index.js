@@ -245,10 +245,12 @@ exports.eliminaPaziente = onCall(async (request) => {
       if (e.code !== "auth/user-not-found") throw new HttpsError("internal", "Impossibile eliminare l'account di accesso.");
     }
 
-    // 2) Documento utente + sottoraccolte (spunte "pasto fatto").
+    // 2) Esce dalla eventuale lista di casa (gli altri membri non vedono più i suoi alimenti)
+    if (utente.exists && utente.data().listaCasa) await lasciaLista(pazienteUid, utente.data().listaCasa).catch(() => {});
+    // 3) Documento utente + sottoraccolte (spunte "pasto fatto").
     if (utente.exists) await db.recursiveDelete(utenteRef);
 
-    // 3) Registro dei promemoria inviati (documenti "<uid>_<data>").
+    // 4) Registro dei promemoria inviati (documenti "<uid>_<data>").
     const registro = await db.collection("notificheInviate")
       .orderBy(FieldPath.documentId())
       .startAt(pazienteUid + "_")
@@ -375,6 +377,155 @@ exports.creaPaziente = onCall(async (request) => {
   }
 
   return { pazienteUid: utente.uid, pianoId: pianoRef.id };
+});
+
+// =========================================================================
+// LISTA DELLA SPESA CONDIVISA ("lista di casa")
+// =========================================================================
+// /liste/{id}: nome, proprietario, membri [uid], nomiMembri {uid: nome},
+// codiceInvito. /liste/{id}/settimane/{lunedì}: spunte, articoli aggiunti,
+// scelte e gli alimenti pubblicati da ogni paziente membro (piani.{uid}).
+// /inviti/{codice}: { listaId, scade } — letto solo dal server.
+// Dal browser le liste si leggono e le settimane si compilano (solo membri);
+// membri e inviti li gestiscono queste funzioni.
+const MAX_MEMBRI_LISTA = 6;
+const GIORNI_VALIDITA_INVITO = 14;
+const ALFABETO_INVITO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // niente 0/O, 1/I
+
+function nuovoCodice() {
+  let c = "";
+  for (let i = 0; i < 8; i++) c += ALFABETO_INVITO[Math.floor(Math.random() * ALFABETO_INVITO.length)];
+  return c;
+}
+
+async function utenteListaAmmesso(uid) {
+  const snap = await db.collection("users").doc(uid).get();
+  const u = snap.exists ? snap.data() : null;
+  if (!u || (u.ruolo !== "paziente" && u.ruolo !== "familiare")) {
+    throw new HttpsError("permission-denied", "La lista di casa è disponibile per pazienti e familiari.");
+  }
+  return u;
+}
+
+async function creaInvito(listaId, uid) {
+  const codice = nuovoCodice();
+  await db.collection("inviti").doc(codice).set({
+    listaId, creatoDa: uid, scade: Timestamp.fromMillis(Date.now() + GIORNI_VALIDITA_INVITO * 86400000),
+  });
+  return codice;
+}
+
+/** Toglie un membro da una lista; se era l'ultimo la lista viene cancellata. */
+async function lasciaLista(uid, listaId) {
+  const listaRef = db.collection("liste").doc(listaId);
+  let cancellare = false, codiceVecchio = null;
+  await db.runTransaction(async (t) => {
+    const lista = await t.get(listaRef);
+    t.set(db.collection("users").doc(uid), { listaCasa: FieldValue.delete() }, { merge: true });
+    if (!lista.exists) return;
+    const d = lista.data();
+    const membri = (d.membri || []).filter((m) => m !== uid);
+    if (!membri.length) { cancellare = true; codiceVecchio = d.codiceInvito || null; return; }
+    t.update(listaRef, {
+      membri,
+      [`nomiMembri.${uid}`]: FieldValue.delete(),
+      proprietario: d.proprietario === uid ? membri[0] : d.proprietario,
+      aggiornata: FieldValue.serverTimestamp(),
+    });
+  });
+  if (cancellare) {
+    await db.recursiveDelete(listaRef);
+    if (codiceVecchio) await db.collection("inviti").doc(codiceVecchio).delete().catch(() => {});
+    return;
+  }
+  // Gli alimenti che aveva pubblicato non devono restare visibili agli altri
+  const settimane = await listaRef.collection("settimane").get();
+  await Promise.all(settimane.docs.map((doc) => doc.ref.update({ [`piani.${uid}`]: FieldValue.delete() }).catch(() => {})));
+}
+
+exports.creaListaCasa = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const u = await utenteListaAmmesso(uid);
+  if (u.listaCasa) throw new HttpsError("failed-precondition", "gia-in-lista");
+  const nomeProprio = String(u.nome || "").trim().split(/\s+/)[0] || "Io";
+  const nomeLista = String((request.data && request.data.nome) || "").trim().slice(0, 60) || `Spesa di casa ${nomeProprio}`;
+  const listaRef = db.collection("liste").doc();
+  const codice = await creaInvito(listaRef.id, uid);
+  await db.runTransaction(async (t) => {
+    t.create(listaRef, {
+      nome: nomeLista, proprietario: uid, membri: [uid], nomiMembri: { [uid]: nomeProprio },
+      codiceInvito: codice, creata: FieldValue.serverTimestamp(), aggiornata: FieldValue.serverTimestamp(),
+    });
+    t.set(db.collection("users").doc(uid), { listaCasa: listaRef.id }, { merge: true });
+  });
+  return { listaId: listaRef.id, codice };
+});
+
+exports.entraInLista = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const codice = String((request.data && request.data.codice) || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (codice.length !== 8) throw new HttpsError("invalid-argument", "codice-non-valido");
+  const u = await utenteListaAmmesso(uid);
+  const invito = await db.collection("inviti").doc(codice).get();
+  if (!invito.exists || invito.data().scade.toMillis() < Date.now()) throw new HttpsError("not-found", "codice-non-valido");
+  const listaId = invito.data().listaId;
+  if (u.listaCasa === listaId) return { listaId, giaMembro: true };
+  if (u.listaCasa) throw new HttpsError("failed-precondition", "gia-in-lista");
+  const listaRef = db.collection("liste").doc(listaId);
+  const nomeProprio = String(u.nome || "").trim().split(/\s+/)[0] || "Membro";
+  let nomeLista = "";
+  await db.runTransaction(async (t) => {
+    const lista = await t.get(listaRef);
+    if (!lista.exists) throw new HttpsError("not-found", "codice-non-valido");
+    const d = lista.data();
+    if ((d.membri || []).length >= MAX_MEMBRI_LISTA) throw new HttpsError("resource-exhausted", "lista-piena");
+    nomeLista = d.nome;
+    t.update(listaRef, {
+      membri: FieldValue.arrayUnion(uid),
+      [`nomiMembri.${uid}`]: nomeProprio,
+      aggiornata: FieldValue.serverTimestamp(),
+    });
+    t.set(db.collection("users").doc(uid), { listaCasa: listaId }, { merge: true });
+  });
+  return { listaId, nome: nomeLista };
+});
+
+exports.esciDaLista = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const u = (await db.collection("users").doc(uid).get()).data() || {};
+  if (u.listaCasa) await lasciaLista(uid, u.listaCasa);
+  return { ok: true };
+});
+
+exports.rimuoviMembroLista = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const membro = String((request.data && request.data.uid) || "");
+  const u = (await db.collection("users").doc(uid).get()).data() || {};
+  if (!u.listaCasa) throw new HttpsError("failed-precondition", "Non fai parte di una lista.");
+  const lista = await db.collection("liste").doc(u.listaCasa).get();
+  if (!lista.exists || lista.data().proprietario !== uid) throw new HttpsError("permission-denied", "Solo chi ha creato la lista può togliere i membri.");
+  if (!membro || membro === uid || !(lista.data().membri || []).includes(membro)) throw new HttpsError("invalid-argument", "Membro non valido.");
+  await lasciaLista(membro, u.listaCasa);
+  return { ok: true };
+});
+
+exports.nuovoInvitoLista = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const u = (await db.collection("users").doc(uid).get()).data() || {};
+  if (!u.listaCasa) throw new HttpsError("failed-precondition", "Non fai parte di una lista.");
+  const listaRef = db.collection("liste").doc(u.listaCasa);
+  const lista = await listaRef.get();
+  if (!lista.exists || !(lista.data().membri || []).includes(uid)) throw new HttpsError("permission-denied", "Non fai parte di questa lista.");
+  const vecchio = lista.data().codiceInvito;
+  const codice = await creaInvito(u.listaCasa, uid);
+  await listaRef.update({ codiceInvito: codice, aggiornata: FieldValue.serverTimestamp() });
+  if (vecchio) await db.collection("inviti").doc(vecchio).delete().catch(() => {});
+  return { codice };
 });
 
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.

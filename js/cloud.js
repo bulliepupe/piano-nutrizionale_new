@@ -47,6 +47,18 @@
 
   const FieldValue = firebase.firestore.FieldValue;
 
+  /**
+   * Documento della lista della spesa di una settimana. "chi" è l'uid del
+   * paziente (lista personale) oppure "lista:<id>" per la lista di casa
+   * condivisa con altri.
+   */
+  function refSettimanaSpesa(chi, docId) {
+    const c = String(chi || "");
+    return c.startsWith("lista:")
+      ? db.collection("liste").doc(c.slice(6)).collection("settimane").doc(docId)
+      : db.collection("users").doc(c).collection("spesa").doc(docId);
+  }
+
   // Firebase Storage: foto delle ricette e allegati (PDF o immagini) caricati
   // dal professionista. Se lo script non è caricato, le ricette funzionano
   // lo stesso ma senza file.
@@ -348,7 +360,7 @@
     /** Aggiunge più articoli insieme alla lista della spesa di una settimana. */
     async aggiungiArticoliSpesa(uid, docId, testi) {
       if (!testi.length) return;
-      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+      await refSettimanaSpesa(uid, docId).set({
         extra: FieldValue.arrayUnion.apply(null, testi), aggiornato: FieldValue.serverTimestamp(),
       }, { merge: true });
     },
@@ -425,22 +437,56 @@
     // "preferenze" con le correzioni del paziente (categoria, nome, nascosti).
     // ------------------------------------------------------------------
     ascoltaSpesa(uid, docId, cb) {
-      return db.collection("users").doc(uid).collection("spesa").doc(docId).onSnapshot(
+      return refSettimanaSpesa(uid, docId).onSnapshot(
         (doc) => cb(doc.exists ? doc.data() : {}),
         (err) => { console.error("Errore ascolto lista spesa:", err); cb({}); }
       );
     },
 
     async spuntaSpesa(uid, docId, chiave, spuntata) {
-      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+      await refSettimanaSpesa(uid, docId).set({
         spuntate: spuntata ? FieldValue.arrayUnion(chiave) : FieldValue.arrayRemove(chiave),
         aggiornato: FieldValue.serverTimestamp(),
       }, { merge: true });
     },
 
+    // ------------------------------------------------------------------
+    // Lista di casa (spesa condivisa)
+    // ------------------------------------------------------------------
+    async registraFamiliare(email, password, nome) {
+      const cred = await auth.createUserWithEmailAndPassword(email.trim(), password);
+      await db.collection("users").doc(cred.user.uid).set({
+        ruolo: "familiare",
+        nome: (nome || "").trim(),
+        email: email.trim().toLowerCase(),
+        creato: FieldValue.serverTimestamp(),
+      });
+      return cred.user;
+    },
+
+    ascoltaListaCasa(listaId, cb) {
+      return db.collection("liste").doc(listaId).onSnapshot(
+        (doc) => cb(doc.exists ? Object.assign({ id: doc.id }, doc.data()) : null),
+        () => cb(null)
+      );
+    },
+
+    async chiamaFunzioneLista(nome, dati) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const r = await funzioni.httpsCallable(nome)(dati || {});
+      return r.data;
+    },
+
+    /** Il paziente pubblica nella lista di casa gli alimenti del suo piano per una settimana. */
+    async pubblicaPianoInLista(listaId, docId, uid, nome, voci) {
+      await db.collection("liste").doc(listaId).collection("settimane").doc(docId).set({
+        piani: { [uid]: { nome, voci, aggiornato: FieldValue.serverTimestamp() } },
+      }, { merge: true });
+    },
+
     /** Scelta tra alternative del piano ("Carboidrato a scelta" → riso basmati). */
     async scegliAlternativaSpesa(uid, docId, chiaveAlternativa, chiaveScelta) {
-      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+      await refSettimanaSpesa(uid, docId).set({
         scelte: { [chiaveAlternativa]: chiaveScelta || FieldValue.delete() },
         aggiornato: FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -448,26 +494,26 @@
 
     /** Checklist del meal prep: stesso documento della lista della spesa di quella settimana. */
     async spuntaPrep(uid, docId, chiave, fatto) {
-      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+      await refSettimanaSpesa(uid, docId).set({
         prep: fatto ? FieldValue.arrayUnion(chiave) : FieldValue.arrayRemove(chiave),
         aggiornato: FieldValue.serverTimestamp(),
       }, { merge: true });
     },
 
     async azzeraSpunteSpesa(uid, docId) {
-      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+      await refSettimanaSpesa(uid, docId).set({
         spuntate: [], aggiornato: FieldValue.serverTimestamp(),
       }, { merge: true });
     },
 
     async aggiungiArticoloSpesa(uid, docId, testo) {
-      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+      await refSettimanaSpesa(uid, docId).set({
         extra: FieldValue.arrayUnion(testo), aggiornato: FieldValue.serverTimestamp(),
       }, { merge: true });
     },
 
     async rimuoviArticoloSpesa(uid, docId, testo) {
-      await db.collection("users").doc(uid).collection("spesa").doc(docId).set({
+      await refSettimanaSpesa(uid, docId).set({
         extra: FieldValue.arrayRemove(testo), aggiornato: FieldValue.serverTimestamp(),
       }, { merge: true });
     },
