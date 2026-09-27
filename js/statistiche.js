@@ -40,10 +40,22 @@
     fuori: "Ho mangiato fuori casa",
     fame: "Non avevo fame",
     tempo: "Non ho avuto tempo",
+    altroPiatto: "Ho mangiato altro",
     altro: "Altro",
   };
-  const MOTIVI_PARZIALE = ["nonFinito", "cambiato", "fuori", "altro"];
-  const MOTIVI_SALTATO = ["fame", "tempo", "altro"];
+  const MOTIVI_PARZIALE = ["nonFinito", "cambiato", "fuori", "altroPiatto", "altro"];
+  const MOTIVI_SALTATO = ["fame", "tempo", "altroPiatto", "altro"];
+  // Suggerimento per la nota facoltativa, in base al motivo scelto
+  const SUGGERIMENTI_NOTA = {
+    nonFinito: "Cosa hai lasciato? Es. metà della pasta",
+    cambiato: "Cosa hai cambiato? Es. riso al posto della pasta",
+    fuori: "Cosa hai mangiato? Es. pizza margherita",
+    altroPiatto: "Cosa hai mangiato al suo posto?",
+    fame: "Vuoi aggiungere qualcosa?",
+    tempo: "Vuoi aggiungere qualcosa?",
+    altro: "Racconta in breve com'è andata",
+  };
+  const MAX_NOTA = 200;
 
   /** Stato normalizzato di un pasto: "fatto" | "parziale" | "saltato" | null. */
   function statoPasto(stato, k) {
@@ -113,7 +125,7 @@
     // Pasti fatti in parte o saltati negli ultimi 30 giorni, con i motivi
     // (qui conta anche oggi: sono segnalazioni esplicite del paziente, non
     // serve aspettare la fine della giornata per mostrarle)
-    const imprevisti = { parziale: { totale: 0, motivi: {}, perPasto: {} }, saltato: { totale: 0, motivi: {}, perPasto: {} } };
+    const imprevisti = { parziale: { totale: 0, motivi: {}, perPasto: {} }, saltato: { totale: 0, motivi: {}, perPasto: {} }, note: [] };
     const giorniImprevisti = pianoIniziato ? g30.concat([{ chiave: chiave(oggi) }]) : g30;
     giorniImprevisti.forEach((g) => {
       const stato = spunte[g.chiave];
@@ -125,6 +137,8 @@
         gruppo.perPasto[k] = (gruppo.perPasto[k] || 0) + 1;
         const motivo = stato.motivi && MOTIVI[stato.motivi[k]] ? stato.motivi[k] : null;
         if (motivo) gruppo.motivi[motivo] = (gruppo.motivi[motivo] || 0) + 1;
+        const nota = stato.note && typeof stato.note[k] === "string" ? stato.note[k].trim() : "";
+        if (nota) imprevisti.note.push({ giorno: g.chiave, pasto: k, stato: st, motivo, nota });
       });
     });
 
@@ -200,7 +214,7 @@
     return {
       stato, motivi, pianoIniziato,
       aderenza7: a7, aderenza30: aderenza(g30), giorniValutati30: g30.length,
-      perPasto, imprevisti,
+      perPasto, imprevisti: Object.assign(imprevisti, { note: imprevisti.note.sort((a, b) => (a.giorno < b.giorno ? 1 : a.giorno > b.giorno ? -1 : PASTI.indexOf(b.pasto) - PASTI.indexOf(a.pasto))).slice(0, 15) }),
       feriali: aderenza(g30.filter((g) => !g.weekend)),
       weekend: aderenza(g30.filter((g) => g.weekend)),
       settimane, calendario,
@@ -216,7 +230,7 @@
   const ORDINE_STATO = { rosso: 0, giallo: 1, verde: 2, attesa: 3 };
 
   const api = {
-    PASTI, SOGLIA_GIORNO_OK, MOTIVI, MOTIVI_PARZIALE, MOTIVI_SALTATO, statoPasto, GIORNI_ALLARME, SOGLIA_ADERENZA_BASSA, GIORNI_STORICO, ORDINE_STATO,
+    PASTI, SOGLIA_GIORNO_OK, MOTIVI, MOTIVI_PARZIALE, MOTIVI_SALTATO, SUGGERIMENTI_NOTA, MAX_NOTA, statoPasto, GIORNI_ALLARME, SOGLIA_ADERENZA_BASSA, GIORNI_STORICO, ORDINE_STATO,
     calcola, primoGiornoStorico, chiave, daChiave, differenzaGiorni,
   };
   if (typeof window !== "undefined") window.statistiche = api;

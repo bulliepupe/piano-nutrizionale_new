@@ -1673,3 +1673,13 @@ body.ruolo-familiare #btn-notifiche { display: none; }
 .spesa-cat--scelta .spesa-cat__titolo { flex-wrap: wrap; }
 .btn-scegli-per-me { width: 100%; margin: 2px 0 10px; }
 .nota-versione { font-size: 13px; line-height: 1.45; background: color-mix(in srgb, var(--gold) 16%, var(--surface)); border: 1px solid var(--gold); border-radius: var(--radius-s); padding: 10px 12px; margin: 0 0 12px; }
+
+/* Note sui pasti fatti in parte o saltati */
+.stato-pasto__nota { margin: 12px 0 4px; }
+.stato-pasto__nota span { font-weight: 400; color: var(--ink-faint); }
+.stato-pasto__nota textarea { resize: vertical; line-height: 1.45; }
+.stato-pasto__nota small { align-self: flex-end; font-size: 11px; color: var(--ink-faint); }
+.stat-sottotitolo { font-size: 13.5px; font-weight: 700; color: var(--ink); margin: 12px 0 6px; }
+.stat-note-pasti { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.stat-nota-pasto { display: flex; flex-direction: column; gap: 2px; background: var(--bg); border-radius: var(--radius-s); padding: 8px 10px; font-size: 13.5px; color: var(--ink); }
+.stat-nota-pasto__testa { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); }

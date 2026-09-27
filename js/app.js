@@ -546,7 +546,9 @@
               ${stato === "parziale" || stato === "saltato" ? `
                 <button type="button" class="meal__check meal__check--${stato}" data-meal-altro="${key}" aria-pressed="true">
                   ${stato === "parziale" ? `<svg class="icona-meta" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>` : `<span aria-hidden="true">✕</span>`}
-                  <span>${stato === "parziale" ? "Fatto in parte" : "Saltato"}${fatti.motivi && fatti.motivi[key] && window.statistiche.MOTIVI[fatti.motivi[key]] ? ` · ${escapeHTML(window.statistiche.MOTIVI[fatti.motivi[key]].toLowerCase())}` : ""}</span>
+                  <span>${stato === "parziale" ? "Fatto in parte" : "Saltato"}${fatti.note && fatti.note[key]
+                    ? ` · ${escapeHTML(fatti.note[key].length > 48 ? fatti.note[key].slice(0, 46) + "…" : fatti.note[key])}`
+                    : fatti.motivi && fatti.motivi[key] && window.statistiche.MOTIVI[fatti.motivi[key]] ? ` · ${escapeHTML(window.statistiche.MOTIVI[fatti.motivi[key]].toLowerCase())}` : ""}</span>
                 </button>` : `
                 <button type="button" class="meal__check" data-meal-check="${key}" aria-pressed="${isDone}">
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6"/></svg>
@@ -608,13 +610,18 @@
   }
 
   /** Salva lo stato di un pasto di oggi: true (fatto), "parziale", "saltato" oppure null (non segnato). */
-  async function salvaStatoPasto(key, valore, motivo) {
+  async function salvaStatoPasto(key, valore, motivo, nota) {
     const dateKey = chiaveData(new Date());
     const nuovoStato = Object.assign({}, PASTI_FATTI_OGGI);
     const motivi = Object.assign({}, nuovoStato.motivi || {});
+    const note = Object.assign({}, nuovoStato.note || {});
+    const conDettagli = valore === "parziale" || valore === "saltato";
     if (valore === null) delete nuovoStato[key]; else nuovoStato[key] = valore;
-    if (motivo && (valore === "parziale" || valore === "saltato")) motivi[key] = motivo; else delete motivi[key];
+    if (motivo && conDettagli) motivi[key] = motivo; else delete motivi[key];
+    const testo = String(nota || "").trim().slice(0, window.statistiche.MAX_NOTA);
+    if (testo && conDettagli) note[key] = testo; else delete note[key];
     if (Object.keys(motivi).length) nuovoStato.motivi = motivi; else delete nuovoStato.motivi;
+    if (Object.keys(note).length) nuovoStato.note = note; else delete nuovoStato.note;
     try {
       await window.cloud.salvaPastiFattiCloud(UID, dateKey, nuovoStato);
       // L'ascolto in tempo reale aggiorna la UI da solo.
@@ -625,7 +632,7 @@
 
   function onToggleMealCheck(key) {
     const giaFatto = window.statistiche.statoPasto(PASTI_FATTI_OGGI, key) === "fatto";
-    salvaStatoPasto(key, giaFatto ? null : true, null);
+    salvaStatoPasto(key, giaFatto ? null : true, null, null);
   }
 
   /** Scheda per dire com'è andato un pasto: fatto, in parte o saltato, con un motivo facoltativo. */
@@ -635,6 +642,7 @@
     const motivoAttuale = (PASTI_FATTI_OGGI.motivi || {})[key] || null;
     let scelta = attuale || null;
     let motivo = motivoAttuale;
+    let nota = (PASTI_FATTI_OGGI.note || {})[key] || "";
     const nomePasto = MEAL_META[key].label;
     const overlay = apriSheet(`
       <h2 class="sheet__titolo">${escapeHTML(nomePasto)} di oggi</h2>
@@ -654,22 +662,34 @@
       const box = overlay.querySelector("#stato-pasto-motivi");
       const elenco = scelta === "parziale" ? S.MOTIVI_PARZIALE : scelta === "saltato" ? S.MOTIVI_SALTATO : [];
       if (!elenco.includes(motivo)) motivo = null;
+      const campoNota = box.querySelector("#stato-pasto-nota");
+      if (campoNota) nota = campoNota.value;
       box.innerHTML = elenco.length ? `
         <p class="stato-pasto__domanda">Com'è andata? <span>(facoltativo)</span></p>
-        <div class="ricette-filtri">${elenco.map((m) => `<button type="button" class="chip-filtro" data-motivo="${m}" aria-pressed="${motivo === m}">${escapeHTML(S.MOTIVI[m])}</button>`).join("")}</div>` : "";
+        <div class="ricette-filtri">${elenco.map((m) => `<button type="button" class="chip-filtro" data-motivo="${m}" aria-pressed="${motivo === m}">${escapeHTML(S.MOTIVI[m])}</button>`).join("")}</div>
+        <label class="editor-campo stato-pasto__nota">Vuoi aggiungere un dettaglio? <span>(facoltativo)</span>
+          <textarea id="stato-pasto-nota" rows="2" maxlength="${S.MAX_NOTA}" placeholder="${escapeHTML(S.SUGGERIMENTI_NOTA[motivo] || "Es. riso al posto della pasta, ho lasciato metà del secondo…")}">${escapeHTML(nota)}</textarea>
+          <small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small>
+        </label>` : "";
       box.querySelectorAll("[data-motivo]").forEach((b) => b.addEventListener("click", () => {
         motivo = motivo === b.dataset.motivo ? null : b.dataset.motivo;
         aggiorna();
       }));
+      const nuovoCampo = box.querySelector("#stato-pasto-nota");
+      if (nuovoCampo) nuovoCampo.addEventListener("input", () => {
+        nota = nuovoCampo.value;
+        box.querySelector("#stato-pasto-conta").textContent = `${nota.length}/${S.MAX_NOTA}`;
+      });
       overlay.querySelector("#stato-pasto-salva").disabled = !scelta;
     };
     overlay.querySelectorAll("[data-scelta]").forEach((b) => b.addEventListener("click", () => { scelta = b.dataset.scelta; aggiorna(); }));
     overlay.querySelector("#stato-pasto-salva").addEventListener("click", () => {
       chiudiSheet();
-      salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo);
+      const campo = overlay.querySelector("#stato-pasto-nota");
+      salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo, campo ? campo.value : "");
     });
     const togli = overlay.querySelector("#stato-pasto-togli");
-    if (togli) togli.addEventListener("click", () => { chiudiSheet(); salvaStatoPasto(key, null, null); });
+    if (togli) togli.addEventListener("click", () => { chiudiSheet(); salvaStatoPasto(key, null, null, null); });
     aggiorna();
   }
 
@@ -3180,11 +3200,18 @@
           <p class="stat-nota" style="margin:4px 0 0;">Quali: ${escapeHTML(pasti)}.${motivi ? ` Motivi indicati: ${motivi}.` : ""}</p>
         </div>`;
     };
+    const GIORNI_SETT = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"];
+    const note = (im.note || []).map((n) => {
+      const d = S.daChiave(n.giorno);
+      const quando = `${GIORNI_SETT[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+      return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${quando} · ${escapeHTML(MEAL_META[n.pasto].label)} · ${n.stato === "parziale" ? "in parte" : "saltato"}${n.motivo ? ` · ${escapeHTML(S.MOTIVI[n.motivo].toLowerCase())}` : ""}</span><span>“${escapeHTML(n.nota)}”</span></li>`;
+    }).join("");
     return `
       <section class="settings-section">
         <h2>Pasti fatti in parte o saltati (30 giorni, oggi compreso)</h2>
         ${riga(im.parziale, "Fatti in parte")}
         ${riga(im.saltato, "Saltati")}
+        ${note ? `<h3 class="stat-sottotitolo">Cosa ha scritto il paziente</h3><ul class="stat-note-pasti">${note}</ul>` : ""}
       </section>`;
   }
 
