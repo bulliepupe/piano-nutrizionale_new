@@ -455,6 +455,19 @@
     document.getElementById("btn-notifiche").addEventListener("click", onToggleNotificheRapido);
   }
 
+  // Link di navigazione del pannello professionista: pillole con icona
+  const ICONE_NAV = {
+    pazienti: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c2.4.1 4.3 1.6 4.9 4.3"/></svg>',
+    andamento: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"/><rect x="5.5" y="11" width="3" height="6" rx="1"/><rect x="10.5" y="7" width="3" height="10" rx="1"/><rect x="15.5" y="4" width="3" height="13" rx="1"/></svg>',
+    ricettario: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h10.5a3 3 0 0 1 3 3v12h-12a1.5 1.5 0 0 1-1.5-1.5V4.5Z"/><path d="M5 18a1.5 1.5 0 0 1 1.5-1.5h12M9 8.5h6M9 11.5h4"/></svg>',
+    piano: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8.5 10h7M8.5 13.5h7M8.5 17h4"/></svg>',
+  };
+  function navLink(id, icona, testo, indietro) {
+    return `<button type="button" class="nav-link ${indietro ? "nav-link--indietro" : ""}" id="${id}">`
+      + (indietro ? '<span class="nav-link__freccia" aria-hidden="true">‹</span>' : "")
+      + `<span class="nav-link__icona" aria-hidden="true">${ICONE_NAV[icona]}</span><span>${testo}</span></button>`;
+  }
+
   /** Segna la schermata del professionista (serve all'impaginazione desktop). */
   function segnaVistaProf(vista) {
     const el = document.getElementById("prof-root");
@@ -3112,7 +3125,7 @@
     const aggiornato = STAT.caricato ? new Date(STAT.caricato).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : null;
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <div class="nav-riga">${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}</div>
       ${STAT.errorePermessi ? `<p class="hint avviso-profilo">Non riesco a leggere le spunte dei pazienti: probabilmente le nuove regole di Firestore non sono ancora state pubblicate.</p>` : ""}
       ${PAZIENTI_PROF.length === 0 ? `<div class="empty">Quando avrai dei pazienti, qui vedrai come seguono il piano.</div>` : `
         <section class="stat-sintesi">
@@ -3241,7 +3254,7 @@
     const messaggio = messaggioIncoraggiamento(piano, r);
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-stat" style="margin-bottom:10px;">← Andamento dei pazienti</button>
+      <div class="nav-riga">${navLink("btn-torna-stat", "andamento", "Andamento dei pazienti", true)}${navLink("btn-piano-da-stat-su", "piano", "Piano del paziente", false)}</div>
 
       <section class="stat-testata stat-card--${r.stato}">
         <span class="stato-badge stato-badge--${r.stato}"><span class="stato-punto"></span>${ETICHETTE_STATO[r.stato]}</span>
@@ -3333,6 +3346,7 @@
 
     document.getElementById("btn-torna-stat").addEventListener("click", renderStatistiche);
     document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
+    document.getElementById("btn-piano-da-stat-su").addEventListener("click", () => apriEditorPaziente(id));
     const testo = () => document.getElementById("testo-incoraggiamento").value.trim();
     document.getElementById("btn-msg-whatsapp").addEventListener("click", () => {
       window.open("https://wa.me/?text=" + encodeURIComponent(testo()), "_blank", "noopener");
@@ -3374,7 +3388,7 @@
     document.getElementById("prof-header-titolo").textContent = "Richieste di appuntamento";
     const elenco = richiesteAttive();
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <div class="nav-riga">${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}</div>
       ${elenco.length ? `<div class="lista-pazienti">${elenco.map((r) => {
         const quando = dataDaTimestamp(r.creata);
         return `
@@ -3640,7 +3654,7 @@
     const puoScrivere = statoLicenza().attiva;
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <div class="nav-riga">${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}</div>
       <label class="btn ric-carica ${puoScrivere ? "" : "is-disabilitato"}">Carica ricette in PDF o foto
         <input type="file" id="ric-file-multipli" accept="application/pdf,image/*" multiple hidden ${puoScrivere ? "" : "disabled"}>
       </label>
@@ -3792,7 +3806,7 @@
     const scelteEt = g.etichette.filter((e) => ETICHETTE_RICETTE.includes(e));
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-annulla-gruppo" style="margin-bottom:10px;">← Ricettario</button>
+      <div class="nav-riga">${navLink("btn-annulla-gruppo", "ricettario", "Ricettario", true)}</div>
       <section class="settings-section">
         <h2>${g.voci.length === 1 ? "1 ricetta" : g.voci.length + " ricette"}</h2>
         <p class="stat-nota" style="margin:0 0 10px;">Controlla i titoli: li ho ricavati dai nomi dei file.</p>
@@ -3954,7 +3968,7 @@
     const allegatoNome = b.allegatoNuovo ? b.allegatoNuovo.nome : (b.allegato ? b.allegato.nome : null);
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-ricettario" style="margin-bottom:10px;">← Ricettario</button>
+      <div class="nav-riga">${navLink("btn-torna-ricettario", "ricettario", "Ricettario", true)}</div>
 
       <section class="settings-section">
         <label class="editor-campo">Titolo
@@ -4250,9 +4264,9 @@
     const pz = piano.paziente || {};
 
     profRoot.innerHTML = `
-      <div class="editor-navigazione">
-        <button type="button" class="link-btn" id="btn-torna-lista">← I tuoi pazienti</button>
-        <button type="button" class="link-btn" id="btn-andamento-paziente">Andamento</button>
+      <div class="nav-riga editor-navigazione">
+        ${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}
+        ${navLink("btn-andamento-paziente", "andamento", "Andamento", false)}
       </div>
 
       <section class="settings-section">
@@ -4665,7 +4679,7 @@
     const whatsapp = c.whatsapp !== false;
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <div class="nav-riga">${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}</div>
       <section class="settings-section">
         <h2>Come ti vedono i pazienti</h2>
         <p class="hint">Questi dati compaiono nell'app di tutti i tuoi pazienti, con il pulsante Contatta. Quando li salvi si aggiornano ovunque.</p>
@@ -4798,7 +4812,7 @@
     const passwordGenerata = generaPasswordProvvisoria();
 
     profRoot.innerHTML = `
-      <button type="button" class="link-btn" id="btn-torna-lista" style="margin-bottom:10px;">← I tuoi pazienti</button>
+      <div class="nav-riga">${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}</div>
       <section class="settings-section">
         <h2>Crea un nuovo paziente</h2>
         <p class="hint">Viene creato subito l'accesso del paziente e un piano di partenza (schema di esempio a 5 settimane) che potrai modificare pasto per pasto qui dentro. Comunica tu stesso email e password provvisoria al paziente.</p>

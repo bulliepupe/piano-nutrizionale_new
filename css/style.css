@@ -1797,6 +1797,8 @@ body.ruolo-familiare #btn-notifiche { display: none; }
   #prof-root[data-vista="statPaziente"] > .link-btn,
   #prof-root[data-vista="statPaziente"] > .stat-testata,
   #prof-root[data-vista="statPaziente"] > .stat-riquadri,
+  #prof-root[data-vista="statPaziente"] > .nav-riga,
+  #prof-root[data-vista="editor"] > .nav-riga,
   #prof-root[data-vista="editor"] > .editor-navigazione,
   #prof-root[data-vista="editor"] > .link-btn { column-span: all; }
   #prof-root[data-vista="statPaziente"] .stat-riquadri { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -1817,4 +1819,25 @@ body.ruolo-familiare #btn-notifiche { display: none; }
 @media (min-width: 1440px) {
   .app { max-width: 1360px; }
   #view-root[data-vista="oggi"] { grid-template-columns: minmax(0, 1fr) 400px; }
+}
+
+/* Navigazione del pannello professionista: pillole con icona */
+.nav-riga { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 16px; }
+.nav-riga.editor-navigazione { margin-bottom: 16px; }
+.nav-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-body); font-size: 14px; font-weight: 600; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  padding: 6px 14px 6px 6px; cursor: pointer; box-shadow: var(--shadow-card);
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+.nav-link--indietro { padding-left: 8px; }
+.nav-link:hover { border-color: var(--accent); }
+.nav-link:active { transform: scale(0.97); }
+.nav-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-link__freccia { font-size: 20px; line-height: 1; color: var(--ink-soft); margin: -2px 0 0; }
+.nav-link__icona {
+  width: 30px; height: 30px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent);
 }
