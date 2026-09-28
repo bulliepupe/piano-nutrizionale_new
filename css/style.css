@@ -1683,3 +1683,138 @@ body.ruolo-familiare #btn-notifiche { display: none; }
 .stat-note-pasti { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .stat-nota-pasto { display: flex; flex-direction: column; gap: 2px; background: var(--bg); border-radius: var(--radius-s); padding: 8px 10px; font-size: 13.5px; color: var(--ink); }
 .stat-nota-pasto__testa { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); }
+
+/* =====================================================================
+   DESKTOP (da 1024 px): impaginazione da sito, il telefono non cambia
+   ===================================================================== */
+@media (min-width: 1024px) {
+  /* ---- guscio: barra laterale + contenuto ---- */
+  .app {
+    max-width: 1280px;
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    column-gap: 48px;
+    padding: 0 40px;
+  }
+  #app-paziente .topbar { grid-column: 2; grid-row: 1; padding: 34px 0 20px; }
+  #app-paziente .view-root { grid-column: 2; grid-row: 2; padding: 0 0 72px; }
+  .topbar h1 { font-size: 34px; }
+  #app-paziente .tabbar {
+    grid-column: 1; grid-row: 1 / span 2;
+    position: sticky; top: 0; align-self: start;
+    height: 100vh;
+    flex-direction: column;
+    gap: 4px;
+    padding: 110px 20px 32px 0;
+    background: transparent;
+    border-top: none;
+    border-right: 1px solid var(--border-soft);
+  }
+  .tabbar__btn {
+    flex: none;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    font-size: 15px;
+    font-weight: 500;
+    padding: 11px 14px;
+    color: var(--ink-soft);
+  }
+  .tabbar__btn svg { width: 20px; height: 20px; }
+  .tabbar__btn:hover { background: color-mix(in srgb, var(--surface) 70%, transparent); color: var(--ink); }
+  .tabbar__btn.is-active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-card); }
+  .tabbar__btn.ha-novita::after { top: 50%; left: auto; right: 14px; transform: translateY(-50%); }
+
+  .app--professionista { grid-template-columns: minmax(0, 1fr); max-width: 1180px; }
+  .app--professionista .topbar { padding: 34px 0 22px; }
+  .app--professionista .view-root { padding: 0 0 72px; }
+
+  .toast { bottom: 36px; }
+
+  /* ---- finestre: al centro invece che dal basso ---- */
+  .sheet-overlay { align-items: center; }
+  .sheet { max-width: 560px; max-height: 84vh; border-radius: 20px; padding: 26px 28px; }
+
+  /* ---- Oggi: pasti a sinistra, riepilogo a destra ---- */
+  #view-root[data-vista="oggi"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    column-gap: 36px;
+    align-items: start;
+  }
+  #view-root[data-vista="oggi"] > * { grid-column: 2; }
+  #view-root[data-vista="oggi"] > .timeline { grid-column: 1; grid-row: 1 / span 40; }
+  #view-root[data-vista="oggi"] > .empty { grid-column: 1 / -1; }
+  #view-root[data-vista="oggi"] > .hero { border-bottom: none; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-m); padding: 16px; }
+
+  /* ---- Settimana: pasti del giorno su due colonne ---- */
+  #view-root[data-vista="settimana"] .timeline { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+  /* ---- Spesa: reparti affiancati ---- */
+  #view-root[data-vista="spesa"] .spesa-modo { max-width: 520px; }
+  #view-root[data-vista="spesa"] .hint { max-width: 760px; }
+  #spesa-contenuto { columns: 2; column-gap: 28px; }
+  #spesa-contenuto > * { break-inside: avoid; }
+  #spesa-contenuto > .spesa-riepilogo,
+  #spesa-contenuto > .nota-versione,
+  #spesa-contenuto > .spesa-cat--scelta,
+  #spesa-contenuto > .stat-nota,
+  #spesa-contenuto > .empty,
+  #spesa-contenuto > .link-btn,
+  #spesa-contenuto > .spesa-tempo { column-span: all; }
+  #spesa-contenuto > .spesa-cat { margin-top: 0; margin-bottom: 18px; }
+  .spesa-cat--scelta .spesa-lista { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .spesa-tempo { columns: 2; column-gap: 28px; }
+  .spesa-tempo > .spesa-tempo__titolo { column-span: all; margin-bottom: 10px; }
+  .spesa-tempo > .spesa-cat { break-inside: avoid; margin-top: 0; margin-bottom: 18px; }
+  #view-root[data-vista="spesa"] .import-actions { max-width: 640px; }
+
+  /* Meal prep: le due sessioni una accanto all'altra */
+  #prep-contenuto { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; align-items: start; }
+  #prep-contenuto > * { grid-column: 1 / -1; }
+  #prep-contenuto > .prep-sessione { grid-column: auto; margin-top: 12px; }
+
+  /* ---- Ricette ---- */
+  .ricette-griglia { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+  .ricette-cerca { max-width: 520px; }
+  #view-root[data-vista="ricette"] .ricetta,
+  #view-root[data-vista="ricette"] .ricetta__azioni { max-width: 760px; }
+
+  /* ---- Impostazioni: sezioni su due colonne ---- */
+  #view-root[data-vista="impostazioni"] { columns: 2; column-gap: 36px; }
+  #view-root[data-vista="impostazioni"] > * { break-inside: avoid; }
+
+  /* ---- Professionista ---- */
+  #prof-root .lista-pazienti { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  #prof-root[data-vista="lista"] > .btn { display: inline-block; width: auto; padding: 11px 22px; margin-right: 8px; }
+  #prof-root[data-vista="lista"] > .avviso-richieste { max-width: 640px; }
+  #prof-root[data-vista="statistiche"] .stat-sintesi { max-width: 760px; }
+  #prof-root[data-vista="statPaziente"],
+  #prof-root[data-vista="editor"] { columns: 2; column-gap: 36px; }
+  #prof-root[data-vista="statPaziente"] > *,
+  #prof-root[data-vista="editor"] > * { break-inside: avoid; }
+  #prof-root[data-vista="statPaziente"] > .link-btn,
+  #prof-root[data-vista="statPaziente"] > .stat-testata,
+  #prof-root[data-vista="statPaziente"] > .stat-riquadri,
+  #prof-root[data-vista="editor"] > .editor-navigazione,
+  #prof-root[data-vista="editor"] > .link-btn { column-span: all; }
+  #prof-root[data-vista="statPaziente"] .stat-riquadri { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #prof-root[data-vista="nuovo"],
+  #prof-root[data-vista="profilo"],
+  #prof-root[data-vista="ricettaEditor"],
+  #prof-root[data-vista="ricetteMultiple"] { max-width: 820px; }
+}
+
+@media (min-width: 1024px) {
+  /* selettori della settimana e link "indietro" come in un sito */
+  #sel-settimana-spesa, #sel-settimana { max-width: 420px; }
+  .view-root > .link-btn:first-child, .view-root > .link-btn--sinistra { width: auto; text-align: left; padding-left: 0; }
+  #prof-root[data-vista="lista"] > .licenza, #prof-root[data-vista="lista"] > .card-licenza { max-width: 760px; }
+}
+
+/* Schermi molto larghi: un po' più di respiro */
+@media (min-width: 1440px) {
+  .app { max-width: 1360px; }
+  #view-root[data-vista="oggi"] { grid-template-columns: minmax(0, 1fr) 400px; }
+}

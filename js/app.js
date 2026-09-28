@@ -73,7 +73,7 @@
   // ---- stato lato professionista ----
   let PAZIENTI_PROF = [];
   let unsubPazienti = null;
-  let vistaProfCorrente = "lista"; // "lista" | "editor" | "nuovo"
+  let vistaProfCorrente = "lista"; segnaVistaProf("lista"); // "lista" | "editor" | "nuovo"
   let pazienteSelezionatoId = null;
   let PIANO_ATTIVO_PROF = null;
   let unsubProfilo = null; // ascolto in tempo reale del profilo (licenza)
@@ -179,7 +179,7 @@
     document.body.classList.remove("ruolo-familiare");
     if (unsubPazienti) { unsubPazienti(); unsubPazienti = null; }
     pazienteSelezionatoId = null;
-    vistaProfCorrente = "lista";
+    vistaProfCorrente = "lista"; segnaVistaProf("lista");
   }
 
   // ---------------------------------------------------------------------
@@ -455,7 +455,14 @@
     document.getElementById("btn-notifiche").addEventListener("click", onToggleNotificheRapido);
   }
 
+  /** Segna la schermata del professionista (serve all'impaginazione desktop). */
+  function segnaVistaProf(vista) {
+    const el = document.getElementById("prof-root");
+    if (el) el.dataset.vista = vista;
+  }
+
   function render() {
+    root.dataset.vista = currentView;
     if (currentView === "oggi") renderOggi();
     else if (currentView === "settimana") renderSettimana();
     else if (currentView === "spesa") renderSpesa();
@@ -1086,6 +1093,7 @@
     }
     SPESA.contesto = { giorni, etichetta: sel.intervallo };
     collegaAscoltoSpesa(sel.docId);
+    root.dataset.modo = modoSpesa();
     if (modoSpesa() === "prep") { renderMealPrep(settimane, sel); return; }
     const vista = vistaSpesa();
 
@@ -2811,7 +2819,7 @@
     mostraSchermata("professionista");
     applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     registraServiceWorker();
-    vistaProfCorrente = "lista";
+    vistaProfCorrente = "lista"; segnaVistaProf("lista");
     pazienteSelezionatoId = null;
     PROFILO_PROF = utenteDati || {};
     caricaConfig().then((c) => { CONFIG = c; if (vistaProfCorrente === "lista") renderListaPazienti(); });
@@ -2937,7 +2945,7 @@
   }
 
   function renderListaPazienti() {
-    vistaProfCorrente = "lista";
+    vistaProfCorrente = "lista"; segnaVistaProf("lista");
     pazienteSelezionatoId = null;
     document.getElementById("prof-header-titolo").textContent = "I tuoi pazienti";
 
@@ -3080,7 +3088,7 @@
   }
 
   function renderStatistiche() {
-    vistaProfCorrente = "statistiche";
+    vistaProfCorrente = "statistiche"; segnaVistaProf("statistiche");
     pazienteSelezionatoId = null;
     document.getElementById("prof-header-titolo").textContent = "Andamento dei pazienti";
 
@@ -3219,7 +3227,7 @@
     const piano = PAZIENTI_PROF.find((p) => p.id === id);
     const x = STAT.risultati[id];
     if (!piano || !x || x.errore) { renderStatistiche(); return; }
-    vistaProfCorrente = "statPaziente";
+    vistaProfCorrente = "statPaziente"; segnaVistaProf("statPaziente");
     pazienteSelezionatoId = id;
     const r = x.r;
     document.getElementById("prof-header-titolo").textContent = piano.pazienteNome || "Paziente";
@@ -3361,7 +3369,7 @@
   }
 
   function renderRichiesteAppuntamento() {
-    vistaProfCorrente = "richieste";
+    vistaProfCorrente = "richieste"; segnaVistaProf("richieste");
     pazienteSelezionatoId = null;
     document.getElementById("prof-header-titolo").textContent = "Richieste di appuntamento";
     const elenco = richiesteAttive();
@@ -3624,7 +3632,7 @@
 
   // ---- Elenco del ricettario ----
   function renderRicettario() {
-    vistaProfCorrente = "ricettario";
+    vistaProfCorrente = "ricettario"; segnaVistaProf("ricettario");
     pazienteSelezionatoId = null;
     RICPRO.bozza = null;
     document.getElementById("prof-header-titolo").textContent = "Ricettario";
@@ -3778,7 +3786,7 @@
   }
 
   function renderCaricamentoMultiplo() {
-    vistaProfCorrente = "ricetteMultiple";
+    vistaProfCorrente = "ricetteMultiple"; segnaVistaProf("ricetteMultiple");
     const g = RICPRO.gruppo;
     document.getElementById("prof-header-titolo").textContent = "Carica ricette";
     const scelteEt = g.etichette.filter((e) => ETICHETTE_RICETTE.includes(e));
@@ -3934,7 +3942,7 @@
   }
 
   function renderEditorRicetta() {
-    vistaProfCorrente = "ricettaEditor";
+    vistaProfCorrente = "ricettaEditor"; segnaVistaProf("ricettaEditor");
     const b = RICPRO.bozza;
     const r = b.originale || {};
     document.getElementById("prof-header-titolo").textContent = b.nuova ? "Nuova ricetta" : "Modifica ricetta";
@@ -4227,7 +4235,7 @@
   }
 
   function renderEditorProfessionista() {
-    vistaProfCorrente = "editor";
+    vistaProfCorrente = "editor"; segnaVistaProf("editor");
     const piano = PIANO_ATTIVO_PROF;
     if (!piano) { renderListaPazienti(); return; }
 
@@ -4649,7 +4657,7 @@
   // Profilo e dati di contatto del professionista
   // ---------------------------------------------------------------------
   function renderProfiloProfessionista() {
-    vistaProfCorrente = "profilo";
+    vistaProfCorrente = "profilo"; segnaVistaProf("profilo");
     pazienteSelezionatoId = null;
     document.getElementById("prof-header-titolo").textContent = "I miei dati di contatto";
     const c = PROFILO_PROF.contatti || {};
@@ -4785,7 +4793,7 @@
   // Nuovo paziente
   // ---------------------------------------------------------------------
   function renderFormNuovoPaziente() {
-    vistaProfCorrente = "nuovo";
+    vistaProfCorrente = "nuovo"; segnaVistaProf("nuovo");
     document.getElementById("prof-header-titolo").textContent = "Nuovo paziente";
     const passwordGenerata = generaPasswordProvvisoria();
 
