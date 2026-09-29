@@ -2874,8 +2874,20 @@
     Object.assign(MISURE, { pianoId: null, lista: [], note: {}, unsub: null, unsubNote: null });
   }
 
+  /** Istante di inserimento (le scritture appena fatte, non ancora confermate, sono le più recenti). */
+  function momentoMisura(m) {
+    const t = m && m.aggiornata;
+    if (!t) return Number.MAX_SAFE_INTEGER;
+    return typeof t.toMillis === "function" ? t.toMillis() : Number(t.seconds || 0) * 1000;
+  }
+  /** Ordine cronologico: per data e, nello stesso giorno, per momento di inserimento. */
+  function ordineMisure(a, b) {
+    if (a.data !== b.data) return a.data < b.data ? -1 : 1;
+    return momentoMisura(a) - momentoMisura(b);
+  }
+
   function riepilogoPeso(misure, corpo) {
-    const conPeso = misure.filter((m) => typeof m.peso === "number").sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
+    const conPeso = misure.filter((m) => typeof m.peso === "number").sort(ordineMisure);
     if (!conPeso.length) return null;
     const primo = conPeso[0];
     const ultimo = conPeso[conPeso.length - 1];
@@ -2897,8 +2909,8 @@
    */
   function graficoPesoSVG(misure, settimane) {
     const S = window.statistiche;
-    const punti = misure.filter((m) => typeof m.peso === "number").map((m) => ({ t: S.daChiave(m.data).getTime(), peso: m.peso, casa: m.fonte === "casa" }))
-      .sort((a, b) => a.t - b.t);
+    const punti = misure.filter((m) => typeof m.peso === "number").slice().sort(ordineMisure)
+      .map((m) => ({ t: S.daChiave(m.data).getTime(), peso: m.peso, casa: m.fonte === "casa" }));
     if (!punti.length) return "";
     const oggi = new Date(); oggi.setHours(0, 0, 0, 0);
     const G = 86400000;
@@ -2924,7 +2936,9 @@
     const barreSVG = barre.filter((s) => S.daChiave(s.lunedi).getTime() >= t0 - 7 * G).map((s) => {
       const xs = x(S.daChiave(s.lunedi).getTime());
       const h = Math.max(2, s.valore * 60);
-      return `<rect class="gp-barra" x="${(xs + 1).toFixed(1)}" y="${(H - 22 - h).toFixed(1)}" width="${Math.max(3, larghezzaSett - 3).toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>Aderenza ${Math.round(s.valore * 100)}%</title></rect>`;
+      const larg = Math.min(larghezzaSett - 3, W - dx - xs - 1);
+      if (larg < 2) return "";
+      return `<rect class="gp-barra" x="${(xs + 1).toFixed(1)}" y="${(H - 22 - h).toFixed(1)}" width="${larg.toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>Aderenza ${Math.round(s.valore * 100)}%</title></rect>`;
     }).join("");
     const etichette = [t0, (t0 + t1) / 2, t1].map((t, i) => {
       const d = new Date(t);
@@ -2954,7 +2968,7 @@
     const a = piano.appuntamento;
     const oggiK = oggiISO();
     const daRegistrare = a && a.data && a.data <= oggiK && !misure.some((m) => m.data === a.data && m.fonte !== "casa") ? a.data : null;
-    const righe = misure.slice().sort((p, q) => (p.data < q.data ? 1 : -1)).map((m) => `
+    const righe = misure.slice().sort((p, q) => ordineMisure(q, p)).map((m) => `
       <tr>
         <td>${dataBreve(m.data)}${m.fonte === "casa" ? ' <span class="etichetta-casa">a casa</span>' : ""}</td>
         <td><strong>${m.peso != null ? kg1(m.peso) : "—"}</strong></td>
@@ -3078,7 +3092,7 @@
   }
 
   function ultimaPesataCasa() {
-    return MISURE.lista.filter((m) => m.fonte === "casa").sort((a, b) => (a.data < b.data ? 1 : -1))[0] || null;
+    return MISURE.lista.filter((m) => m.fonte === "casa").sort((a, b) => ordineMisure(b, a))[0] || null;
   }
   function puoPesarsi() {
     const u = ultimaPesataCasa();
