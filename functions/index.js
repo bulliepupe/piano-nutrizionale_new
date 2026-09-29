@@ -263,8 +263,8 @@ exports.eliminaPaziente = onCall(async (request) => {
     }
   }
 
-  // 4) Il piano, per ultimo.
-  await pianoRef.delete();
+  // 5) Il piano, per ultimo, con misure e note dei controlli.
+  await db.recursiveDelete(pianoRef);
   return { ok: true };
 });
 

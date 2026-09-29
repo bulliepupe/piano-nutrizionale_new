@@ -188,6 +188,36 @@
     // Piani nutrizionali
     // ---------------------------------------------------------------
     /** Aggiorna (in blocco o parzialmente) un piano esistente. Solo il professionista può chiamarla. */
+    // ------------------------------------------------------------------
+    // Peso e misure (/piani/{id}/misure) e note del controllo (solo professionista)
+    // ------------------------------------------------------------------
+    ascoltaMisure(pianoId, cb) {
+      return db.collection("piani").doc(pianoId).collection("misure").onSnapshot(
+        (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
+        (e) => { console.warn("Misure non disponibili:", e); cb([]); }
+      );
+    },
+    async salvaMisura(pianoId, id, dati) {
+      const col = db.collection("piani").doc(pianoId).collection("misure");
+      const ref = id ? col.doc(id) : col.doc();
+      await ref.set(Object.assign({}, dati, { aggiornata: FieldValue.serverTimestamp() }));
+      return ref.id;
+    },
+    async eliminaMisura(pianoId, id) {
+      await db.collection("piani").doc(pianoId).collection("misure").doc(id).delete();
+    },
+    ascoltaNoteMisure(pianoId, cb) {
+      return db.collection("piani").doc(pianoId).collection("noteMisure").onSnapshot(
+        (snap) => { const note = {}; snap.docs.forEach((d) => { note[d.id] = d.data().testo || ""; }); cb(note); },
+        () => cb({})
+      );
+    },
+    async salvaNotaMisura(pianoId, id, testo) {
+      const ref = db.collection("piani").doc(pianoId).collection("noteMisure").doc(id);
+      if (testo) await ref.set({ testo: String(testo).slice(0, 1000), aggiornata: FieldValue.serverTimestamp() });
+      else await ref.delete();
+    },
+
     async salvaPiano(pianoId, campi) {
       await db.collection("piani").doc(pianoId).update(Object.assign({}, campi, {
         aggiornato: FieldValue.serverTimestamp(),

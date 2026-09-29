@@ -168,6 +168,7 @@
 
   function pulisciListenerCloud() {
     if (unsubPiano) { unsubPiano(); unsubPiano = null; }
+    scollegaMisure();
     if (unsubPastiOggi) { unsubPastiOggi(); unsubPastiOggi = null; }
     scollegaSpesa();
     azzeraStatistiche();
@@ -351,6 +352,7 @@
       PIANO_ATTIVO = piano;
       if (piano) collegaRicettePaziente();
       if (piano) pubblicaPianoInLista();
+      collegaMisurePaziente();
       if (currentView === "oggi" || currentView === "settimana" || currentView === "impostazioni") render();
     });
     collegaAscoltoPastiOggi();
@@ -517,6 +519,7 @@
     root.innerHTML = `
       ${renderBannerRiattivaHTML()}
       ${renderAvvisoAppuntamentoHTML()}
+      ${avvisoPesataHTML()}
       ${renderBannerIosHTML()}
       ${avvisoInizio}
       <section class="hero">
@@ -544,6 +547,8 @@
     collegaBannerIos();
     collegaBannerRiattiva();
     collegaContattoNutrizionista();
+    const bPesata = document.getElementById("btn-pesata-oggi");
+    if (bPesata) bPesata.addEventListener("click", apriPesataPaziente);
   }
 
   function renderTimelineHTML(giorno, orari, opts) {
@@ -1674,6 +1679,7 @@
       <section class="settings-section">
         <h2>Il mio piano</h2>
         ${appuntamentoPazienteHTML()}
+        ${progressiPazienteHTML()}
         ${PIANO_ATTIVO ? `
           <div class="card-info">
             <dl>
@@ -1701,6 +1707,7 @@
       mostraToast("Anticipo aggiornato");
     });
     document.getElementById("btn-lista-casa-imp").addEventListener("click", apriListaCasa);
+    collegaProgressiPaziente();
     document.getElementById("sel-tema").value = localStorage.getItem(LS_KEYS.tema) || "sistema";
     document.getElementById("sel-tema").addEventListener("change", (e) => {
       localStorage.setItem(LS_KEYS.tema, e.target.value);
@@ -2825,6 +2832,334 @@
     sel.addEventListener("change", () => { localStorage.setItem(LS_KEYS.tema, sel.value); applyTema(sel.value); });
   }
 
+  // ---------------------------------------------------------------------
+  // Peso e misure
+  // ---------------------------------------------------------------------
+  // /piani/{id}/misure/{mid}: { data "AAAA-MM-GG", peso, vita, fianchi,
+  // grasso (%), muscolo (kg), fonte "studio" | "casa" }. Le note del
+  // controllo stanno a parte (/piani/{id}/noteMisure/{mid}) e le vede solo il
+  // professionista. Cosa vede il paziente lo decide il professionista, per
+  // ciascun paziente: piano.corpo.visibilita = "nascosto" | "controlli" | "casa".
+  const VISIBILITA_PESO = {
+    nascosto: "Nascosto al paziente",
+    controlli: "Vede le misure dei controlli",
+    casa: "Vede le misure e può aggiungere le pesate a casa",
+  };
+  const LS_GIORNO_PESATA = "pnut:giorno-pesata";
+  const MISURE = { pianoId: null, lista: [], note: {}, unsub: null, unsubNote: null };
+
+  function visibilitaPeso(piano) {
+    const v = piano && piano.corpo && piano.corpo.visibilita;
+    return VISIBILITA_PESO[v] ? v : "controlli";
+  }
+  const numIt = (n, dec = 1) => String(Math.round(n * Math.pow(10, dec)) / Math.pow(10, dec)).replace(".", ",");
+  const kg1 = (n) => (Math.round(n * 10) / 10).toFixed(1).replace(".", ",");
+  const fmtKg = (n) => (n == null ? "—" : `${kg1(n)} kg`);
+  const fmtVariazione = (n) => (n == null ? "—" : `${n > 0.049 ? "+" : n < -0.049 ? "−" : "±"}${numIt(Math.abs(n))} kg`);
+  const dataBreve = (k) => { const d = window.statistiche.daChiave(k); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
+
+  function collegaMisure(pianoId, dopo) {
+    if (MISURE.pianoId === pianoId && MISURE.unsub) return;
+    scollegaMisure();
+    if (!pianoId) return;
+    MISURE.pianoId = pianoId;
+    MISURE.unsub = window.cloud.ascoltaMisure(pianoId, (lista) => { MISURE.lista = lista; if (dopo) dopo(); });
+    if (RUOLO === "professionista") {
+      MISURE.unsubNote = window.cloud.ascoltaNoteMisure(pianoId, (note) => { MISURE.note = note; if (dopo) dopo(); });
+    }
+  }
+  function scollegaMisure() {
+    if (MISURE.unsub) MISURE.unsub();
+    if (MISURE.unsubNote) MISURE.unsubNote();
+    Object.assign(MISURE, { pianoId: null, lista: [], note: {}, unsub: null, unsubNote: null });
+  }
+
+  function riepilogoPeso(misure, corpo) {
+    const conPeso = misure.filter((m) => typeof m.peso === "number").sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
+    if (!conPeso.length) return null;
+    const primo = conPeso[0];
+    const ultimo = conPeso[conPeso.length - 1];
+    const studio = conPeso.filter((m) => m.fonte !== "casa");
+    const h = corpo && Number(corpo.altezzaCm);
+    return {
+      primo, ultimo, conPeso,
+      variazioneInizio: conPeso.length > 1 ? ultimo.peso - primo.peso : null,
+      variazioneControllo: studio.length >= 2 ? studio[studio.length - 1].peso - studio[studio.length - 2].peso : null,
+      bmi: h ? ultimo.peso / Math.pow(h / 100, 2) : null,
+      obiettivo: corpo && Number(corpo.pesoObiettivo) ? Number(corpo.pesoObiettivo) : null,
+    };
+  }
+
+  /**
+   * Grafico del peso nel tempo (punti pieni: controlli in studio, vuoti:
+   * pesate a casa). Con "settimane" aggiunge sotto le barre dell'aderenza
+   * settimanale, sulla stessa linea del tempo.
+   */
+  function graficoPesoSVG(misure, settimane) {
+    const S = window.statistiche;
+    const punti = misure.filter((m) => typeof m.peso === "number").map((m) => ({ t: S.daChiave(m.data).getTime(), peso: m.peso, casa: m.fonte === "casa" }))
+      .sort((a, b) => a.t - b.t);
+    if (!punti.length) return "";
+    const oggi = new Date(); oggi.setHours(0, 0, 0, 0);
+    const G = 86400000;
+    let t0 = punti[0].t, t1 = Math.max(oggi.getTime(), punti[punti.length - 1].t);
+    const barre = (settimane || []).filter((s) => s.valore != null);
+    if (barre.length) t0 = Math.min(t0, S.daChiave(barre[0].lunedi).getTime());
+    t0 = Math.max(t0, t1 - 182 * G); // al massimo sei mesi
+    if (t1 - t0 < 21 * G) t0 = t1 - 21 * G;
+    const W = 640, H = barre.length ? 240 : 190, sx = 44, dx = 14, top = 16, bassoPeso = barre.length ? 150 : 160;
+    const x = (t) => sx + ((t - t0) / (t1 - t0)) * (W - sx - dx);
+    const visibili = punti.filter((p) => p.t >= t0);
+    const pesi = visibili.map((p) => p.peso);
+    let pMin = Math.min(...pesi), pMax = Math.max(...pesi);
+    if (pMax - pMin < 2) { const c = (pMax + pMin) / 2; pMin = c - 1; pMax = c + 1; }
+    const pad = (pMax - pMin) * 0.15;
+    pMin -= pad; pMax += pad;
+    const y = (p) => top + (1 - (p - pMin) / (pMax - pMin)) * (bassoPeso - top);
+    const linea = visibili.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.peso).toFixed(1)}`).join(" ");
+    const griglia = [pMax - pad, (pMax + pMin) / 2, pMin + pad].map((v) => `
+      <line class="gp-griglia" x1="${sx}" x2="${W - dx}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+      <text class="gp-asse" x="${sx - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${numIt(v)}</text>`).join("");
+    const larghezzaSett = ((7 * G) / (t1 - t0)) * (W - sx - dx);
+    const barreSVG = barre.filter((s) => S.daChiave(s.lunedi).getTime() >= t0 - 7 * G).map((s) => {
+      const xs = x(S.daChiave(s.lunedi).getTime());
+      const h = Math.max(2, s.valore * 60);
+      return `<rect class="gp-barra" x="${(xs + 1).toFixed(1)}" y="${(H - 22 - h).toFixed(1)}" width="${Math.max(3, larghezzaSett - 3).toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>Aderenza ${Math.round(s.valore * 100)}%</title></rect>`;
+    }).join("");
+    const etichette = [t0, (t0 + t1) / 2, t1].map((t, i) => {
+      const d = new Date(t);
+      return `<text class="gp-asse" x="${x(t).toFixed(1)}" y="${H - 6}" text-anchor="${["start", "middle", "end"][i]}">${d.getDate()}/${d.getMonth() + 1}</text>`;
+    }).join("");
+    const pallini = visibili.map((p) => `<circle class="gp-punto ${p.casa ? "gp-punto--casa" : ""}" cx="${x(p.t).toFixed(1)}" cy="${y(p.peso).toFixed(1)}" r="${p.casa ? 3.6 : 4.6}"><title>${numIt(p.peso)} kg${p.casa ? " (a casa)" : ""}</title></circle>`).join("");
+    return `
+      <svg class="grafico-peso" viewBox="0 0 ${W} ${H}" role="img" aria-label="Andamento del peso${barre.length ? " e aderenza settimanale" : ""}">
+        ${griglia}
+        ${barre.length ? `<text class="gp-asse" x="${sx - 6}" y="${H - 26}" text-anchor="end">%</text>${barreSVG}` : ""}
+        <path class="gp-linea" d="${linea}"/>
+        ${pallini}
+        ${etichette}
+      </svg>`;
+  }
+
+  // ---- Professionista: sezione nella scheda di andamento ----
+  function sezionePesoProfHTML(piano) {
+    return `<section class="settings-section sezione-peso" id="sezione-peso">${contenutoPesoProfHTML(piano)}</section>`;
+  }
+
+  function contenutoPesoProfHTML(piano) {
+    const misure = MISURE.pianoId === piano.id ? MISURE.lista : [];
+    const r = riepilogoPeso(misure, piano.corpo);
+    const x = STAT.risultati[piano.id];
+    const settimane = x && x.r ? x.r.settimane : [];
+    const a = piano.appuntamento;
+    const oggiK = oggiISO();
+    const daRegistrare = a && a.data && a.data <= oggiK && !misure.some((m) => m.data === a.data && m.fonte !== "casa") ? a.data : null;
+    const righe = misure.slice().sort((p, q) => (p.data < q.data ? 1 : -1)).map((m) => `
+      <tr>
+        <td>${dataBreve(m.data)}${m.fonte === "casa" ? ' <span class="etichetta-casa">a casa</span>' : ""}</td>
+        <td><strong>${m.peso != null ? kg1(m.peso) : "—"}</strong></td>
+        <td>${m.vita != null ? numIt(m.vita) : "—"}</td>
+        <td>${m.fianchi != null ? numIt(m.fianchi) : "—"}</td>
+        <td>${m.grasso != null ? numIt(m.grasso) + "%" : "—"}</td>
+        <td>${m.muscolo != null ? numIt(m.muscolo) : "—"}</td>
+        <td><button type="button" class="link-btn" style="width:auto;padding:0;" data-misura="${escapeHTML(m.id)}">${MISURE.note[m.id] ? "📝 " : ""}Modifica</button></td>
+      </tr>`).join("");
+    return `
+      <h2>Peso e misure</h2>
+      ${daRegistrare ? `<div class="avviso-misure"><span>📏 Registra le misure del controllo del <strong>${dataBreve(daRegistrare)}</strong></span><button type="button" class="btn" data-nuova-misura="${daRegistrare}">Registra</button></div>` : ""}
+      ${r ? `
+        <div class="stat-riquadri stat-riquadri--peso">
+          <div class="stat-riquadro"><strong>${fmtKg(r.ultimo.peso)}</strong><span>Ultimo peso (${dataBreve(r.ultimo.data)}${r.ultimo.fonte === "casa" ? ", a casa" : ""})</span></div>
+          <div class="stat-riquadro"><strong>${fmtVariazione(r.variazioneInizio)}</strong><span>Dall'inizio (${dataBreve(r.primo.data)})</span></div>
+          <div class="stat-riquadro"><strong>${fmtVariazione(r.variazioneControllo)}</strong><span>Dall'ultimo controllo</span></div>
+          <div class="stat-riquadro"><strong>${r.bmi ? numIt(r.bmi) : "—"}</strong><span>${r.bmi ? "BMI (indicativo)" : "BMI: inserisci l'altezza"}${r.obiettivo ? ` · obiettivo ${fmtKg(r.obiettivo)}` : ""}</span></div>
+        </div>
+        ${graficoPesoSVG(misure, settimane)}
+        <p class="gp-legenda"><span class="gp-l-punto"></span> controllo in studio <span class="gp-l-punto gp-l-punto--casa"></span> pesata a casa <span class="gp-l-barra"></span> aderenza della settimana</p>
+        <div class="tabella-scorre"><table class="tabella-misure">
+          <thead><tr><th>Data</th><th>Peso kg</th><th>Vita cm</th><th>Fianchi cm</th><th>Grasso</th><th>Muscolo kg</th><th></th></tr></thead>
+          <tbody>${righe}</tbody>
+        </table></div>` : `<p class="hint">Nessuna misura registrata: inserisci peso e circonferenze al prossimo controllo.</p>`}
+      <button type="button" class="btn ${r ? "btn--ghost" : ""}" data-nuova-misura="${oggiK}" style="margin-top:12px;">Registra misure</button>
+      <p class="stat-nota" style="margin-top:8px;">Il paziente: ${escapeHTML(VISIBILITA_PESO[visibilitaPeso(piano)].toLowerCase())}. Lo cambi in "Dati paziente", nel piano.</p>`;
+  }
+
+  function collegaSezionePesoProf(piano) {
+    const box = document.getElementById("sezione-peso");
+    if (!box) return;
+    box.addEventListener("click", (e) => {
+      const nuova = e.target.closest("[data-nuova-misura]");
+      if (nuova) { apriMisura(piano, null, nuova.dataset.nuovaMisura); return; }
+      const mod = e.target.closest("[data-misura]");
+      if (mod) apriMisura(piano, MISURE.lista.find((m) => m.id === mod.dataset.misura));
+    });
+    collegaMisure(piano.id, () => {
+      const b = document.getElementById("sezione-peso");
+      if (b && pazienteSelezionatoId === piano.id) b.innerHTML = contenutoPesoProfHTML(piano);
+    });
+  }
+
+  function apriMisura(piano, misura, dataProposta) {
+    const m = misura || { data: dataProposta || oggiISO(), fonte: "studio" };
+    const nota = misura ? (MISURE.note[misura.id] || "") : "";
+    const casa = m.fonte === "casa";
+    const campo = (id, label, valore, passo, suffisso) => `
+      <label class="editor-campo"><span>${label}</span>
+        <input type="number" inputmode="decimal" id="${id}" step="${passo}" min="0" value="${valore != null ? valore : ""}" placeholder="${suffisso}"></label>`;
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">${misura ? "Modifica misure" : "Registra misure"}</h2>
+      ${casa ? `<p class="sheet__nota">Pesata registrata dal paziente a casa.</p>` : ""}
+      <div class="editor-pasti">
+        <label class="editor-campo"><span>Data</span><input type="date" id="mis-data" value="${escapeHTML(m.data)}" max="${oggiISO()}"></label>
+        <div class="ric-griglia">
+          ${campo("mis-peso", "Peso (kg)", m.peso, "0.1", "es. 72,4")}
+          ${casa ? "" : campo("mis-vita", "Vita (cm)", m.vita, "0.5", "facoltativo")}
+          ${casa ? "" : campo("mis-fianchi", "Fianchi (cm)", m.fianchi, "0.5", "facoltativo")}
+          ${casa ? "" : campo("mis-grasso", "Massa grassa (%)", m.grasso, "0.1", "facoltativo")}
+          ${casa ? "" : campo("mis-muscolo", "Massa muscolare (kg)", m.muscolo, "0.1", "facoltativo")}
+        </div>
+        ${casa ? "" : `<label class="editor-campo"><span>Nota del controllo (la vedi solo tu)</span><textarea id="mis-nota" rows="3" maxlength="1000">${escapeHTML(nota)}</textarea></label>`}
+      </div>
+      <p class="auth-error" id="mis-errore" hidden></p>
+      <button type="button" class="btn" id="mis-salva">Salva</button>
+      ${misura ? `<button type="button" class="btn btn--ghost" id="mis-elimina">Elimina queste misure</button>` : ""}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    const num = (id) => {
+      const el = overlay.querySelector("#" + id);
+      if (!el || el.value === "") return null;
+      const n = Number(String(el.value).replace(",", "."));
+      return Number.isFinite(n) ? n : NaN;
+    };
+    overlay.querySelector("#mis-salva").addEventListener("click", async (e) => {
+      const dati = {
+        data: overlay.querySelector("#mis-data").value,
+        peso: num("mis-peso"), fonte: m.fonte || "studio",
+      };
+      if (!casa) Object.assign(dati, { vita: num("mis-vita"), fianchi: num("mis-fianchi"), grasso: num("mis-grasso"), muscolo: num("mis-muscolo") });
+      Object.keys(dati).forEach((k) => { if (dati[k] === null) delete dati[k]; });
+      const err = overlay.querySelector("#mis-errore");
+      const errore = (t) => { err.textContent = t; err.hidden = false; };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dati.data || "")) return errore("Scegli la data.");
+      if (!(dati.peso >= 20 && dati.peso <= 400)) return errore("Scrivi un peso valido, in kg (es. 72,4).");
+      if ([dati.vita, dati.fianchi, dati.grasso, dati.muscolo].some((v) => Number.isNaN(v))) return errore("Controlla i numeri inseriti.");
+      e.currentTarget.disabled = true;
+      try {
+        const id = await window.cloud.salvaMisura(piano.id, misura ? misura.id : null, dati);
+        if (!casa) {
+          const testo = (overlay.querySelector("#mis-nota").value || "").trim();
+          if (testo || nota) await window.cloud.salvaNotaMisura(piano.id, id, testo);
+        }
+        chiudiSheet();
+        mostraToast("Misure salvate");
+      } catch (errS) {
+        e.currentTarget.disabled = false;
+        errore(msgErroreScrittura(errS, "Non salvato: controlla la connessione"));
+      }
+    });
+    const el = overlay.querySelector("#mis-elimina");
+    if (el) el.addEventListener("click", async () => {
+      el.disabled = true;
+      try {
+        await window.cloud.eliminaMisura(piano.id, misura.id);
+        if (nota) await window.cloud.salvaNotaMisura(piano.id, misura.id, "");
+        chiudiSheet();
+        mostraToast("Misure eliminate");
+      } catch (errE) { el.disabled = false; mostraToast("Non riuscito: controlla la connessione"); }
+    });
+  }
+
+  // ---- Paziente: "I miei progressi" e pesata a casa ----
+  function collegaMisurePaziente() {
+    if (!PIANO_ATTIVO || visibilitaPeso(PIANO_ATTIVO) === "nascosto") { scollegaMisure(); return; }
+    collegaMisure(PIANO_ATTIVO.id, () => {
+      if (currentView === "impostazioni" || currentView === "oggi") render();
+    });
+  }
+
+  function ultimaPesataCasa() {
+    return MISURE.lista.filter((m) => m.fonte === "casa").sort((a, b) => (a.data < b.data ? 1 : -1))[0] || null;
+  }
+  function puoPesarsi() {
+    const u = ultimaPesataCasa();
+    if (!u) return { si: true };
+    const oggi = new Date(); oggi.setHours(0, 0, 0, 0);
+    const giorni = Math.round((oggi - window.statistiche.daChiave(u.data)) / 86400000);
+    return giorni >= 6 ? { si: true } : { si: false, traGiorni: 6 - giorni };
+  }
+
+  function progressiPazienteHTML() {
+    if (!PIANO_ATTIVO) return "";
+    const vis = visibilitaPeso(PIANO_ATTIVO);
+    if (vis === "nascosto") return "";
+    const r = riepilogoPeso(MISURE.lista, PIANO_ATTIVO.corpo);
+    const puo = puoPesarsi();
+    const giorno = localStorage.getItem(LS_GIORNO_PESATA) || "";
+    const GIORNI = ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"];
+    return `
+      <div class="progressi">
+        <h3 class="stat-sottotitolo">I miei progressi</h3>
+        ${r ? `
+          <p class="progressi__riga"><strong>${fmtKg(r.ultimo.peso)}</strong> <span>al ${dataBreve(r.ultimo.data)}${r.variazioneInizio != null ? ` · ${fmtVariazione(r.variazioneInizio)} dall'inizio` : ""}</span></p>
+          ${graficoPesoSVG(MISURE.lista)}
+          ${vis === "casa" ? `<p class="gp-legenda"><span class="gp-l-punto"></span> controllo in studio <span class="gp-l-punto gp-l-punto--casa"></span> a casa</p>` : ""}`
+          : `<p class="hint">Qui vedrai l'andamento delle misure registrate ai controlli.</p>`}
+        ${vis === "casa" ? `
+          <button type="button" class="btn btn--ghost" id="btn-pesata" ${puo.si ? "" : "disabled"}>${puo.si ? "⚖️ Aggiungi la pesata" : `Prossima pesata tra ${puo.traGiorni} ${puo.traGiorni === 1 ? "giorno" : "giorni"}`}</button>
+          <div class="field-row">
+            <div><div class="field-row__label">Giorno della pesata</div><div class="field-row__sub">Una volta a settimana basta: al mattino, a digiuno.</div></div>
+            <select id="sel-giorno-pesata">
+              <option value="">Nessun promemoria</option>
+              ${[1, 2, 3, 4, 5, 6, 0].map((g) => `<option value="${g}" ${String(g) === giorno ? "selected" : ""}>${GIORNI[g].charAt(0).toUpperCase() + GIORNI[g].slice(1)}</option>`).join("")}
+            </select>
+          </div>` : ""}
+      </div>`;
+  }
+
+  function collegaProgressiPaziente() {
+    const b = document.getElementById("btn-pesata");
+    if (b) b.addEventListener("click", apriPesataPaziente);
+    const s = document.getElementById("sel-giorno-pesata");
+    if (s) s.addEventListener("change", () => { if (s.value) localStorage.setItem(LS_GIORNO_PESATA, s.value); else localStorage.removeItem(LS_GIORNO_PESATA); });
+  }
+
+  /** In Oggi, nel giorno scelto, se la pesata della settimana non c'è ancora. */
+  function avvisoPesataHTML() {
+    if (!PIANO_ATTIVO || visibilitaPeso(PIANO_ATTIVO) !== "casa") return "";
+    const g = localStorage.getItem(LS_GIORNO_PESATA);
+    if (g === null || Number(g) !== new Date().getDay() || !puoPesarsi().si) return "";
+    return `
+      <div class="banner-ios banner-pesata">
+        <div class="banner-ios__testo"><strong>⚖️ Oggi è il giorno della pesata</strong><span>Al mattino, a digiuno, prima di colazione.</span></div>
+        <button type="button" class="btn" id="btn-pesata-oggi" style="width:auto;padding:8px 14px;">Aggiungi</button>
+      </div>`;
+  }
+
+  function apriPesataPaziente() {
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">⚖️ La pesata di oggi</h2>
+      <p class="sheet__nota">Al mattino, a digiuno, prima di colazione: così le pesate si possono confrontare. Il tuo nutrizionista la vedrà nella tua scheda.</p>
+      <label class="editor-campo"><span>Peso (kg)</span><input type="number" inputmode="decimal" id="pesata-peso" step="0.1" min="20" max="400" placeholder="es. 72,4"></label>
+      <p class="auth-error" id="pesata-errore" hidden></p>
+      <button type="button" class="btn" id="pesata-salva">Salva</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    overlay.querySelector("#pesata-salva").addEventListener("click", async (e) => {
+      const n = Number(String(overlay.querySelector("#pesata-peso").value).replace(",", "."));
+      const err = overlay.querySelector("#pesata-errore");
+      if (!(n >= 20 && n <= 400)) { err.textContent = "Scrivi il peso in kg, per esempio 72,4."; err.hidden = false; return; }
+      e.currentTarget.disabled = true;
+      try {
+        await window.cloud.salvaMisura(PIANO_ATTIVO.id, null, { data: oggiISO(), peso: Math.round(n * 10) / 10, fonte: "casa" });
+        chiudiSheet();
+        mostraToast("Pesata salvata");
+      } catch (errS) {
+        e.currentTarget.disabled = false;
+        err.textContent = "Non salvata: controlla la connessione."; err.hidden = false;
+      }
+    });
+  }
+
   // =======================================================================
   // LATO PROFESSIONISTA
   // =======================================================================
@@ -3282,6 +3617,8 @@
         </p>
       </section>
 
+      ${sezionePesoProfHTML(piano)}
+
       <section class="settings-section">
         <h2>Andamento settimanale</h2>
         <div class="stat-colonne">
@@ -3347,6 +3684,7 @@
     document.getElementById("btn-torna-stat").addEventListener("click", renderStatistiche);
     document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
     document.getElementById("btn-piano-da-stat-su").addEventListener("click", () => apriEditorPaziente(id));
+    collegaSezionePesoProf(piano);
     const testo = () => document.getElementById("testo-incoraggiamento").value.trim();
     document.getElementById("btn-msg-whatsapp").addEventListener("click", () => {
       window.open("https://wa.me/?text=" + encodeURIComponent(testo()), "_blank", "noopener");
@@ -4283,6 +4621,15 @@
           <label class="editor-campo"><span>Target giornaliero (kcal)</span><input type="number" data-campo="targetKcal" value="${pz.targetKcal != null ? pz.targetKcal : ""}"></label>
           <label class="editor-campo"><span>Nutrizionista (usato solo se non hai compilato "I miei dati di contatto")</span><input type="text" data-campo="nutrizionista" value="${escapeHTML(pz.nutrizionista || "")}"></label>
         </div>
+        <div class="ric-griglia" style="margin-top:10px;">
+          <label class="editor-campo"><span>Altezza (cm)</span><input type="number" inputmode="decimal" id="editor-altezza" min="100" max="230" step="1" value="${piano.corpo && piano.corpo.altezzaCm ? piano.corpo.altezzaCm : ""}" placeholder="per il BMI"></label>
+          <label class="editor-campo"><span>Peso obiettivo (kg)</span><input type="number" inputmode="decimal" id="editor-peso-obiettivo" min="20" max="400" step="0.1" value="${piano.corpo && piano.corpo.pesoObiettivo ? piano.corpo.pesoObiettivo : ""}" placeholder="facoltativo"></label>
+        </div>
+        <label class="editor-campo" style="margin-top:10px;"><span>Peso e misure nell'app del paziente</span>
+          <select id="editor-visibilita-peso">
+            ${Object.entries(VISIBILITA_PESO).map(([k, t]) => `<option value="${k}" ${visibilitaPeso(piano) === k ? "selected" : ""}>${escapeHTML(t)}</option>`).join("")}
+          </select></label>
+        <p class="hint">Per alcuni pazienti vedere spesso il peso non aiuta: scegli tu, caso per caso. Il peso e le misure si registrano nella scheda "Andamento".</p>
         <label class="editor-campo" style="margin-top:10px;"><span>Data di inizio del piano</span><input type="date" id="editor-data-inizio" value="${escapeHTML(piano.dataInizio || "")}"></label>
         <p class="hint">La settimana di questa data è la Settimana 1; poi il ciclo passa alle settimane successive compilate e ricomincia. ${piano.dataInizio ? "" : "Se la lasci vuota vale il calendario generale dell'app."}</p>
         <button type="button" class="btn" id="btn-salva-dati-paziente" style="margin-top:14px;">Salva dati paziente</button>
@@ -4560,6 +4907,13 @@
       const extra = { pazienteNome: nuovoPazienteNome };
       const di = (document.getElementById("editor-data-inizio") || {}).value;
       if (di) extra.dataInizio = di;
+      const altezza = Number((document.getElementById("editor-altezza") || {}).value);
+      const obiettivo = Number(String((document.getElementById("editor-peso-obiettivo") || {}).value || "").replace(",", "."));
+      extra.corpo = {
+        altezzaCm: altezza >= 100 && altezza <= 230 ? altezza : null,
+        pesoObiettivo: obiettivo >= 20 && obiettivo <= 400 ? obiettivo : null,
+        visibilita: (document.getElementById("editor-visibilita-peso") || {}).value || "controlli",
+      };
       await window.cloud.salvaPiano(piano.id, Object.assign({}, risultato.piano, extra));
       mostraToast("Dati paziente salvati e sincronizzati");
     } catch (e) {
@@ -4820,6 +5174,10 @@
         <label class="editor-campo"><span>Email di accesso</span><input type="email" id="np-email" required></label>
         <label class="editor-campo"><span>Password provvisoria</span><input type="text" id="np-password" value="${passwordGenerata}"></label>
         <label class="editor-campo"><span>Data di inizio del piano</span><input type="date" id="np-inizio" value="${oggiISO()}"></label>
+        <div class="ric-griglia">
+          <label class="editor-campo"><span>Altezza (cm)</span><input type="number" inputmode="decimal" id="np-altezza" min="100" max="230" step="1" placeholder="facoltativo"></label>
+          <label class="editor-campo"><span>Peso di oggi (kg)</span><input type="number" inputmode="decimal" id="np-peso" min="20" max="400" step="0.1" placeholder="facoltativo"></label>
+        </div>
         <p class="hint">La settimana che contiene questa data è la Settimana 1 del piano; poi le settimane si alternano in ordine.</p>
         <p class="auth-error" id="np-error" hidden></p>
         <button type="button" class="btn" id="btn-crea-paziente" style="margin-top:14px;">Crea paziente</button>
@@ -4905,7 +5263,16 @@
       pianoBase.paziente.nutrizionista = (contatti && contatti.nome) || PROFILO_PROF.nome || "";
       if (contatti) pianoBase.contattiNutrizionista = contatti;
       pianoBase.dataInizio = dataInizio;
-      await window.cloud.creaPaziente({ email, password, nome, piano: pianoBase });
+      const creato = await window.cloud.creaPaziente({ email, password, nome, piano: pianoBase });
+      // Altezza e primo peso: si registrano subito dopo, nel piano appena creato
+      const altezza = Number((document.getElementById("np-altezza") || {}).value);
+      const peso = Number(String((document.getElementById("np-peso") || {}).value || "").replace(",", "."));
+      if (creato && creato.pianoId) {
+        try {
+          await window.cloud.salvaPiano(creato.pianoId, { corpo: { altezzaCm: altezza >= 100 && altezza <= 230 ? altezza : null, pesoObiettivo: null, visibilita: "controlli" } });
+          if (peso >= 20 && peso <= 400) await window.cloud.salvaMisura(creato.pianoId, null, { data: oggiISO(), peso: Math.round(peso * 10) / 10, fonte: "studio" });
+        } catch (errMis) { console.warn("Misure iniziali non salvate:", errMis); }
+      }
       renderListaPazienti();
       mostraCredenzialiPaziente(nome, email, password);
     } catch (e) {

@@ -102,6 +102,33 @@ service cloud.firestore {
         && request.resource.data.professionistaUid == request.auth.uid;
       // Eliminare un paziente è sempre possibile (anche a licenza scaduta).
       allow delete: if isProfessionista() && resource.data.professionistaUid == request.auth.uid;
+
+      // Peso e misure. Il professionista le registra ai controlli; il paziente
+      // le vede solo se il professionista non le ha nascoste, e aggiunge le
+      // pesate a casa solo se è abilitato ("casa").
+      function pianoCorrente() { return get(/databases/$(database)/documents/piani/$(pianoId)).data; }
+      function visibilitaPeso() { return pianoCorrente().get("corpo", {}).get("visibilita", "controlli"); }
+      function eIlProfessionista() { return isSignedIn() && pianoCorrente().professionistaUid == request.auth.uid; }
+      function eIlPaziente() { return isSignedIn() && pianoCorrente().pazienteUid == request.auth.uid; }
+      function misuraValida(d) {
+        return d.data is string && d.data.size() == 10
+          && d.peso is number && d.peso >= 20 && d.peso <= 400
+          && (d.fonte == "studio" || d.fonte == "casa")
+          && d.keys().hasOnly(["data", "peso", "vita", "fianchi", "grasso", "muscolo", "fonte", "aggiornata"]);
+      }
+      match /misure/{misuraId} {
+        allow read: if eIlProfessionista() || (eIlPaziente() && visibilitaPeso() != "nascosto");
+        allow create, update: if (eIlProfessionista() && licenzaAttiva() && misuraValida(request.resource.data))
+          || (eIlPaziente() && visibilitaPeso() == "casa" && misuraValida(request.resource.data)
+              && request.resource.data.fonte == "casa"
+              && request.resource.data.keys().hasOnly(["data", "peso", "fonte", "aggiornata"])
+              && (resource == null || resource.data.fonte == "casa"));
+        allow delete: if eIlProfessionista() || (eIlPaziente() && resource.data.fonte == "casa");
+      }
+      // Note del controllo: solo il professionista
+      match /noteMisure/{misuraId} {
+        allow read, write: if eIlProfessionista();
+      }
     }
 
     // Ricette del professionista. Le legge lui e i SUOI pazienti: tutti, se

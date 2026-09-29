@@ -1902,3 +1902,30 @@ select option { font-weight: 400; color: var(--ink); background: var(--surface);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
+
+/* Peso e misure */
+.grafico-peso { width: 100%; height: auto; display: block; margin: 12px 0 4px; }
+.gp-griglia { stroke: var(--border-soft); stroke-width: 1; }
+.gp-asse { font-family: var(--font-body); font-size: 11px; fill: var(--ink-faint); }
+.gp-linea { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+.gp-punto { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
+.gp-punto--casa { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
+.gp-barra { fill: color-mix(in srgb, var(--accent) 22%, var(--surface)); }
+.gp-legenda { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; color: var(--ink-soft); margin: 0 0 10px; }
+.gp-l-punto { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-right: -8px; vertical-align: -1px; }
+.gp-l-punto--casa { background: var(--surface); border: 2px solid var(--accent); width: 8px; height: 8px; }
+.gp-l-barra { display: inline-block; width: 10px; height: 12px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 22%, var(--surface)); margin-right: -8px; vertical-align: -1px; }
+.stat-riquadri--peso { margin-top: 6px; }
+.avviso-misure { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: color-mix(in srgb, var(--gold) 14%, var(--surface)); border: 1px solid var(--gold); border-radius: var(--radius-s); padding: 10px 12px; margin: 4px 0 12px; font-size: 14px; }
+.avviso-misure .btn { width: auto; padding: 8px 14px; flex: none; }
+.tabella-scorre { overflow-x: auto; margin-top: 6px; }
+.tabella-misure { width: 100%; border-collapse: collapse; font-size: 13.5px; white-space: nowrap; }
+.tabella-misure th { text-align: left; font-size: 11.5px; font-weight: 600; color: var(--ink-soft); border-bottom: 1px solid var(--border); padding: 6px 8px; }
+.tabella-misure td { border-bottom: 1px solid var(--border-soft); padding: 7px 8px; color: var(--ink); }
+.etichetta-casa { font-size: 10.5px; font-weight: 700; color: var(--ink-soft); background: var(--border-soft); border-radius: 999px; padding: 1px 6px; margin-left: 4px; }
+.progressi { margin: 14px 0; padding: 14px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-m); }
+.progressi__riga { margin: 0; font-size: 14px; color: var(--ink-soft); }
+.progressi__riga strong { font-family: var(--font-display); font-size: 22px; color: var(--ink); margin-right: 4px; }
+.progressi .btn { margin: 4px 0 6px; }
+.banner-pesata { align-items: center; }
+.banner-pesata .btn { background: var(--surface); color: var(--accent); border: none; font-weight: 700; flex: none; }
