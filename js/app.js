@@ -2919,7 +2919,7 @@
     if (barre.length) t0 = Math.min(t0, S.daChiave(barre[0].lunedi).getTime());
     t0 = Math.max(t0, t1 - 182 * G); // al massimo sei mesi
     if (t1 - t0 < 21 * G) t0 = t1 - 21 * G;
-    const W = 640, H = barre.length ? 240 : 190, sx = 44, dx = 14, top = 16, bassoPeso = barre.length ? 150 : 160;
+    const W = 640, H = barre.length ? 250 : 200, sx = 54, dx = 16, top = 18, bassoPeso = barre.length ? 152 : 164;
     const x = (t) => sx + ((t - t0) / (t1 - t0)) * (W - sx - dx);
     const visibili = punti.filter((p) => p.t >= t0);
     const pesi = visibili.map((p) => p.peso);
@@ -3123,7 +3123,7 @@
           <div class="field-row">
             <div><div class="field-row__label">Giorno della pesata</div><div class="field-row__sub">Una volta a settimana basta: al mattino, a digiuno.</div></div>
             <select id="sel-giorno-pesata">
-              <option value="">Nessun promemoria</option>
+              <option value="">Nessuno</option>
               ${[1, 2, 3, 4, 5, 6, 0].map((g) => `<option value="${g}" ${String(g) === giorno ? "selected" : ""}>${GIORNI[g].charAt(0).toUpperCase() + GIORNI[g].slice(1)}</option>`).join("")}
             </select>
           </div>` : ""}
