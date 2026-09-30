@@ -124,6 +124,19 @@ assert.deepStrictEqual(venerdi[0].opzioni.map((o) => o.etichetta), ["Orata fresc
 assert.deepStrictEqual(venerdi[0].opzioni[1].voci.map((v) => `${v.voce.nome} ${q(v)}`), ["Polpette di merluzzo Frosta 120 g", "Olio extravergine d'oliva 5 g"]);
 ok += 2;
 
+// Frasi dei piani importati (Liguori, Giorni A-G, Pappalardo)
+const importati = [
+  ["Frutta fresca 250 g (non cocco, datteri, avocado, cachi, fichi)", ["Frutta fresca"]],
+  ["Fette biscottate integrali 40 g (oggi niente latte)", ["Fette biscottate integrali"]],
+  ["Cereali integrali 70 g + 2 uova", ["Cereali integrali", "Uova"]],
+  ["Tonno \"Leggero\" RioMare 60 g", ["Tonno al naturale"]],
+  ["Pesce grasso 120 g (salmone, tonno, spada, scampi, polpo)", ["Salmone", "Tonno fresco", "Pesce spada", "Scampi", "Polpo"]],
+  ["Sali minerali in 300 ml", ["Sali minerali"]],
+];
+importati.forEach(([testo, attesi]) => { assert.deepStrictEqual(nomi(testo), attesi, `"${testo}"`); ok++; });
+assert.deepStrictEqual(A.analizzaPasto("Nessuno spuntino"), []); ok++;
+assert.deepStrictEqual(A.analizzaPasto("Nessuna colazione (giorno G)"), []); ok++;
+
 // Confezioni indicative
 const conf = (nome, tot) => { const c = A.confezioniNecessarie({ nome, tot }); return c && c.testo; };
 assert.strictEqual(conf("Latte parzialmente scremato", { ml: 1400 }), "2 × 1 L");

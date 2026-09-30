@@ -189,6 +189,7 @@
     ["Gamberi", CP, "🦐", "gambero|gamberi|gamberetti|mazzancolle"],
     ["Calamari", CP, "🦑", "calamaro|calamari|totani"],
     ["Seppie", CP, "🦑", "seppia|seppie|seppioline"],
+    ["Scampi", CP, "🦐", "scampi|scampo|gamberoni"],
     ["Polpo", CP, "🐙", "polpo|moscardini"],
     ["Cozze e vongole", CP, "🦪", "cozze|cozza|vongole|vongola|frutti di mare"],
 
@@ -206,7 +207,7 @@
     ["Cannella", IS, "🧂", "cannella"],
     ["Passata di pomodoro", IS, "🥫", "passata|passata di pomodoro|salsa di pomodoro|sugo|sugo di pomodoro|crema di pomodoro|polpa di pomodoro|pelati|pomodori pelati"],
     ["Pesto", IS, "🌿", "pesto|pesto alla genovese"],
-    ["Tonno al naturale", IS, "🥫", "tonno in scatola|tonno al naturale|scatoletta di tonno|scatolette di tonno|tonno in scatoletta|scatoletta di tonno al naturale"],
+    ["Tonno al naturale", IS, "🥫", "tonno in scatola|tonno al naturale|tonno rio mare|tonno riomare|tonno leggero|scatoletta di tonno|scatolette di tonno|tonno in scatoletta|scatoletta di tonno al naturale"],
     ["Tonno sott'olio", IS, "🥫", "tonno sott olio|tonno sottolio|tonno in vetro|tonno sott olio in vetro|tonno all olio|tonno in olio"],
     ["Mais", IS, "🌽", "mais|granella di mais"],
     ["Olive", IS, "🫒", "oliva|olive|olive taggiasche"],
@@ -244,6 +245,7 @@
     ["Pasta di legumi", PRC, "🍝", "pasta di legumi|pasta di lenticchie|pasta di ceci|pasta di piselli", { b: "Pasta" }],
     ["Tortellini", PRC, "🥟", "tortellini|tortelloni|ravioli|pasta ripiena|tortellini di magro"],
     ["Gnocchi di patate", PRC, "🥟", "gnocchi|gnocchi di patate"],
+    ["Cereali integrali", PRC, "🌾", "cereali integrali|cereale integrale|cereali in chicco|cereale in chicco|cereale da primo piatto|cereali da primo piatto|cereali vari", { g: 1 }],
     ["Riso", PRC, "🍚", "riso|riso carnaroli|riso arborio|riso parboiled|risotto"],
     ["Riso basmati", PRC, "🍚", "riso basmati|basmati", { b: "Riso" }],
     ["Riso venere", PRC, "🍚", "riso venere|riso nero|venere", { b: "Riso" }],
@@ -300,7 +302,9 @@
     ["Vino", BEV, "🍷", "vino|vino rosso|vino bianco|bollicine|prosecco"],
     ["Birra", BEV, "🍺", "birra|birre"],
     ["Succhi di frutta", BEV, "🧃", "succo|succhi|succo di frutta|centrifuga|estratto"],
-    ["Bevanda proteica", BEV, "🥤", "proteine in polvere|whey|proteine whey|shake proteico|frullato proteico"],
+    ["Bevanda proteica", BEV, "🥤", "proteine in polvere|whey|proteine whey|whey protein|shake proteico|frullato proteico"],
+    ["Sali minerali", BEV, "💧", "sali minerali|integratore salino|bevanda isotonica|integratore di sali"],
+    ["Aminoacidi (BCAA)", IS, "💊", "bcaa|aminoacidi ramificati|amminoacidi ramificati|aminoacidi|amminoacidi"],
 
     // ---------- Casa ----------
     ["Detersivo piatti", CASA, "🧽", "detersivo piatti|detersivo per piatti|pastiglie lavastoviglie|lavastoviglie"],
@@ -554,7 +558,7 @@
   }
 
   // Condimenti e scorte: di solito ci sono già in casa
-  const DISPENSA = new Set(["Olio extravergine d'oliva", "Aceto", "Aceto di mele", "Aceto balsamico", "Sale", "Pepe", "Spezie", "Origano",
+  const DISPENSA = new Set(["Caffè", "Tè", "Olio extravergine d'oliva", "Aceto", "Aceto di mele", "Aceto balsamico", "Sale", "Pepe", "Spezie", "Origano",
     "Curry", "Zafferano", "Cannella", "Dado vegetale", "Lievito", "Zucchero", "Dolcificante", "Cacao amaro", "Capperi", "Senape", "Salsa di soia"]);
 
   /** Collega una voce trovata in un frammento a quella del pezzo (anche tra variante e base). */
@@ -575,7 +579,7 @@
    */
   function analizzaPezzo(pezzoGrezzo) {
     const pezzo = String(pezzoGrezzo || "")
-      .replace(/\(\s*(no|senza)\b[^)]*\)/gi, " ")
+      .replace(/\(\s*(no|senza|non|niente|tranne|eccetto|oggi niente)\b[^)]*\)/gi, " ")
       .replace(/\(\s*(\d+(?:[.,]\d+)?)\s*(kg|grammi|gr|g|ml|cl|l)\s*\)/gi, " $1 $2 ");
     const voci = vociDaPezzo(pezzo);
     if (!voci.length) return [];
@@ -751,6 +755,7 @@
   // ---------------------------------------------------------------------
   // Lettura di un intero pasto: righe, "e"/"o", alternative tra piatti
   // ---------------------------------------------------------------------
+  const RE_PASTO_VUOTO = /^\s*(nessun[oa]?|niente|salta(re)?)\b/i;
   const RE_PASTO_LIBERO = /pasto libero|piatto a piacere|stai sognando|\bpizza\b/i;
   const ETICHETTE_PASTO = { colazione: "Colazione", spuntinoMattina: "Spuntino", pranzo: "Pranzo", spuntinoPomeriggio: "Merenda", cena: "Cena", coccola: "Coccola" };
 
@@ -862,7 +867,7 @@
    */
   function analizzaPasto(testo) {
     const t = String(testo || "");
-    if (!t.trim() || RE_PASTO_LIBERO.test(t)) return [];
+    if (!t.trim() || RE_PASTO_LIBERO.test(t) || RE_PASTO_VUOTO.test(t)) return [];
     const out = [];
     gruppiDelPasto(t).forEach((gruppo) => {
       if (gruppo.length === 1) {
@@ -915,7 +920,7 @@
   /** Voci della lista (oggetti {chiave, nome, cat, icona}) ricavate da un singolo pezzo di testo. */
   function vociDaPezzo(pezzo) {
     // Parentesi che iniziano con "no"/"senza" sono indicazioni, non ingredienti
-    const pulito = pezzo.replace(/\(\s*(no|senza)\b[^)]*\)/gi, " ");
+    const pulito = pezzo.replace(/\(\s*(no|senza|non|niente|tranne|eccetto|oggi niente)\b[^)]*\)/gi, " ");
     if (RE_MARCHE_PRONTI.test(pulito)) {
       const nome = etichettaPiatto(pulito);
       if (nome) return [{ chiave: "x:" + radici(normalizza(nome)).join("-"), nome, cat: "pronti-surgelati", icona: "🧊" }];
@@ -1027,7 +1032,7 @@
   // Versione del motore di lettura dei pasti: va aumentata a ogni modifica che
   // cambia il risultato. Nella lista di casa serve a riconoscere gli alimenti
   // pubblicati da un'app non ancora aggiornata.
-  const VERSIONE_MOTORE = 5;
+  const VERSIONE_MOTORE = 6;
 
   const api = {
     CATEGORIE,
