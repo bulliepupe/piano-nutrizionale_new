@@ -528,6 +528,197 @@ exports.nuovoInvitoLista = onCall(async (request) => {
   return { codice };
 });
 
+// =========================================================================
+// IMPORTAZIONE DI UN PIANO DA DOCUMENTO (AI)
+// =========================================================================
+// Il browser del professionista invia solo le pagine che ha scelto, con il
+// nome del paziente già oscurato (testo e immagini). Qui si controllano
+// licenza e limite mensile, si chiede al modello il piano in un formato
+// rigido (strumento "piano_convertito") e lo si restituisce per la
+// revisione: nulla viene salvato nel piano senza la conferma del
+// professionista.
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+const MODELLO_IMPORTAZIONE = "claude-sonnet-5";
+const LIMITE_IMPORTAZIONI_MESE = 30;
+const MAX_PAGINE_IMPORTAZIONE = 12;
+
+const CAMPI_PASTO_AI = ["colazione", "spuntinoMattina", "pranzo", "spuntinoPomeriggio", "cena", "coccola"];
+
+const ISTRUZIONI_IMPORTAZIONE = `Sei l'assistente di importazione dell'app "Il mio Piano", usata da nutrizionisti italiani. Ricevi le pagine di un piano alimentare (immagine della pagina e testo estratto: se il testo è disordinato, come nelle tabelle, fidati dell'immagine) e lo converti nel formato dell'app chiamando lo strumento piano_convertito.
+
+REGOLE FONDAMENTALI
+- Riporta alimenti, grammature e indicazioni come sono scritti: non inventare alimenti, non cambiare quantità, non aggiungere consigli tuoi.
+- Non riportare mai dati personali del paziente (nome, età, peso, altezza, misure, analisi, date di visite e appuntamenti, contatti). Nel testo il nome può comparire come "[paziente]".
+- Scrivi in italiano, con frasi brevi.
+
+I PASTI
+L'app ha sei pasti al giorno: colazione, spuntinoMattina, pranzo, spuntinoPomeriggio (merenda), cena, coccola (facoltativa: spuntino serale, dolce, "al bisogno").
+- Scrivi l'alimento seguito dalla quantità ("Pollo 150 g", "2 uova", "Olio EVO 10 g") e separa gli alimenti con " + ".
+- Alternative: " o " nella stessa riga ("pane integrale 80 g o fette Wasa 60 g"); se le alternative sono piatti o gruppi interi, mettile su righe separate con una riga che contiene solo "o", cioè "\\no\\n".
+- Esclusioni e condizioni tra parentesi, iniziando con "no" ("Frutta 200 g (no banane, fichi)"); note brevi tra parentesi.
+- Pasto non previsto: "Nessuno spuntino" / "Nessuna colazione". Pasto o giornata liberi: "Pasto libero" (eventualmente "Pasto libero: pizza margherita").
+- Se un pasto dice "verdura a piacere" o simili, scrivilo così. Se il documento indica quantità giornaliere comuni (per esempio olio 20 g al giorno), ripartiscile tra pranzo e cena e segnalalo negli avvisi.
+- Integratori e snack pre-allenamento vanno nel pasto più vicino (di solito lo spuntino del pomeriggio).
+- kcal: le calorie della giornata se il documento le indica, altrimenti null.
+
+GIORNATE E SETTIMANE
+- giornate: una voce per ogni giornata diversa del piano, con un nome ("Lunedì", "Giorno A", "Con sport", "Senza sport", "Giornata tipo").
+- settimane: per ogni settimana del piano (di solito una, al massimo 5) indica quale giornata si segue da lunedì a domenica (7 nomi presi da giornate).
+- Piano per giorni della settimana: una giornata per giorno. Giornate tipo (A, B, C…) o una sola giornata tipo: assegnale ai giorni in ordine e spiega negli avvisi che l'ordine è modificabile. Giornate con e senza sport: proponi i giorni di allenamento (in base al documento, altrimenti 3 giorni alterni) e aggiungi una domanda per il professionista.
+- Giornata libera: tutti i pasti "Pasto libero".
+
+REGOLE GENERALI E SOSTITUZIONI
+- normeGenerali: al massimo 12 regole brevi prese dal documento (condimenti, bevande, cotture, scambi di pasti o giornate, frequenze settimanali). Escludi ricettari, tabelle educative generiche, stagionalità, FAQ e schede di allenamento.
+- sostituzioni: gruppi di alimenti equivalenti, ognuno con almeno 2 opzioni scritte come "Alimento quantità" (es. "Pane integrale 88g"). Se il documento dà coefficienti di conversione (es. "pane = cereali × 1,25"), calcola le grammature partendo dalle quantità più usate nel piano, metti calcolata = true e dillo negli avvisi. Se non ci sono equivalenze, lascia l'elenco vuoto.
+
+AVVISI E DOMANDE
+- avvisi: ogni interpretazione che hai dovuto fare e ogni incoerenza del documento (es. "la tabella dice frutta ma il consiglio accanto dice crackers"), al massimo 12, una frase ciascuno.
+- domande: decisioni che spettano al professionista (es. "In quali giorni si allena il paziente?"), al massimo 3.`;
+
+const STRUMENTO_IMPORTAZIONE = {
+  name: "piano_convertito",
+  description: "Restituisce il piano alimentare convertito nel formato dell'app Il mio Piano.",
+  input_schema: {
+    type: "object",
+    properties: {
+      giornate: {
+        type: "array",
+        description: "Le giornate diverse del piano.",
+        items: {
+          type: "object",
+          properties: {
+            nome: { type: "string" },
+            colazione: { type: "string" },
+            spuntinoMattina: { type: "string" },
+            pranzo: { type: "string" },
+            spuntinoPomeriggio: { type: "string" },
+            cena: { type: "string" },
+            coccola: { type: "string" },
+            kcal: { type: ["number", "null"] },
+          },
+          required: ["nome", "colazione", "spuntinoMattina", "pranzo", "spuntinoPomeriggio", "cena"],
+        },
+      },
+      settimane: {
+        type: "array",
+        description: "Per ogni settimana, 7 nomi di giornata da lunedì a domenica.",
+        items: { type: "array", items: { type: "string" } },
+      },
+      normeGenerali: { type: "array", items: { type: "string" } },
+      sostituzioni: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            nome: { type: "string" },
+            opzioni: { type: "array", items: { type: "string" } },
+            calcolata: { type: "boolean" },
+          },
+          required: ["nome", "opzioni"],
+        },
+      },
+      avvisi: { type: "array", items: { type: "string" } },
+      domande: { type: "array", items: { type: "string" } },
+    },
+    required: ["giornate", "settimane", "normeGenerali", "sostituzioni", "avvisi"],
+  },
+};
+
+const testoBreve = (t, max) => String(t == null ? "" : t).slice(0, max);
+
+/** Ripulisce e limita il risultato del modello prima di mandarlo al browser. */
+function normalizzaPianoAI(r) {
+  const giornate = (Array.isArray(r.giornate) ? r.giornate : []).slice(0, 35).map((g, i) => {
+    const out = { nome: testoBreve(g.nome || `Giornata ${i + 1}`, 60) };
+    CAMPI_PASTO_AI.forEach((k) => { out[k] = testoBreve(g[k], 1500); });
+    out.kcal = typeof g.kcal === "number" && g.kcal > 0 && g.kcal < 10000 ? Math.round(g.kcal) : null;
+    return out;
+  });
+  const nomi = new Set(giornate.map((g) => g.nome));
+  const settimane = (Array.isArray(r.settimane) ? r.settimane : []).slice(0, 5)
+    .map((sett) => (Array.isArray(sett) ? sett : []).slice(0, 7).map((n) => (nomi.has(n) ? n : (giornate[0] ? giornate[0].nome : ""))))
+    .filter((sett) => sett.length === 7);
+  return {
+    giornate,
+    settimane: settimane.length ? settimane : (giornate.length ? [Array.from({ length: 7 }, (_, i) => giornate[i % giornate.length].nome)] : []),
+    normeGenerali: (Array.isArray(r.normeGenerali) ? r.normeGenerali : []).slice(0, 12).map((x) => testoBreve(x, 400)).filter(Boolean),
+    sostituzioni: (Array.isArray(r.sostituzioni) ? r.sostituzioni : []).slice(0, 15)
+      .map((gr) => ({ nome: testoBreve(gr.nome, 80), opzioni: (Array.isArray(gr.opzioni) ? gr.opzioni : []).slice(0, 12).map((o) => testoBreve(o, 80)).filter(Boolean), calcolata: !!gr.calcolata }))
+      .filter((gr) => gr.nome && gr.opzioni.length >= 2),
+    avvisi: (Array.isArray(r.avvisi) ? r.avvisi : []).slice(0, 12).map((x) => testoBreve(x, 400)).filter(Boolean),
+    domande: (Array.isArray(r.domande) ? r.domande : []).slice(0, 3).map((x) => testoBreve(x, 300)).filter(Boolean),
+  };
+}
+
+exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 300, memory: "512MiB" }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "professionista") throw new HttpsError("permission-denied", "Solo per i professionisti.");
+  if (!statoLicenzaServer(utente.licenza, Date.now()).attiva) throw new HttpsError("failed-precondition", "licenza-non-attiva");
+
+  const mese = new Date().toISOString().slice(0, 7);
+  const usate = (utente.importazioniAI && utente.importazioniAI.mese === mese) ? Number(utente.importazioniAI.n) || 0 : 0;
+  if (usate >= LIMITE_IMPORTAZIONI_MESE) throw new HttpsError("resource-exhausted", "limite-mensile");
+
+  const pagine = Array.isArray(request.data && request.data.pagine) ? request.data.pagine : [];
+  if (!pagine.length) throw new HttpsError("invalid-argument", "Nessuna pagina da leggere.");
+  if (pagine.length > MAX_PAGINE_IMPORTAZIONE) throw new HttpsError("invalid-argument", "troppe-pagine");
+
+  const contenuto = [];
+  pagine.forEach((p, i) => {
+    const img = String((p && p.immagine) || "");
+    if (img && /^[A-Za-z0-9+/=]+$/.test(img.slice(0, 200)) && img.length < 3500000) {
+      contenuto.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: img } });
+    }
+    contenuto.push({ type: "text", text: `Pagina ${i + 1} — testo estratto:\n${testoBreve(p && p.testo, 12000) || "(nessun testo: usa l'immagine)"}` });
+  });
+  const note = testoBreve(request.data && request.data.note, 1000);
+  contenuto.push({ type: "text", text: `Converti il piano di queste ${pagine.length} pagine chiamando lo strumento piano_convertito.${note ? `\nIndicazioni del professionista: ${note}` : ""}` });
+
+  let risposta;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY.value(),
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: MODELLO_IMPORTAZIONE,
+        max_tokens: 16000,
+        system: ISTRUZIONI_IMPORTAZIONE,
+        tools: [STRUMENTO_IMPORTAZIONE],
+        tool_choice: { type: "tool", name: "piano_convertito" },
+        messages: [{ role: "user", content: contenuto }],
+      }),
+    });
+    risposta = await r.json();
+    if (!r.ok) {
+      console.error("Importazione AI: errore API", r.status, risposta && risposta.error && risposta.error.type);
+      throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+    }
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    console.error("Importazione AI: chiamata non riuscita", err && err.message);
+    throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+  }
+
+  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "piano_convertito");
+  if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
+  const piano = normalizzaPianoAI(blocco.input);
+  if (!piano.giornate.length) throw new HttpsError("failed-precondition", "nessun-pasto-trovato");
+
+  const uso = risposta.usage || {};
+  await utenteRef.set({
+    importazioniAI: { mese, n: usate + 1, ultimaIl: FieldValue.serverTimestamp() },
+  }, { merge: true });
+  console.log("Importazione AI completata", { uid, pagine: pagine.length, input: uso.input_tokens, output: uso.output_tokens });
+  return { piano, rimaste: LIMITE_IMPORTAZIONI_MESE - usate - 1 };
+});
+
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.
 
 // =========================================================================

@@ -139,6 +139,13 @@
      * server, che verifica licenza e limite di pazienti. Ritorna
      * { pazienteUid, pianoId }.
      */
+    /** Lettura di un piano da PDF con l'AI (può richiedere fino a qualche minuto). */
+    async importaPianoAI(dati) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const r = await funzioni.httpsCallable("importaPianoAI", { timeout: 300000 })(dati);
+      return r.data;
+    },
+
     async creaPaziente({ email, password, nome, piano }) {
       if (!funzioni) throw { code: "functions/unavailable" };
       const chiama = funzioni.httpsCallable("creaPaziente");

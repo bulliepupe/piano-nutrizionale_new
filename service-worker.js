@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v49";
+const CACHE_VERSION = "v50";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [

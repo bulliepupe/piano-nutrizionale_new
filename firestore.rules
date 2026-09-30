@@ -70,7 +70,7 @@ service cloud.firestore {
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI"]);
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista

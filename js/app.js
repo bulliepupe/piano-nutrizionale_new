@@ -3192,6 +3192,432 @@
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Importazione di un piano da PDF con l'AI (professionista)
+  // ---------------------------------------------------------------------
+  // 1) il professionista sceglie il PDF e le pagine con il piano;
+  // 2) nome e cognome del paziente (e altre parole indicate) vengono
+  //    tolti dal testo e coperti nelle immagini, nel browser;
+  // 3) solo quelle pagine vanno alla Cloud Function importaPianoAI;
+  // 4) il risultato si rivede e si corregge prima di salvarlo.
+  const IMPORTA = { piano: null, pdf: null, nomeFile: "", pagine: [], termini: [], inviate: null, risultato: null, inCorso: false };
+  const RE_PAGINA_PASTI = /colazione|pranzo|cena|spuntino|merenda|giorno\s+[a-g]\b|luned|marted|mercoled|gioved|venerd|pasto\s*\d|snack/i;
+  const RE_DATI_PERSONALI = /\bpeso\b|altezza|\bbmi\b|\bimc\b|circonferenz|bioimped|massa grassa|grasso\s*%|massa muscolare|\bet[aà]\b|data di nascita|antropometr|plicometr|appuntamento/gi;
+  function contaDatiPersonali(testo) { return new Set((String(testo).match(RE_DATI_PERSONALI) || []).map((x) => x.toLowerCase())).size; }
+  const CAMPI_IMPORTAZIONE = [["colazione", "Colazione"], ["spuntinoMattina", "Spuntino di metà mattina"], ["pranzo", "Pranzo"], ["spuntinoPomeriggio", "Spuntino del pomeriggio"], ["cena", "Cena"], ["coccola", "Coccola (facoltativa)"]];
+  const VUOTI_IMPORTAZIONE = { colazione: "Nessuna colazione", spuntinoMattina: "Nessuno spuntino", pranzo: "Pasto libero", spuntinoPomeriggio: "Nessuno spuntino", cena: "Pasto libero" };
+
+  function avviaImportazioneAI(piano) {
+    if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } }
+    Object.assign(IMPORTA, { piano, pdf: null, nomeFile: "", pagine: [], inviate: null, risultato: null, inCorso: false,
+      termini: String(piano.pazienteNome || "").split(/\s+/).map((t) => t.trim()).filter((t) => t.length >= 2) });
+    renderImportazioneAI();
+  }
+
+  function testataImportazioneHTML(passo) {
+    const passi = ["Documento e pagine", "Controllo dell'invio", "Revisione"];
+    return `
+      <div class="nav-riga">${navLink("btn-import-indietro", "piano", "Piano del paziente", true)}</div>
+      <ol class="import-passi">${passi.map((t, i) => `<li class="${i + 1 === passo ? "is-attivo" : i + 1 < passo ? "is-fatto" : ""}">${i + 1}. ${t}</li>`).join("")}</ol>`;
+  }
+
+  function collegaIndietroImportazione() {
+    document.getElementById("btn-import-indietro").addEventListener("click", () => apriEditorPaziente(IMPORTA.piano.id));
+  }
+
+  // ---- passo 1: PDF, pagine, parole da nascondere ----
+  function renderImportazioneAI() {
+    const piano = IMPORTA.piano;
+    segnaVistaProf("importaAI");
+    document.getElementById("prof-header-titolo").textContent = "Importa il piano da un PDF";
+    const sel = IMPORTA.pagine.filter((p) => p.sel).length;
+    profRoot.innerHTML = `
+      ${testataImportazioneHTML(1)}
+      <section class="settings-section">
+        <h2>Il piano di ${escapeHTML(piano.pazienteNome || "questo paziente")}</h2>
+        <p class="hint">Carica il PDF che consegni di solito al paziente: l'intelligenza artificiale lo legge e lo converte nel formato dell'app. Prima di salvare potrai rivedere e correggere tutto. Il piano attuale verrà sostituito solo quando confermi.</p>
+        <label class="btn ${IMPORTA.pdf ? "btn--ghost" : ""}" for="import-file">${IMPORTA.pdf ? `📄 ${escapeHTML(IMPORTA.nomeFile)} · cambia file` : "📄 Scegli il PDF del piano"}</label>
+        <input type="file" id="import-file" accept="application/pdf,.pdf" hidden>
+        <p class="stat-nota" style="margin-top:6px;">Un file Word? Aprilo e salvalo come PDF. Al massimo ${12} pagine per volta.</p>
+      </section>
+      ${IMPORTA.pagine.length ? `
+      <section class="settings-section">
+        <h2>Quali pagine contengono il piano?</h2>
+        <p class="hint">Ho già selezionato quelle con i pasti. Le pagine segnate <strong>⚠️ dati del paziente</strong> contengono misure o dati personali: se ti servono (per esempio hanno anche delle indicazioni sul piano), selezionale e al passo successivo copri la zona con i dati. <strong>Le pagine non selezionate non escono dal tuo computer.</strong></p>
+        <div class="import-pagine">
+          ${IMPORTA.pagine.map((p, i) => `
+            <button type="button" class="import-pagina ${p.sel ? "is-sel" : ""}" data-pagina="${i}" aria-pressed="${p.sel}">
+              <img src="${p.miniatura}" alt="Pagina ${i + 1}">
+              <span>Pagina ${i + 1}${p.senzaTesto ? " · scansione" : ""}</span>
+              ${p.personali ? '<span class="import-pagina__avviso">⚠️ dati del paziente</span>' : ""}
+            </button>`).join("")}
+        </div>
+        <p class="stat-nota">${sel} ${sel === 1 ? "pagina selezionata" : "pagine selezionate"}.</p>
+      </section>
+      <section class="settings-section">
+        <h2>Cosa nascondere</h2>
+        <p class="hint">Queste parole vengono tolte dal testo e coperte nelle immagini prima dell'invio. Ci sono già nome e cognome del paziente: aggiungi, separandoli con una virgola, altri dati che compaiono nelle pagine scelte.</p>
+        <label class="editor-campo"><span>Parole da nascondere</span>
+          <input type="text" id="import-termini" value="${escapeHTML(IMPORTA.termini.join(", "))}" placeholder="Nome, Cognome, …"></label>
+        <label class="editor-campo" style="margin-top:10px;"><span>Indicazioni per la lettura (facoltative)</span>
+          <textarea id="import-note" rows="2" maxlength="500" placeholder="Es. il paziente si allena martedì e giovedì; la colonna di sinistra è il pranzo"></textarea></label>
+        <button type="button" class="btn" id="import-prepara" style="margin-top:12px;" ${sel ? "" : "disabled"}>Prepara l'invio (${sel} ${sel === 1 ? "pagina" : "pagine"})</button>
+      </section>` : ""}
+    `;
+    collegaIndietroImportazione();
+    document.getElementById("import-file").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (f) caricaPdfImportazione(f);
+    });
+    profRoot.querySelectorAll("[data-pagina]").forEach((b) => b.addEventListener("click", () => {
+      const p = IMPORTA.pagine[Number(b.dataset.pagina)];
+      p.sel = !p.sel;
+      if (IMPORTA.pagine.filter((x) => x.sel).length > 12) { p.sel = false; mostraToast("Al massimo 12 pagine per volta"); }
+      leggiTerminiImportazione();
+      renderImportazioneAI();
+    }));
+    const prep = document.getElementById("import-prepara");
+    if (prep) prep.addEventListener("click", () => { leggiTerminiImportazione(); IMPORTA.note = document.getElementById("import-note").value.trim(); preparaInvioImportazione(); });
+  }
+
+  function leggiTerminiImportazione() {
+    const el = document.getElementById("import-termini");
+    if (el) IMPORTA.termini = el.value.split(",").map((t) => t.trim()).filter((t) => t.length >= 2);
+  }
+
+  async function caricaPdfImportazione(file) {
+    if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") { mostraToast("Scegli un file PDF"); return; }
+    if (file.size > 30 * 1024 * 1024) { mostraToast("Il PDF è troppo grande (massimo 30 MB)"); return; }
+    mostraToast("Apro il PDF…");
+    try {
+      const pdfjs = await caricaPdfJs();
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+      if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } }
+      IMPORTA.pdf = doc; IMPORTA.nomeFile = file.name; IMPORTA.pagine = []; IMPORTA.inviate = null;
+      const n = Math.min(doc.numPages, 30);
+      for (let i = 1; i <= n; i++) {
+        const pagina = await doc.getPage(i);
+        const testo = (await pagina.getTextContent()).items.map((it) => it.str).join(" ");
+        const vp = pagina.getViewport({ scale: 1 });
+        const scala = 220 / vp.width;
+        const canvas = document.createElement("canvas");
+        const v2 = pagina.getViewport({ scale: scala });
+        canvas.width = Math.round(v2.width); canvas.height = Math.round(v2.height);
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await pagina.render({ canvasContext: ctx, viewport: v2 }).promise;
+        const personali = contaDatiPersonali(testo) >= 2;
+        IMPORTA.pagine.push({ n: i, testo, senzaTesto: testo.replace(/\s/g, "").length < 20, personali, sel: RE_PAGINA_PASTI.test(testo) && !personali, zone: [], miniatura: canvas.toDataURL("image/jpeg", 0.7) });
+      }
+      if (IMPORTA.pagine.filter((p) => p.sel).length > 12) IMPORTA.pagine.forEach((p, i) => { if (i >= 12) p.sel = false; });
+      if (doc.numPages > 30) mostraToast("Mostro solo le prime 30 pagine", 3500);
+      renderImportazioneAI();
+    } catch (err) {
+      console.warn(err);
+      mostraToast("Non riesco ad aprire questo PDF: prova a salvarlo di nuovo come PDF", 4500);
+    }
+  }
+
+  function escapeRegExp(t) { return String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+  /** Testo e immagine di una pagina con le parole da nascondere tolte e coperte. */
+  function dentroZona(x, y, zone) {
+    return zone.some((z) => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h);
+  }
+
+  async function paginaOscurata(numero, zone) {
+    zone = zone || [];
+    const pdfjs = await caricaPdfJs();
+    const pagina = await IMPORTA.pdf.getPage(numero);
+    const contenuto = await pagina.getTextContent();
+    const termini = IMPORTA.termini.map((t) => t.toLowerCase());
+    const re = termini.length ? new RegExp(termini.map(escapeRegExp).join("|"), "gi") : null;
+    const base0 = pagina.getViewport({ scale: 1 });
+    const nellaZona = (it) => {
+      if (!zone.length) return false;
+      const t = pdfjs.Util.transform(base0.transform, it.transform);
+      const cx = (t[4] + (it.width || 0) / 2) / base0.width;
+      const cy = (t[5] - Math.hypot(t[2], t[3]) / 2) / base0.height;
+      return dentroZona(cx, cy, zone);
+    };
+    const righe = [];
+    let riga = "";
+    contenuto.items.forEach((it) => {
+      if (!nellaZona(it)) riga += it.str;
+      if (it.hasEOL) { righe.push(riga); riga = ""; } else riga += " ";
+    });
+    if (riga.trim()) righe.push(riga);
+    let testo = righe.map((r) => r.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
+    if (re) testo = testo.replace(re, "[paziente]");
+    const base = pagina.getViewport({ scale: 1 });
+    const vp = pagina.getViewport({ scale: Math.min(2.2, 1400 / base.width) });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await pagina.render({ canvasContext: ctx, viewport: vp }).promise;
+    let coperte = 0;
+    ctx.fillStyle = "#1e2b21";
+    zone.forEach((z) => ctx.fillRect(z.x * canvas.width, z.y * canvas.height, z.w * canvas.width, z.h * canvas.height));
+    if (re) {
+      contenuto.items.forEach((it) => {
+        if (!it.str || !termini.some((t) => it.str.toLowerCase().includes(t))) return;
+        const tx = pdfjs.Util.transform(vp.transform, it.transform);
+        const h = Math.hypot(tx[2], tx[3]);
+        const w = (it.width || 0) * vp.scale;
+        ctx.fillStyle = "#1e2b21";
+        ctx.fillRect(tx[4] - 2, tx[5] - h * 1.05, Math.max(w, h * 2) + 4, h * 1.35);
+        coperte++;
+      });
+    }
+    return { testo, immagine: canvas.toDataURL("image/jpeg", 0.72), coperte };
+  }
+
+  // ---- passo 2: cosa viene inviato ----
+  async function preparaInvioImportazione() {
+    const scelte = IMPORTA.pagine.filter((p) => p.sel);
+    mostraToast("Preparo le pagine…");
+    try {
+      IMPORTA.inviate = [];
+      for (const p of scelte) IMPORTA.inviate.push(Object.assign({ n: p.n, senzaTesto: p.senzaTesto, personali: p.personali }, await paginaOscurata(p.n, p.zone)));
+    } catch (err) {
+      console.warn(err);
+      mostraToast("Non riesco a preparare le pagine: riprova", 4000);
+      return;
+    }
+    renderInvioImportazione();
+  }
+
+  function renderInvioImportazione() {
+    const scansioni = IMPORTA.inviate.filter((p) => p.senzaTesto).length;
+    profRoot.innerHTML = `
+      ${testataImportazioneHTML(2)}
+      <section class="settings-section">
+        <h2>Ecco cosa viene inviato</h2>
+        <p class="hint">Le parole da nascondere sono coperte da un riquadro scuro${IMPORTA.inviate.some((p) => p.coperte) ? "" : " (in queste pagine non ne ho trovate)"}. Controlla le pagine: se vedi ancora dati del paziente, torna indietro e aggiungili tra le parole da nascondere, oppure togli la pagina.</p>
+        ${scansioni ? `<div class="nota-versione">⚠️ ${scansioni === 1 ? "Una pagina è una scansione" : `${scansioni} pagine sono scansioni`}: il testo non è leggibile dal computer, quindi il nome non si può coprire in automatico. Se contengono dati del paziente, togli quelle pagine.</div>` : ""}
+        <div class="import-anteprime">
+          ${IMPORTA.inviate.map((p, i) => {
+            const zone = (IMPORTA.pagine.find((x) => x.n === p.n) || {}).zone || [];
+            return `<figure class="${p.personali && !zone.length ? "is-attenzione" : ""}"><img src="${p.immagine}" alt="Pagina ${p.n}">
+              <figcaption>Pagina ${p.n}${p.coperte ? ` · ${p.coperte} ${p.coperte === 1 ? "parola coperta" : "parole coperte"}` : ""}${zone.length ? ` · ${zone.length} ${zone.length === 1 ? "zona coperta" : "zone coperte"}` : ""}${p.personali && !zone.length ? " · ⚠️ contiene dati del paziente" : ""}</figcaption>
+              <button type="button" class="btn btn--ghost import-copri" data-copri="${i}">▭ Copri una zona</button></figure>`;
+          }).join("")}
+        </div>
+        <p class="stat-nota">Le pagine vengono lette dall'intelligenza artificiale di Anthropic tramite i nostri server e non vengono usate per addestrare modelli. La lettura richiede di solito uno o due minuti.</p>
+        <div class="import-azioni">
+          <button type="button" class="btn btn--ghost" id="import-torna">Torna alle pagine</button>
+          <button type="button" class="btn" id="import-invia">✨ Leggi il piano</button>
+        </div>
+      </section>`;
+    collegaIndietroImportazione();
+    document.getElementById("import-torna").addEventListener("click", renderImportazioneAI);
+    profRoot.querySelectorAll("[data-copri]").forEach((b) => b.addEventListener("click", () => apriCopriZona(Number(b.dataset.copri))));
+    document.getElementById("import-invia").addEventListener("click", inviaImportazione);
+  }
+
+  /** Il professionista traccia rettangoli sulla pagina: quelle zone non vengono inviate. */
+  function apriCopriZona(indice) {
+    const inviata = IMPORTA.inviate[indice];
+    const pagina = IMPORTA.pagine.find((x) => x.n === inviata.n);
+    const zone = pagina.zone.map((z) => Object.assign({}, z));
+    const overlay = apriSheet(`
+      <h2 class="sheet__titolo">Copri una zona · pagina ${inviata.n}</h2>
+      <p class="sheet__nota">Trascina con il mouse o con il dito sopra la parte da nascondere, per esempio la tabella con peso e misure. Puoi tracciare più zone.</p>
+      <div class="copri-area"><img src="${inviata.immagine}" alt=""><canvas></canvas></div>
+      <div class="import-azioni" style="margin-top:10px;">
+        <button type="button" class="btn btn--ghost" id="copri-annulla-ultima">Togli l'ultima zona</button>
+        <button type="button" class="btn" id="copri-applica">Applica</button>
+      </div>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+    `);
+    overlay.querySelector(".sheet").classList.add("sheet--larga");
+    const area = overlay.querySelector(".copri-area");
+    const canvas = area.querySelector("canvas");
+    const img = area.querySelector("img");
+    let inizio = null, corrente = null;
+    const disegna = () => {
+      canvas.width = img.clientWidth; canvas.height = img.clientHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(30,43,33,0.97)";
+      zone.concat(corrente ? [corrente] : []).forEach((z) => ctx.fillRect(z.x * canvas.width, z.y * canvas.height, z.w * canvas.width, z.h * canvas.height));
+    };
+    const punto = (e) => {
+      const r = canvas.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      return { x: Math.min(1, Math.max(0, (t.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (t.clientY - r.top) / r.height)) };
+    };
+    const giu = (e) => { e.preventDefault(); inizio = punto(e); corrente = null; };
+    const muovi = (e) => {
+      if (!inizio) return;
+      e.preventDefault();
+      const p = punto(e);
+      corrente = { x: Math.min(inizio.x, p.x), y: Math.min(inizio.y, p.y), w: Math.abs(p.x - inizio.x), h: Math.abs(p.y - inizio.y) };
+      disegna();
+    };
+    const su = () => { if (corrente && corrente.w > 0.01 && corrente.h > 0.005) zone.push(corrente); inizio = null; corrente = null; disegna(); };
+    canvas.addEventListener("mousedown", giu); canvas.addEventListener("mousemove", muovi); window.addEventListener("mouseup", su);
+    canvas.addEventListener("touchstart", giu, { passive: false }); canvas.addEventListener("touchmove", muovi, { passive: false }); canvas.addEventListener("touchend", su);
+    if (img.complete) disegna(); else img.addEventListener("load", disegna);
+    overlay.querySelector("#copri-annulla-ultima").addEventListener("click", () => { zone.pop(); disegna(); });
+    overlay.querySelector("#copri-applica").addEventListener("click", async () => {
+      window.removeEventListener("mouseup", su);
+      pagina.zone = zone;
+      chiudiSheet();
+      try {
+        Object.assign(inviata, await paginaOscurata(inviata.n, zone));
+        renderInvioImportazione();
+      } catch (err) { mostraToast("Non riesco ad applicare la zona: riprova"); }
+    });
+  }
+
+  function erroreImportazione(err) {
+    const m = String((err && err.message) || "");
+    const c = String((err && err.code) || "");
+    if (m === "limite-mensile") return "Hai raggiunto le importazioni disponibili per questo mese. Scrivici a info@ilmiopiano.it se te ne servono altre.";
+    if (m === "licenza-non-attiva") return "La tua licenza non è attiva: rinnovala per usare l'importazione.";
+    if (m === "troppe-pagine") return "Troppe pagine: scegline al massimo 12.";
+    if (m === "nessun-pasto-trovato") return "Non ho trovato pasti in queste pagine: controlla di aver scelto quelle con il piano.";
+    if (/deadline|timeout/i.test(c + m)) return "La lettura ha richiesto troppo tempo: prova con meno pagine.";
+    if (m === "servizio-ai-non-disponibile") return "Il servizio di lettura non risponde in questo momento: riprova tra qualche minuto.";
+    return "Lettura non riuscita: controlla la connessione e riprova.";
+  }
+
+  async function inviaImportazione() {
+    if (IMPORTA.inCorso) return;
+    IMPORTA.inCorso = true;
+    const btn = document.getElementById("import-invia");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="import-attesa"></span> Sto leggendo il piano…';
+    try {
+      const r = await window.cloud.importaPianoAI({
+        pagine: IMPORTA.inviate.map((p) => ({ testo: p.testo, immagine: p.immagine.split(",")[1] })),
+        note: IMPORTA.note || "",
+      });
+      IMPORTA.risultato = r.piano;
+      IMPORTA.rimaste = r.rimaste;
+      renderRevisioneImportazione();
+    } catch (err) {
+      console.warn(err);
+      btn.disabled = false;
+      btn.textContent = "✨ Leggi il piano";
+      mostraToast(erroreImportazione(err), 6000);
+    } finally {
+      IMPORTA.inCorso = false;
+    }
+  }
+
+  // ---- passo 3: revisione ----
+  function renderRevisioneImportazione() {
+    const r = IMPORTA.risultato;
+    const GG = window.weekLogic.GIORNI;
+    profRoot.innerHTML = `
+      ${testataImportazioneHTML(3)}
+      <section class="settings-section">
+        <h2>Controlla il piano letto</h2>
+        <p class="hint">Rivedi e correggi quello che serve: nulla è ancora salvato. Quando è tutto a posto, salvalo nel piano del paziente.</p>
+        ${r.domande.length ? `<div class="import-domande"><strong>Da decidere</strong><ul>${r.domande.map((d) => `<li>${escapeHTML(d)}</li>`).join("")}</ul></div>` : ""}
+        ${r.avvisi.length ? `<div class="nota-versione"><strong>Cosa ho interpretato</strong><ul>${r.avvisi.map((a) => `<li>${escapeHTML(a)}</li>`).join("")}</ul></div>` : ""}
+      </section>
+      <section class="settings-section">
+        <h2>La settimana</h2>
+        <p class="hint">Per ogni giorno, la giornata del piano da seguire. Puoi cambiarla qui.</p>
+        ${r.settimane.map((sett, s) => `
+          ${r.settimane.length > 1 ? `<p class="stat-sottotitolo">Settimana ${s + 1}</p>` : ""}
+          <div class="import-settimana">
+            ${sett.map((nome, g) => `
+              <label><span>${GG[g].slice(0, 3)}</span>
+                <select data-sett="${s}" data-giorno="${g}">${r.giornate.map((gi) => `<option ${gi.nome === nome ? "selected" : ""}>${escapeHTML(gi.nome)}</option>`).join("")}</select>
+              </label>`).join("")}
+          </div>`).join("")}
+      </section>
+      <section class="settings-section">
+        <h2>Le giornate (${r.giornate.length})</h2>
+        ${r.giornate.map((gi, i) => `
+          <details class="import-giornata" ${i === 0 ? "open" : ""}>
+            <summary>${escapeHTML(gi.nome)}${gi.kcal ? ` · ${gi.kcal} kcal` : ""}</summary>
+            ${CAMPI_IMPORTAZIONE.map(([k, etichetta]) => `
+              <label class="editor-campo"><span>${etichetta}</span>
+                <textarea rows="${Math.min(8, Math.max(2, String(gi[k] || "").split("\n").length + 1))}" data-giornata="${i}" data-campo="${k}">${escapeHTML(gi[k] || "")}</textarea></label>`).join("")}
+            <label class="editor-campo"><span>Calorie della giornata (facoltative)</span>
+              <input type="number" min="0" max="9999" data-giornata="${i}" data-campo="kcal" value="${gi.kcal || ""}"></label>
+          </details>`).join("")}
+      </section>
+      <section class="settings-section">
+        <h2>Regole generali</h2>
+        <textarea id="import-regole" rows="${Math.min(12, r.normeGenerali.length + 2)}" style="width:100%;">${escapeHTML(r.normeGenerali.join("\n"))}</textarea>
+        <p class="stat-nota">Una regola per riga.</p>
+      </section>
+      <section class="settings-section">
+        <h2>Sostituzioni</h2>
+        ${r.sostituzioni.some((g) => g.calcolata) ? `<p class="hint">⚠️ Alcuni gruppi sono <strong>calcolati</strong> dai coefficienti del documento: verifica le grammature.</p>` : ""}
+        <textarea id="import-sostituzioni" rows="${Math.min(10, r.sostituzioni.length + 2)}" style="width:100%;" placeholder="Nome gruppo: opzione 1, opzione 2">${escapeHTML(r.sostituzioni.map((g) => `${g.nome}: ${g.opzioni.join(", ")}`).join("\n"))}</textarea>
+        <p class="stat-nota">Un gruppo per riga: nome, due punti, alimenti equivalenti separati da virgole.</p>
+      </section>
+      <section class="settings-section">
+        <p class="hint">Salvando, il piano attuale di ${escapeHTML(IMPORTA.piano.pazienteNome || "questo paziente")} viene sostituito. Obiettivo, dati, appuntamenti e misure restano come sono.</p>
+        <div class="import-azioni">
+          <button type="button" class="btn btn--ghost" id="import-annulla">Annulla</button>
+          <button type="button" class="btn" id="import-salva">Salva nel piano del paziente</button>
+        </div>
+        ${typeof IMPORTA.rimaste === "number" ? `<p class="stat-nota" style="margin-top:8px;">Importazioni ancora disponibili questo mese: ${IMPORTA.rimaste}.</p>` : ""}
+      </section>`;
+    collegaIndietroImportazione();
+    profRoot.querySelectorAll("[data-giornata]").forEach((el) => el.addEventListener("input", () => {
+      const gi = r.giornate[Number(el.dataset.giornata)];
+      gi[el.dataset.campo] = el.dataset.campo === "kcal" ? (Number(el.value) || null) : el.value;
+    }));
+    profRoot.querySelectorAll("[data-sett]").forEach((el) => el.addEventListener("change", () => {
+      r.settimane[Number(el.dataset.sett)][Number(el.dataset.giorno)] = el.value;
+    }));
+    document.getElementById("import-annulla").addEventListener("click", () => apriEditorPaziente(IMPORTA.piano.id));
+    document.getElementById("import-salva").addEventListener("click", salvaImportazione);
+  }
+
+  async function salvaImportazione() {
+    const r = IMPORTA.risultato;
+    const piano = PAZIENTI_PROF.find((p) => p.id === IMPORTA.piano.id) || IMPORTA.piano;
+    const GG = window.weekLogic.GIORNI;
+    const perNome = new Map(r.giornate.map((g) => [g.nome, g]));
+    const nuovo = JSON.parse(JSON.stringify(piano));
+    nuovo.settimane = {};
+    r.settimane.forEach((sett, s) => {
+      nuovo.settimane[String(s + 1)] = sett.map((nome, g) => {
+        const gi = perNome.get(nome) || r.giornate[0];
+        const giorno = { giorno: GG[g] };
+        CAMPI_IMPORTAZIONE.forEach(([k]) => { giorno[k] = String(gi[k] || "").trim() || VUOTI_IMPORTAZIONE[k] || ""; });
+        giorno.kcal = gi.kcal || null;
+        return giorno;
+      });
+    });
+    nuovo.normeGenerali = document.getElementById("import-regole").value.split("\n").map((x) => x.trim()).filter(Boolean);
+    const errori = [];
+    nuovo.sostituzioni = document.getElementById("import-sostituzioni").value.split("\n").map((x) => x.trim()).filter(Boolean).map((riga) => {
+      const i = riga.indexOf(":");
+      const opzioni = i > 0 ? riga.slice(i + 1).split(",").map((o) => o.trim()).filter(Boolean) : [];
+      if (i <= 0 || opzioni.length < 2) { errori.push(riga); return null; }
+      return { nome: riga.slice(0, i).trim(), opzioni };
+    }).filter(Boolean);
+    if (errori.length) { mostraToast("Sostituzioni: riga non valida (serve \"Nome: opzione1, opzione2\"): " + errori[0], 5000); return; }
+    const esito = validaPiano(nuovo);
+    if (!esito.ok) { mostraToast("Non salvato — " + esito.errori[0], 5000); return; }
+    if (!window.confirm(`Sostituire il piano attuale di ${piano.pazienteNome || "questo paziente"} con quello importato?`)) return;
+    const btn = document.getElementById("import-salva");
+    btn.disabled = true;
+    try {
+      await window.cloud.salvaPiano(piano.id, esito.piano);
+      mostraToast("Piano importato e sincronizzato con il paziente", 3500);
+      if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } }
+      IMPORTA.pdf = null; IMPORTA.inviate = null;
+      apriEditorPaziente(piano.id);
+    } catch (err) {
+      btn.disabled = false;
+      mostraToast(msgErroreScrittura(err, "Salvataggio non riuscito: controlla la connessione"), 4500);
+    }
+  }
+
   // =======================================================================
   // LATO PROFESSIONISTA
   // =======================================================================
@@ -4697,7 +5123,9 @@
 
       <section class="settings-section">
         <h2>Importa / sostituisci l'intero piano</h2>
-        <p class="hint">Per un piano tutto nuovo dalla nutrizionista, puoi caricare un file .json in un colpo solo, nello stesso formato scaricabile qui come modello.</p>
+        <p class="hint">Hai già il piano in PDF? Caricalo: l'intelligenza artificiale lo legge e lo converte, tu lo rivedi e confermi. Niente da riscrivere a mano.</p>
+        <button type="button" class="btn" id="btn-importa-ai" style="margin-bottom:12px;">✨ Importa da un PDF</button>
+        <p class="hint">Oppure carica un file .json, nello stesso formato scaricabile qui come modello.</p>
         <div class="import-actions">
           <button type="button" class="btn btn--ghost" id="btn-esporta-piano-prof">Scarica questo piano come modello (.json)</button>
           <label class="btn" for="input-importa-piano-prof">Importa piano da file…</label>
@@ -4736,6 +5164,7 @@
     collegaCopiaSettimana();
     document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));
     document.getElementById("input-importa-piano-prof").addEventListener("change", onFileImportPianoProf);
+    document.getElementById("btn-importa-ai").addEventListener("click", () => avviaImportazioneAI(piano));
     document.getElementById("btn-elimina-paziente").addEventListener("click", apriConfermaEliminazione);
   }
 
