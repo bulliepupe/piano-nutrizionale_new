@@ -476,6 +476,26 @@
     if (el) el.dataset.vista = vista;
   }
 
+  /**
+   * Testo di un pasto per la visualizzazione. I pasti scritti su più righe
+   * (un alimento per riga, con "e" / "o" tra una riga e l'altra) restano su
+   * più righe, con un piccolo "oppure" tra le alternative.
+   */
+  function testoPastoHTML(testo) {
+    const t = String(testo || "").replace(/\r/g, "");
+    if (!/\n/.test(t.trim())) return escapeHTML(t);
+    const pezzi = [];
+    t.split("\n").map((r) => r.trim()).forEach((r) => {
+      if (!r || r === ".") return;
+      if (/^(o|0|oppure)$/i.test(r)) { pezzi.push('<span class="meal__oppure">oppure</span>'); return; }
+      if (/^(e|ed|\+)$/i.test(r)) return;
+      const inizioO = r.match(/^(o|0|oppure)\s+/i);
+      if (inizioO) { pezzi.push('<span class="meal__oppure">oppure</span>'); r = r.slice(inizioO[0].length); }
+      pezzi.push(`<span class="meal__riga">${escapeHTML(r)}</span>`);
+    });
+    return pezzi.join("");
+  }
+
   function render() {
     root.dataset.vista = currentView;
     if (currentView === "oggi") renderOggi();
@@ -527,8 +547,8 @@
         <div class="hero__eyebrow"><span class="dot"></span> Settimana ${settimana} del piano</div>
         <h2 class="hero__title">${giornoNome}</h2>
         <div class="hero__meta">
-          <span class="pill pill--kcal">${giorno.kcal != null ? giorno.kcal + " kcal circa" : "kcal n/d"}</span>
-          <span class="pill">${escapeHTML(PIANO_ATTIVO.paziente.obiettivo || "")}</span>
+          ${giorno.kcal != null ? `<span class="pill pill--kcal">${giorno.kcal} kcal circa</span>` : ""}
+          ${PIANO_ATTIVO.paziente.obiettivo ? `<span class="pill">${escapeHTML(PIANO_ATTIVO.paziente.obiettivo)}</span>` : ""}
           <span class="pill pill--progress ${numFatti === MEAL_KEYS.length ? "is-complete" : ""}">${numFatti}/${MEAL_KEYS.length} pasti fatti${numParziali ? `, ${numParziali} in parte` : ""}</span>
         </div>
       </section>
@@ -565,7 +585,7 @@
             <span class="meal__label">${meta.label}</span>
             <span class="meal__time">${orari[key] || ""}</span>
           </div>
-          <p class="meal__desc">${escapeHTML(giorno[key])}</p>
+          <p class="meal__desc">${testoPastoHTML(giorno[key])}</p>
           ${opts.checkable ? `
             <div class="meal__azioni">
               ${stato === "parziale" || stato === "saltato" ? `
@@ -780,9 +800,7 @@
       <div class="day-pills" id="day-pills">
         ${giorni.map((g, i) => `<button class="day-pill ${i === sel ? "is-active" : ""}" data-i="${i}">${g.giorno.slice(0, 3)}</button>`).join("")}
       </div>
-      <div class="hero__meta" style="margin:-8px 0 16px;">
-        <span class="pill pill--kcal">${giorno.kcal != null ? giorno.kcal + " kcal circa" : "kcal n/d"}</span>
-      </div>
+      ${giorno.kcal != null ? `<div class="hero__meta" style="margin:-8px 0 16px;"><span class="pill pill--kcal">${giorno.kcal} kcal circa</span></div>` : ""}
       <div class="timeline">${renderTimelineHTML(giorno, orari)}</div>
       ${renderCoccolaHTML(giorno)}
     `;

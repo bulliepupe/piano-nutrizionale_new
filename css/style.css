@@ -1930,3 +1930,12 @@ select option { font-weight: 400; color: var(--ink); background: var(--surface);
 .banner-pesata { align-items: center; }
 .banner-pesata .btn { background: var(--surface); color: var(--accent); border: none; font-weight: 700; flex: none; }
 #sel-giorno-pesata { min-width: 150px; flex: none; }
+
+/* Pasti scritti su più righe: una riga per alimento, "oppure" tra le alternative */
+.meal__riga { display: block; }
+.meal__oppure {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-faint); margin: 4px 0;
+}
+.meal__oppure::before, .meal__oppure::after { content: ""; flex: 1; height: 1px; background: var(--border-soft); }
