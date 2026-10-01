@@ -3565,6 +3565,12 @@
         ${typeof IMPORTA.rimaste === "number" ? `<p class="stat-nota" style="margin-top:8px;">Importazioni ancora disponibili questo mese: ${IMPORTA.rimaste}.</p>` : ""}
       </section>`;
     collegaIndietroImportazione();
+    // le caselle si allungano secondo il testo, anche quando si apre una giornata
+    const adatta = (el) => { el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; };
+    const adattaTutte = () => profRoot.querySelectorAll(".import-giornata[open] textarea, #import-regole, #import-sostituzioni").forEach(adatta);
+    adattaTutte();
+    profRoot.querySelectorAll(".import-giornata").forEach((d) => d.addEventListener("toggle", adattaTutte));
+    profRoot.querySelectorAll("textarea").forEach((el) => el.addEventListener("input", () => adatta(el)));
     profRoot.querySelectorAll("[data-giornata]").forEach((el) => el.addEventListener("input", () => {
       const gi = r.giornate[Number(el.dataset.giornata)];
       gi[el.dataset.campo] = el.dataset.campo === "kcal" ? (Number(el.value) || null) : el.value;

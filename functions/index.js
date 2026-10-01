@@ -555,6 +555,8 @@ I PASTI
 L'app ha sei pasti al giorno: colazione, spuntinoMattina, pranzo, spuntinoPomeriggio (merenda), cena, coccola (facoltativa: spuntino serale, dolce, "al bisogno").
 - Scrivi l'alimento seguito dalla quantità ("Pollo 150 g", "2 uova", "Olio EVO 10 g") e separa gli alimenti con " + ".
 - Alternative: " o " nella stessa riga ("pane integrale 80 g o fette Wasa 60 g"); se le alternative sono piatti o gruppi interi, mettile su righe separate con una riga che contiene solo "o", cioè "\\no\\n".
+- Quando un'alternativa è una combinazione di più alimenti (per esempio "oppure whey protein 1 scoop + latte 200 ml + frutta 200 g" in alternativa a un frullato), metti ogni combinazione su righe separate con una riga che contiene solo "o": così si capisce a cosa si riferisce ciascuna alternativa.
+- Metti ogni specificazione tra parentesi subito dopo l'alimento a cui si riferisce ("Carne rossa sgrassata 150 g (filetto, tagliata) o uova o formaggi magri"), anche se nel documento è impaginata altrove.
 - Esclusioni e condizioni tra parentesi, iniziando con "no" ("Frutta 200 g (no banane, fichi)"); note brevi tra parentesi.
 - Pasto non previsto: "Nessuno spuntino" / "Nessuna colazione". Pasto o giornata liberi: "Pasto libero" (eventualmente "Pasto libero: pizza margherita").
 - Se un pasto dice "verdura a piacere" o simili, scrivilo così. Se il documento indica quantità giornaliere comuni (per esempio olio 20 g al giorno), ripartiscile tra pranzo e cena e segnalalo negli avvisi.
