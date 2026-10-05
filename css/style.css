@@ -1980,3 +1980,9 @@ select option { font-weight: 400; color: var(--ink); background: var(--surface);
 .copri-area canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
 .sheet--larga { max-width: 760px; }
 .import-giornata textarea, #import-regole, #import-sostituzioni { overflow: hidden; min-height: 44px; }
+
+/* Pasto fatto diversamente dal piano */
+:root { --diverso: #5b7fa6; }
+.meal.is-diverso { border-left-color: var(--diverso); }
+.meal__check--diverso[aria-pressed="true"] { background: color-mix(in srgb, var(--diverso) 16%, var(--surface)); border-color: var(--diverso); color: var(--ink); }
+.stat-quota--diverso { background: var(--diverso); }

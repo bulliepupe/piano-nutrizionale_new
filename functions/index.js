@@ -139,12 +139,23 @@ exports.controllaPromemoria = onSchedule(
       const trackingDoc = await trackingRef.get();
       const giaInviate = (trackingDoc.exists && trackingDoc.data().pasti) || [];
 
+      // Pasti già segnati oggi (fatto, in parte o saltato): letti solo se
+      // c'è davvero un promemoria da mandare, una volta per paziente.
+      let segnati = null;
+
       for (const key of MEAL_KEYS) {
         if (giaInviate.includes(key)) continue;
         if (!pastoDaNotificareOra(ora, orari[key], anticipo, FINESTRA_MINUTI)) continue;
 
         const testo = giorno[key];
         if (!testo) continue;
+
+        // Il paziente ha già segnato questo pasto: niente promemoria.
+        if (segnati === null) {
+          const fattiDoc = await utenteRef.collection("pastiFatti").doc(dateKey).get();
+          segnati = fattiDoc.exists ? (fattiDoc.data() || {}) : {};
+        }
+        if (segnati[key]) continue;
 
         try {
           const titolo = `${MEAL_LABELS[key]} tra ${anticipo} minuti`;

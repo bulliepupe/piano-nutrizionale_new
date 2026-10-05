@@ -7,10 +7,11 @@
  *
  * Definizioni usate in tutta l'app (spiegate anche all'utente):
  *  - stato di un pasto (nel documento del giorno): true = fatto,
- *    "parziale" = fatto in parte, "saltato" = saltato; il motivo facoltativo
- *    sta in stato.motivi[pasto];
+ *    "diverso" = fatto diversamente dal piano, "parziale" = fatto in parte,
+ *    "saltato" = saltato; motivo e nota facoltativi stanno in
+ *    stato.motivi[pasto] e stato.note[pasto];
  *  - aderenza = punti / pasti previsti, dove un pasto fatto vale 1, uno fatto
- *    in parte vale 0,5 e uno saltato o non segnato vale 0. Contano solo i
+ *    diversamente o in parte vale 0,5 e uno saltato o non segnato vale 0. Contano solo i
  *    giorni già conclusi (oggi escluso) e solo dall'inizio del piano;
  *  - giornata rispettata = almeno 4 punti su 5;
  *  - inattivo = nessuna apertura dell'app e nessuna spunta da più di 2 giorni.
@@ -40,33 +41,38 @@
     fuori: "Ho mangiato fuori casa",
     fame: "Non avevo fame",
     tempo: "Non ho avuto tempo",
-    altroPiatto: "Ho mangiato altro",
+    altroPiatto: "Ho mangiato altro", // non più proposto: resta per le segnalazioni già fatte
+    noAlimenti: "Non avevo gli alimenti",
+    alimentiCambiati: "Ho cambiato alimenti",
     altro: "Altro",
   };
-  const MOTIVI_PARZIALE = ["nonFinito", "cambiato", "fuori", "altroPiatto", "altro"];
-  const MOTIVI_SALTATO = ["fame", "tempo", "altroPiatto", "altro"];
+  const MOTIVI_DIVERSO = ["fuori", "noAlimenti", "alimentiCambiati", "altro"];
+  const MOTIVI_PARZIALE = ["nonFinito", "cambiato", "fuori", "altro"];
+  const MOTIVI_SALTATO = ["fame", "tempo", "altro"];
   // Suggerimento per la nota facoltativa, in base al motivo scelto
   const SUGGERIMENTI_NOTA = {
     nonFinito: "Cosa hai lasciato? Es. metà della pasta",
     cambiato: "Cosa hai cambiato? Es. riso al posto della pasta",
     fuori: "Cosa hai mangiato? Es. pizza margherita",
     altroPiatto: "Cosa hai mangiato al suo posto?",
+    noAlimenti: "Cosa hai mangiato al posto del pasto previsto?",
+    alimentiCambiati: "Cosa hai cambiato? Es. pollo al posto del pesce",
     fame: "Vuoi aggiungere qualcosa?",
     tempo: "Vuoi aggiungere qualcosa?",
     altro: "Racconta in breve com'è andata",
   };
   const MAX_NOTA = 200;
 
-  /** Stato normalizzato di un pasto: "fatto" | "parziale" | "saltato" | null. */
+  /** Stato normalizzato di un pasto: "fatto" | "diverso" | "parziale" | "saltato" | null. */
   function statoPasto(stato, k) {
     const v = stato && stato[k];
     if (v === true) return "fatto";
-    if (v === "parziale" || v === "saltato") return v;
+    if (v === "diverso" || v === "parziale" || v === "saltato") return v;
     return null;
   }
   function valorePasto(stato, k) {
     const st = statoPasto(stato, k);
-    return st === "fatto" ? 1 : st === "parziale" ? 0.5 : 0;
+    return st === "fatto" ? 1 : st === "diverso" || st === "parziale" ? 0.5 : 0;
   }
   function fattiNelGiorno(stato) { return stato ? PASTI.reduce((t, k) => t + valorePasto(stato, k), 0) : 0; }
   function registratiNelGiorno(stato) { return stato ? PASTI.filter((k) => statoPasto(stato, k)).length : 0; }
@@ -106,7 +112,7 @@
 
     const g7 = ultimi(7), g30 = ultimi(30);
     const perPasto = PASTI.map((k) => {
-      const conta = { fatto: 0, parziale: 0, saltato: 0, nonSegnato: 0 };
+      const conta = { fatto: 0, diverso: 0, parziale: 0, saltato: 0, nonSegnato: 0 };
       let punti = 0;
       g30.forEach((g) => {
         const st = statoPasto(spunte[g.chiave], k);
@@ -117,7 +123,7 @@
       return {
         pasto: k,
         valore: n ? punti / n : null,
-        quote: n ? { fatto: conta.fatto / n, parziale: conta.parziale / n, saltato: conta.saltato / n, nonSegnato: conta.nonSegnato / n } : null,
+        quote: n ? { fatto: conta.fatto / n, diverso: conta.diverso / n, parziale: conta.parziale / n, saltato: conta.saltato / n, nonSegnato: conta.nonSegnato / n } : null,
         conta,
       };
     });
@@ -125,13 +131,13 @@
     // Pasti fatti in parte o saltati negli ultimi 30 giorni, con i motivi
     // (qui conta anche oggi: sono segnalazioni esplicite del paziente, non
     // serve aspettare la fine della giornata per mostrarle)
-    const imprevisti = { parziale: { totale: 0, motivi: {}, perPasto: {} }, saltato: { totale: 0, motivi: {}, perPasto: {} }, note: [] };
+    const imprevisti = { diverso: { totale: 0, motivi: {}, perPasto: {} }, parziale: { totale: 0, motivi: {}, perPasto: {} }, saltato: { totale: 0, motivi: {}, perPasto: {} }, note: [] };
     const giorniImprevisti = pianoIniziato ? g30.concat([{ chiave: chiave(oggi) }]) : g30;
     giorniImprevisti.forEach((g) => {
       const stato = spunte[g.chiave];
       PASTI.forEach((k) => {
         const st = statoPasto(stato, k);
-        if (st !== "parziale" && st !== "saltato") return;
+        if (st !== "diverso" && st !== "parziale" && st !== "saltato") return;
         const gruppo = imprevisti[st];
         gruppo.totale++;
         gruppo.perPasto[k] = (gruppo.perPasto[k] || 0) + 1;
@@ -230,7 +236,7 @@
   const ORDINE_STATO = { rosso: 0, giallo: 1, verde: 2, attesa: 3 };
 
   const api = {
-    PASTI, SOGLIA_GIORNO_OK, MOTIVI, MOTIVI_PARZIALE, MOTIVI_SALTATO, SUGGERIMENTI_NOTA, MAX_NOTA, statoPasto, GIORNI_ALLARME, SOGLIA_ADERENZA_BASSA, GIORNI_STORICO, ORDINE_STATO,
+    PASTI, SOGLIA_GIORNO_OK, MOTIVI, MOTIVI_DIVERSO, MOTIVI_PARZIALE, MOTIVI_SALTATO, SUGGERIMENTI_NOTA, MAX_NOTA, statoPasto, GIORNI_ALLARME, SOGLIA_ADERENZA_BASSA, GIORNI_STORICO, ORDINE_STATO,
     calcola, primoGiornoStorico, chiave, daChiave, differenzaGiorni,
   };
   if (typeof window !== "undefined") window.statistiche = api;
