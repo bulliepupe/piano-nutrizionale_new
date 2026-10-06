@@ -5898,10 +5898,39 @@
   // ---------------------------------------------------------------------
   // Service worker & utilità comuni
   // ---------------------------------------------------------------------
+  /**
+   * Service worker e aggiornamenti. Un'app installata, riaperta dalle app
+   * recenti, spesso riprende senza ricaricarsi: per questo, quando si torna
+   * sull'app (e ogni 30 minuti) si chiede al browser di controllare se c'è
+   * una versione nuova. Quando la nuova versione prende il controllo compare
+   * la barra "È disponibile una nuova versione · Aggiorna": niente
+   * ricariche automatiche, per non perdere quello che si sta scrivendo.
+   */
+  let swRegistrato = false;
   function registraServiceWorker() {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("service-worker.js").catch(() => {});
-    }
+    if (!("serviceWorker" in navigator) || swRegistrato) return;
+    swRegistrato = true;
+    const avevaVersione = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register("service-worker.js").then((reg) => {
+      const controlla = () => { reg.update().catch(() => {}); };
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") controlla(); });
+      setInterval(controlla, 30 * 60 * 1000);
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      // al primo avvio il service worker prende il controllo: non è un aggiornamento
+      if (avevaVersione) mostraAvvisoAggiornamento();
+    });
+  }
+
+  function mostraAvvisoAggiornamento() {
+    if (document.getElementById("avviso-aggiornamento")) return;
+    const barra = document.createElement("div");
+    barra.id = "avviso-aggiornamento";
+    barra.className = "avviso-aggiornamento";
+    barra.setAttribute("role", "status");
+    barra.innerHTML = '<span>È disponibile una nuova versione dell\'app</span><button type="button" class="btn">Aggiorna</button>';
+    barra.querySelector("button").addEventListener("click", () => window.location.reload());
+    document.body.appendChild(barra);
   }
 
   function mostraToast(msg, durataMs) {
