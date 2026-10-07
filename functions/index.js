@@ -732,6 +732,167 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
   return { piano, rimaste: LIMITE_IMPORTAZIONI_MESE - usate - 1 };
 });
 
+// =========================================================================
+// RISCONTRO AI SUI PASTI NON COME DA PIANO
+// =========================================================================
+// Quando il paziente segna un pasto come fatto diversamente, in parte o
+// saltato, l'app chiede un riscontro: impatto stimato e, se il nutrizionista
+// lo consente, piccoli aggiustamenti sui pasti rimasti della giornata, scelti
+// tra gli alimenti del piano. Il telefono invia solo quale pasto: stato,
+// motivo, nota e piano si leggono qui. Al modello non arrivano dati
+// identificativi. Limiti fissi: mai digiuni, pasti saltati, tagli drastici o
+// attività fisica come compensazione.
+const MODELLO_RISCONTRO = "claude-haiku-4-5-20251001";
+const LIMITE_RISCONTRI_GIORNO = 8;
+const STATI_NON_COME_PIANO = { diverso: "fatto diversamente dal piano", parziale: "fatto solo in parte", saltato: "saltato" };
+const MOTIVI_RISCONTRO = {
+  nonFinito: "non l'ha finito", cambiato: "ha cambiato qualcosa", fuori: "ha mangiato fuori casa", fame: "non aveva fame",
+  tempo: "non ha avuto tempo", altroPiatto: "ha mangiato altro", noAlimenti: "non aveva gli alimenti", alimentiCambiati: "ha cambiato alimenti", altro: "altro",
+};
+const RE_SUGGERIMENTO_VIETATO = /digiun|salta(re|lo|la|te)?\b|non mangiare|niente (colazione|pranzo|cena|merenda|spuntino)|elimina (il|la|lo) (pasto|cena|pranzo)|attivit[aà] fisic|allenament|camminat|\bcorsa\b|palestra|bruci|compens|purg|vomit|lassativ/i;
+const MESSAGGIO_BASE = "Un pasto diverso dal previsto non compromette il percorso: al prossimo pasto riparti dal piano.";
+
+const ISTRUZIONI_RISCONTRO = `Sei l'assistente dell'app "Il mio Piano", usata dai pazienti di un nutrizionista. Il paziente ha segnato un pasto come non svolto come da piano. Dai un riscontro breve, rassicurante e pratico chiamando lo strumento riscontro_pasto.
+
+COSA FARE
+- Stima l'impatto sulla giornata rispetto al pasto previsto: "irrilevante", "lieve", "moderato" o "rilevante". Un singolo pasto diverso è quasi sempre irrilevante, lieve o moderato.
+- "irrilevante" quando la variazione è uno scambio equivalente: stesso gruppo alimentare e quantità simile (es. mela al posto dei frutti di bosco, mandorle al posto delle noci, merluzzo al posto dell'orata, riso al posto della pasta), oppure un alimento presente nelle sostituzioni approvate dal nutrizionista. In questo caso: stima breve che lo dica (es. "Mela al posto dei frutti di bosco: valori nutrizionali simili"), spiegazione di una frase, nessun suggerimento e un messaggio che confermi che va benissimo così.
+- stima: una frase con l'effetto principale in termini semplici e approssimati (es. "Circa 25-30 g di proteine in meno del previsto", "Circa 250 kcal in più, soprattutto zuccheri"). Usa "circa": sono stime, non misure.
+- spiegazione: una o due frasi su cosa significa per la giornata, senza allarmismi.
+- suggerimenti (al massimo 2, solo se richiesti): piccoli aggiustamenti sui PASTI RIMASTI di oggi, usando solo alimenti già presenti nel piano del giorno, nelle sostituzioni o nelle indicazioni del nutrizionista. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
+- messaggio: una frase incoraggiante che ricordi che uno scostamento non rovina il percorso e che si riparte dal piano.
+
+LIMITI INVIOLABILI
+- Mai suggerire digiuni, pasti saltati, riduzioni oltre circa un quarto di un pasto, eliminazione di gruppi alimentari, attività fisica per "compensare", lassativi o qualsiasi comportamento compensatorio.
+- Non dare indicazioni mediche, non cambiare il piano, non introdurre alimenti estranei al piano.
+- Se gli scostamenti sono frequenti (te lo indico), invita con gentilezza a parlarne con il nutrizionista.
+- Tono non giudicante: niente colpe, niente parole come "sgarro" o "errore".
+- Scrivi in italiano, rivolgendoti al paziente con il "tu".`;
+
+const STRUMENTO_RISCONTRO = {
+  name: "riscontro_pasto",
+  description: "Riscontro sul pasto non svolto come da piano.",
+  input_schema: {
+    type: "object",
+    properties: {
+      impatto: { type: "string", enum: ["irrilevante", "lieve", "moderato", "rilevante"] },
+      stima: { type: "string" },
+      spiegazione: { type: "string" },
+      suggerimenti: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { pasto: { type: "string", enum: MEAL_KEYS }, testo: { type: "string" } },
+          required: ["pasto", "testo"],
+        },
+      },
+      messaggio: { type: "string" },
+    },
+    required: ["impatto", "stima", "spiegazione", "suggerimenti", "messaggio"],
+  },
+};
+
+/** Ripulisce il riscontro: solo pasti rimasti, niente suggerimenti vietati, testi brevi. */
+function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
+  const breve = (t, max) => String(t == null ? "" : t).replace(/\s+/g, " ").trim().slice(0, max);
+  const impatto = r.impatto === "nessuno" ? "irrilevante" : ["irrilevante", "lieve", "moderato", "rilevante"].includes(r.impatto) ? r.impatto : "lieve";
+  // variazione irrilevante: mai aggiustamenti
+  const suggerimenti = !conSuggerimenti || impatto === "irrilevante" ? [] : (Array.isArray(r.suggerimenti) ? r.suggerimenti : [])
+    .filter((x) => x && rimanenti.includes(x.pasto) && x.testo && !RE_SUGGERIMENTO_VIETATO.test(x.testo))
+    .slice(0, 2).map((x) => ({ pasto: x.pasto, testo: breve(x.testo, 260) }));
+  let messaggio = breve(r.messaggio, 260);
+  if (!messaggio || RE_SUGGERIMENTO_VIETATO.test(messaggio)) messaggio = impatto === "irrilevante" ? "Va benissimo così: continua con il piano." : MESSAGGIO_BASE;
+  let spiegazione = breve(r.spiegazione, 360);
+  if (RE_SUGGERIMENTO_VIETATO.test(spiegazione)) spiegazione = "";
+  return { impatto, stima: breve(r.stima, 200), spiegazione, suggerimenti, messaggio };
+}
+
+exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const pasto = String((request.data && request.data.pasto) || "");
+  if (!MEAL_KEYS.includes(pasto)) throw new HttpsError("invalid-argument", "Pasto non valido.");
+
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  const pianiSnap = await db.collection("piani").where("pazienteUid", "==", uid).limit(1).get();
+  if (pianiSnap.empty) throw new HttpsError("failed-precondition", "nessun-piano");
+  const piano = pianiSnap.docs[0].data();
+  const impostazioni = piano.feedbackAI || {};
+  const modo = ["spento", "riscontro", "suggerimenti"].includes(impostazioni.modo) ? impostazioni.modo : "suggerimenti";
+  if (modo === "spento") return { spento: true };
+
+  const ora = oraItaliana(new Date());
+  const dateKey = chiaveData(ora);
+  const fatti = ((await utenteRef.collection("pastiFatti").doc(dateKey).get()).data()) || {};
+  const stato = fatti[pasto];
+  if (!STATI_NON_COME_PIANO[stato]) throw new HttpsError("failed-precondition", "pasto-non-segnato");
+
+  const riscontriRef = utenteRef.collection("riscontri");
+  const giaOggi = await riscontriRef.where("data", "==", dateKey).get();
+  if (giaOggi.size >= LIMITE_RISCONTRI_GIORNO) throw new HttpsError("resource-exhausted", "limite-giornaliero");
+
+  const { giorno } = weekLogic.menuDelGiorno(ora, CONFIG_BASE, piano);
+  if (!giorno) throw new HttpsError("failed-precondition", "nessun-piano");
+  const indice = MEAL_KEYS.indexOf(pasto);
+  const rimanenti = MEAL_KEYS.slice(indice + 1).filter((k) => !fatti[k] && giorno[k] && !/pasto libero/i.test(giorno[k]));
+  const conSuggerimenti = modo === "suggerimenti" && rimanenti.length > 0;
+
+  // Scostamenti frequenti: più di 5 pasti non come da piano negli ultimi 7 giorni
+  let scostamenti = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(ora); d.setDate(d.getDate() - i);
+    const f = i === 0 ? fatti : (((await utenteRef.collection("pastiFatti").doc(chiaveData(d)).get()).data()) || {});
+    MEAL_KEYS.forEach((k) => { if (STATI_NON_COME_PIANO[f[k]]) scostamenti++; });
+  }
+  const frequente = scostamenti > 5;
+
+  const motivo = fatti.motivi && MOTIVI_RISCONTRO[fatti.motivi[pasto]];
+  const nota = fatti.note && fatti.note[pasto] ? String(fatti.note[pasto]).slice(0, 200) : "";
+  const sostituzioni = (Array.isArray(piano.sostituzioni) ? piano.sostituzioni : []).slice(0, 12)
+    .map((g) => `${g.nome}: ${(g.opzioni || []).join(", ")}`).join("\n");
+  const testo = [
+    `Pasto: ${MEAL_LABELS[pasto]}`,
+    `Previsto dal piano: ${String(giorno[pasto]).slice(0, 800)}`,
+    `Com'è andato: ${STATI_NON_COME_PIANO[stato]}${motivo ? ` (motivo: ${motivo})` : ""}${nota ? `. Il paziente scrive: "${nota}"` : ""}`,
+    "",
+    rimanenti.length ? "Pasti rimasti di oggi:\n" + rimanenti.map((k) => `- ${MEAL_LABELS[k]} [${k}]: ${String(giorno[k]).slice(0, 600)}`).join("\n") : "Non ci sono altri pasti oggi: niente suggerimenti per oggi, solo il riscontro e il ritorno al piano da domani.",
+    giorno.kcal ? `Calorie previste per la giornata: circa ${giorno.kcal} kcal.` : "",
+    sostituzioni ? `\nSostituzioni approvate dal nutrizionista:\n${sostituzioni}` : "",
+    impostazioni.indicazioni ? `\nIndicazioni del nutrizionista per questi casi: ${String(impostazioni.indicazioni).slice(0, 600)}` : "",
+    "",
+    conSuggerimenti ? "Suggerimenti richiesti: sì, al massimo 2, solo sui pasti rimasti." : "Suggerimenti richiesti: no, lascia l'elenco vuoto.",
+    frequente ? "Nota: negli ultimi giorni gli scostamenti sono stati frequenti: invita con gentilezza a parlarne con il nutrizionista." : "",
+  ].filter((x) => x !== "").join("\n");
+
+  let risposta;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: MODELLO_RISCONTRO, max_tokens: 1200, system: ISTRUZIONI_RISCONTRO,
+        tools: [STRUMENTO_RISCONTRO], tool_choice: { type: "tool", name: "riscontro_pasto" },
+        messages: [{ role: "user", content: testo }],
+      }),
+    });
+    risposta = await r.json();
+    if (!r.ok) {
+      console.error("Riscontro AI: errore API", r.status, risposta && risposta.error && risposta.error.type);
+      throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+    }
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+  }
+  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "riscontro_pasto");
+  if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
+  const riscontro = Object.assign(normalizzaRiscontro(blocco.input, rimanenti, conSuggerimenti), { data: dateKey, pasto, stato, frequente });
+  await riscontriRef.doc(`${dateKey}_${pasto}`).set(Object.assign({}, riscontro, { creato: FieldValue.serverTimestamp() }));
+  return riscontro;
+});
+
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.
 
 // =========================================================================
@@ -919,5 +1080,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

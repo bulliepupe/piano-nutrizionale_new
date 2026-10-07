@@ -139,6 +139,26 @@
      * server, che verifica licenza e limite di pazienti. Ritorna
      * { pazienteUid, pianoId }.
      */
+    /** Riscontro AI su un pasto di oggi segnato come non da piano. */
+    async valutaVariazione(pasto) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const r = await funzioni.httpsCallable("valutaVariazione", { timeout: 60000 })({ pasto });
+      return r.data;
+    },
+
+    ascoltaRiscontriOggi(uid, dateKey, cb) {
+      return db.collection("users").doc(uid).collection("riscontri").where("data", "==", dateKey).onSnapshot(
+        (snap) => cb(snap.docs.map((d) => d.data())),
+        () => cb([])
+      );
+    },
+
+    /** Ultimi riscontri dati a un paziente (per il professionista). */
+    async leggiRiscontriPaziente(pazienteUid) {
+      const snap = await db.collection("users").doc(pazienteUid).collection("riscontri").orderBy("creato", "desc").limit(10).get();
+      return snap.docs.map((d) => d.data());
+    },
+
     /** Lettura di un piano da PDF con l'AI (può richiedere fino a qualche minuto). */
     async importaPianoAI(dati) {
       if (!funzioni) throw { code: "functions/unavailable" };

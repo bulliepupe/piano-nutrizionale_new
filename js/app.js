@@ -568,6 +568,11 @@
     collegaBannerIos();
     collegaBannerRiattiva();
     collegaContattoNutrizionista();
+    root.querySelectorAll("[data-chiudi-riscontro]").forEach((b) => b.addEventListener("click", () => {
+      const chiusi = riscontriChiusi(); chiusi[b.dataset.chiudiRiscontro] = 1;
+      localStorage.setItem(LS_RISCONTRI_CHIUSI, JSON.stringify(chiusi));
+      renderOggi();
+    }));
     const bPesata = document.getElementById("btn-pesata-oggi");
     if (bPesata) bPesata.addEventListener("click", apriPesataPaziente);
   }
@@ -602,6 +607,7 @@
                 </button>`}
               <button type="button" class="meal__altro" data-meal-altro="${key}">${stato ? "Modifica" : "Non come da piano?"}</button>
             </div>
+            ${riscontroPastoHTML(key, stato)}
           ` : ""}
           ${sost ? `
             <details class="meal__sostituzioni">
@@ -649,6 +655,7 @@
   function collegaAscoltoPastiOggi() {
     if (unsubPastiOggi) unsubPastiOggi();
     const dateKey = chiaveData(new Date());
+    collegaRiscontriOggi(dateKey);
     unsubPastiOggi = window.cloud.ascoltaPastiFattiCloud(UID, dateKey, (stato) => {
       PASTI_FATTI_OGGI = stato || {};
       if (currentView === "oggi") renderOggi();
@@ -670,11 +677,90 @@
     if (Object.keys(note).length) nuovoStato.note = note; else delete nuovoStato.note;
     try {
       await window.cloud.salvaPastiFattiCloud(UID, dateKey, nuovoStato);
+      if (conDettagli) chiediRiscontro(key);
+      else delete RISCONTRI.perPasto[key];
       // L'ascolto in tempo reale aggiorna la UI da solo.
     } catch (e) {
       mostraToast("Impossibile salvare: controlla la connessione");
     }
   }
+  // ---------------------------------------------------------------------
+  // Riscontro AI sui pasti non come da piano
+  // ---------------------------------------------------------------------
+  const RISCONTRI = { data: null, perPasto: {}, unsub: null };
+  const LS_RISCONTRI_CHIUSI = "pnut:riscontri-chiusi";
+  const ETICHETTE_IMPATTO = { irrilevante: "Variazione irrilevante", nessuno: "Variazione irrilevante", lieve: "Impatto lieve", moderato: "Impatto moderato", rilevante: "Impatto rilevante" };
+
+  function riscontroAttivo() {
+    const m = PIANO_ATTIVO && PIANO_ATTIVO.feedbackAI && PIANO_ATTIVO.feedbackAI.modo;
+    return m !== "spento";
+  }
+
+  function collegaRiscontriOggi(dateKey) {
+    if (RISCONTRI.data === dateKey && RISCONTRI.unsub) return;
+    if (RISCONTRI.unsub) RISCONTRI.unsub();
+    RISCONTRI.data = dateKey; RISCONTRI.perPasto = {};
+    if (!window.cloud.ascoltaRiscontriOggi) return;
+    RISCONTRI.unsub = window.cloud.ascoltaRiscontriOggi(UID, dateKey, (lista) => {
+      lista.forEach((r) => { if (!RISCONTRI.perPasto[r.pasto] || !RISCONTRI.perPasto[r.pasto].attesa) RISCONTRI.perPasto[r.pasto] = r; });
+      if (currentView === "oggi") renderOggi();
+    });
+  }
+
+  function riscontriChiusi() {
+    try { return JSON.parse(localStorage.getItem(LS_RISCONTRI_CHIUSI) || "{}"); } catch (e) { return {}; }
+  }
+
+  async function chiediRiscontro(key) {
+    if (!riscontroAttivo() || !window.cloud.valutaVariazione) return;
+    RISCONTRI.perPasto[key] = { attesa: true };
+    const chiusi = riscontriChiusi(); delete chiusi[`${chiaveData(new Date())}_${key}`];
+    localStorage.setItem(LS_RISCONTRI_CHIUSI, JSON.stringify(chiusi));
+    if (currentView === "oggi") renderOggi();
+    try {
+      const r = await window.cloud.valutaVariazione(key);
+      if (r && r.spento) delete RISCONTRI.perPasto[key];
+      else RISCONTRI.perPasto[key] = r;
+    } catch (err) {
+      RISCONTRI.perPasto[key] = { errore: /limite/.test(String(err && err.message)) ? "Per oggi i riscontri sono finiti: riparti dal piano al prossimo pasto." : "Riscontro non disponibile in questo momento." };
+    }
+    if (currentView === "oggi") renderOggi();
+  }
+
+  function riscontroPastoHTML(key, stato) {
+    if (!stato || stato === "fatto" || !riscontroAttivo()) return "";
+    const r = RISCONTRI.perPasto[key];
+    if (!r) return "";
+    const idChiuso = `${RISCONTRI.data}_${key}`;
+    if (riscontriChiusi()[idChiuso]) return "";
+    if (r.attesa) return `<div class="riscontro riscontro--attesa"><span class="import-attesa"></span> Sto valutando come riequilibrare la giornata…</div>`;
+    if (r.errore) return `<div class="riscontro"><p class="riscontro__testo">${escapeHTML(r.errore)}</p></div>`;
+    if (r.stato && r.stato !== stato) return ""; // il pasto è stato cambiato dopo il riscontro
+    if (r.impatto === "irrilevante" || r.impatto === "nessuno") {
+      return `
+      <div class="riscontro riscontro--irrilevante">
+        <div class="riscontro__testa">
+          <strong>✅ ${escapeHTML(ETICHETTE_IMPATTO.irrilevante)}</strong>
+          <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button>
+        </div>
+        ${r.stima ? `<p class="riscontro__testo">${escapeHTML(r.stima)}</p>` : ""}
+        <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "Va benissimo così: continua con il piano.")}</p>
+      </div>`;
+    }
+    return `
+      <div class="riscontro riscontro--${escapeHTML(r.impatto || "lieve")}">
+        <div class="riscontro__testa">
+          <strong>💡 Come riequilibrare la giornata</strong>
+          <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button>
+        </div>
+        <p class="riscontro__impatto"><span>${escapeHTML(ETICHETTE_IMPATTO[r.impatto] || "Impatto lieve")}</span>${r.stima ? ` · ${escapeHTML(r.stima)}` : ""}</p>
+        ${r.spiegazione ? `<p class="riscontro__testo">${escapeHTML(r.spiegazione)}</p>` : ""}
+        ${(r.suggerimenti || []).length ? `<ul class="riscontro__suggerimenti">${r.suggerimenti.map((x) => `<li><strong>${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}:</strong> ${escapeHTML(x.testo)}</li>`).join("")}</ul>` : ""}
+        <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "")}</p>
+        <p class="riscontro__nota">Stime indicative, basate sul tuo piano. Per dubbi, scrivi al tuo nutrizionista.</p>
+      </div>`;
+  }
+
 
   function onToggleMealCheck(key) {
     const giaFatto = window.statistiche.statoPasto(PASTI_FATTI_OGGI, key) === "fatto";
@@ -2977,6 +3063,27 @@
       </svg>`;
   }
 
+  // ---- Professionista: ultimi riscontri AI dati al paziente ----
+  async function caricaRiscontriProf(piano) {
+    const box = document.getElementById("sezione-riscontri");
+    if (!box || !piano.pazienteUid || !window.cloud.leggiRiscontriPaziente) return;
+    try {
+      const lista = await window.cloud.leggiRiscontriPaziente(piano.pazienteUid);
+      if (!lista.length || pazienteSelezionatoId !== piano.id) return;
+      const STATI = { diverso: "fatto diversamente", parziale: "in parte", saltato: "saltato" };
+      box.innerHTML = `
+        <h2>Riscontri AI dati al paziente</h2>
+        <p class="hint">Gli ultimi riscontri mostrati sotto i pasti non come da piano. ${piano.feedbackAI && piano.feedbackAI.modo === "spento" ? "Ora il riscontro è <strong>spento</strong> per questo paziente." : "Puoi cambiare le impostazioni nel piano."}</p>
+        <ul class="stat-note-pasti">${lista.map((r) => {
+          const d = window.statistiche.daChiave(r.data);
+          return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(MEAL_META[r.pasto] ? MEAL_META[r.pasto].label : r.pasto)} · ${STATI[r.stato] || ""} · impatto ${escapeHTML(r.impatto || "")}${r.frequente ? " · ⚠️ scostamenti frequenti" : ""}</span>
+            <span>${escapeHTML(r.stima || "")}</span>
+            ${(r.suggerimenti || []).map((x) => `<span>→ ${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}: ${escapeHTML(x.testo)}</span>`).join("")}</li>`;
+        }).join("")}</ul>`;
+      box.hidden = false;
+    } catch (e) { /* sezione facoltativa */ }
+  }
+
   // ---- Professionista: sezione nella scheda di andamento ----
   function sezionePesoProfHTML(piano) {
     return `<section class="settings-section sezione-peso" id="sezione-peso">${contenutoPesoProfHTML(piano)}</section>`;
@@ -4087,6 +4194,7 @@
       </section>
 
       ${sezionePesoProfHTML(piano)}
+      <section class="settings-section" id="sezione-riscontri" hidden></section>
 
       <section class="settings-section">
         <h2>Andamento settimanale</h2>
@@ -4155,6 +4263,7 @@
     document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
     document.getElementById("btn-piano-da-stat-su").addEventListener("click", () => apriEditorPaziente(id));
     collegaSezionePesoProf(piano);
+    caricaRiscontriProf(piano);
     const testo = () => document.getElementById("testo-incoraggiamento").value.trim();
     document.getElementById("btn-msg-whatsapp").addEventListener("click", () => {
       window.open("https://wa.me/?text=" + encodeURIComponent(testo()), "_blank", "noopener");
@@ -5124,6 +5233,32 @@
       ${renderCopiaSettimanaHTML(disponibili)}
 
       <section class="settings-section">
+        <h2>Riscontro AI sui pasti non come da piano</h2>
+        <p class="hint">Quando il paziente segna un pasto come fatto diversamente, in parte o saltato, l'app gli mostra sotto il pasto una breve scheda <strong>"Come riequilibrare la giornata"</strong>: l'impatto stimato e, se lo consenti, uno o due piccoli aggiustamenti sui pasti rimasti di oggi.</p>
+        <details class="ric-dettagli">
+          <summary>Come funziona e cosa non fa mai</summary>
+          <ul class="spiegazione-ai">
+            <li><strong>Usa solo il tuo piano</strong>: i suggerimenti riguardano alimenti già presenti nei pasti del giorno, nelle tue sostituzioni o nelle indicazioni che scrivi qui sotto. Non cambia il piano e non introduce alimenti nuovi.</li>
+            <li><strong>Limiti fissi, sempre</strong>: mai digiuni, mai pasti saltati, mai tagli oltre circa un quarto di un pasto, mai attività fisica o altri comportamenti per "compensare". Il messaggio di fondo è sempre: si riparte dal piano al pasto successivo.</li>
+            <li><strong>Stime indicative</strong>: l'impatto (irrilevante, lieve, moderato, rilevante) e i valori sono approssimati e dichiarati come tali al paziente. Gli scambi equivalenti, come mela al posto dei frutti di bosco o mandorle al posto delle noci, o le tue sostituzioni approvate, risultano <strong>irrilevanti</strong>: il paziente vede solo una conferma che va bene così.</li>
+            <li><strong>Scostamenti frequenti</strong>: se nell'ultima settimana sono molti, il paziente viene invitato a parlarne con te.</li>
+            <li><strong>Privacy</strong>: all'AI arrivano solo i testi dei pasti, lo stato, il motivo e la nota del paziente, senza nome né dati identificativi.</li>
+            <li><strong>Trasparenza</strong>: nella scheda "Andamento" vedi gli ultimi riscontri dati al paziente.</li>
+            <li><strong>Quando spegnerlo</strong>: per pazienti con un rapporto difficile con il cibo o per i quali un riscontro su ogni scostamento non è indicato.</li>
+          </ul>
+        </details>
+        <label class="editor-campo" style="margin-top:10px;"><span>Per questo paziente</span>
+          <select id="feedback-modo">
+            <option value="suggerimenti" ${!piano.feedbackAI || !piano.feedbackAI.modo || piano.feedbackAI.modo === "suggerimenti" ? "selected" : ""}>Attivo: riscontro e piccoli aggiustamenti</option>
+            <option value="riscontro" ${piano.feedbackAI && piano.feedbackAI.modo === "riscontro" ? "selected" : ""}>Solo riscontro, senza aggiustamenti</option>
+            <option value="spento" ${piano.feedbackAI && piano.feedbackAI.modo === "spento" ? "selected" : ""}>Spento</option>
+          </select></label>
+        <label class="editor-campo" style="margin-top:8px;">Le tue indicazioni per questi casi (facoltative)
+          <textarea id="feedback-indicazioni" rows="3" maxlength="600" placeholder="Es. per recuperare proteine usa yogurt greco o legumi; dopo un dolce nessuna compensazione, torna al piano">${escapeHTML((piano.feedbackAI && piano.feedbackAI.indicazioni) || "")}</textarea></label>
+        <button type="button" class="btn" id="btn-salva-feedback" style="margin-top:10px;">Salva riscontro AI</button>
+      </section>
+
+      <section class="settings-section">
         <h2>Meal prep</h2>
         <p class="hint">Nella scheda Spesa il paziente trova le sessioni di preparazione anticipata calcolate dal piano. Qui puoi aggiungere indicazioni tue o nascondere la sezione.</p>
         <label class="ric-scelta"><input type="checkbox" id="prep-attivo" ${!(piano.mealPrep && piano.mealPrep.attivo === false) ? "checked" : ""}> Mostra la sezione Meal prep a questo paziente</label>
@@ -5160,6 +5295,18 @@
     document.getElementById("btn-salva-dati-paziente").addEventListener("click", salvaDatiPazienteProfessionista);
     document.getElementById("btn-salva-norme").addEventListener("click", salvaNormeGeneraliProfessionista);
     document.getElementById("btn-salva-sostituzioni").addEventListener("click", salvaSostituzioniProfessionista);
+    document.getElementById("btn-salva-feedback").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const feedbackAI = { modo: document.getElementById("feedback-modo").value, indicazioni: document.getElementById("feedback-indicazioni").value.trim().slice(0, 600) };
+      btn.disabled = true;
+      try {
+        await window.cloud.salvaPiano(piano.id, { feedbackAI });
+        piano.feedbackAI = feedbackAI;
+        mostraToast("Riscontro AI salvato");
+      } catch (err) {
+        mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"));
+      } finally { btn.disabled = false; }
+    });
     document.getElementById("btn-salva-prep").addEventListener("click", async (e) => {
       const btn = e.currentTarget;
       const mealPrep = { attivo: document.getElementById("prep-attivo").checked, note: document.getElementById("prep-note").value.trim().slice(0, 600) };

@@ -75,6 +75,14 @@ service cloud.firestore {
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
       // può leggerle (non modificarle) per le statistiche di andamento.
+      // Riscontri AI sui pasti non come da piano: li scrive solo il server
+      match /riscontri/{riscontroId} {
+        allow write: if false;
+        allow read: if isSignedIn() && (
+          request.auth.uid == userId ||
+          get(/databases/$(database)/documents/users/$(userId)).data.get("professionistaUid", "") == request.auth.uid
+        );
+      }
       match /pastiFatti/{giorno} {
         allow write: if isSignedIn() && request.auth.uid == userId;
         allow read: if isSignedIn() && (
