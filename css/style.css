@@ -2017,3 +2017,4 @@ select option { font-weight: 400; color: var(--ink); background: var(--surface);
 .spiegazione-ai li { margin-bottom: 6px; }
 .riscontro--irrilevante { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .riscontro--irrilevante .riscontro__testo { margin-bottom: 2px; }
+.riscontro__frequente { margin: 6px 0 0; font-size: 12.5px; color: var(--ink-soft); border-top: 1px dashed var(--border); padding-top: 6px; }

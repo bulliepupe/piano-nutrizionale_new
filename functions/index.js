@@ -750,22 +750,23 @@ const MOTIVI_RISCONTRO = {
   tempo: "non ha avuto tempo", altroPiatto: "ha mangiato altro", noAlimenti: "non aveva gli alimenti", alimentiCambiati: "ha cambiato alimenti", altro: "altro",
 };
 const RE_SUGGERIMENTO_VIETATO = /digiun|salta(re|lo|la|te)?\b|non mangiare|niente (colazione|pranzo|cena|merenda|spuntino)|elimina (il|la|lo) (pasto|cena|pranzo)|attivit[aà] fisic|allenament|camminat|\bcorsa\b|palestra|bruci|compens|purg|vomit|lassativ/i;
+const RE_SUGGERIMENTO_VUOTO = /(niente|nulla|non) (da )?cambia|così com'è|va bene così|resta invariat|^\s*(mantieni|continua con|segui) (il|la|lo) (piano|cena|pranzo|spuntino|merenda|colazione)( del piano| come previst[oa])?\s*[.:,]?\s*(la|il|è)?\b(?!.*\b(scegli|aggiungi|preferisci|al posto|invece)\b)/i;
 const MESSAGGIO_BASE = "Un pasto diverso dal previsto non compromette il percorso: al prossimo pasto riparti dal piano.";
 
 const ISTRUZIONI_RISCONTRO = `Sei l'assistente dell'app "Il mio Piano", usata dai pazienti di un nutrizionista. Il paziente ha segnato un pasto come non svolto come da piano. Dai un riscontro breve, rassicurante e pratico chiamando lo strumento riscontro_pasto.
 
 COSA FARE
 - Stima l'impatto sulla giornata rispetto al pasto previsto: "irrilevante", "lieve", "moderato" o "rilevante". Un singolo pasto diverso è quasi sempre irrilevante, lieve o moderato.
-- "irrilevante" quando la variazione è uno scambio equivalente: stesso gruppo alimentare e quantità simile (es. mela al posto dei frutti di bosco, mandorle al posto delle noci, merluzzo al posto dell'orata, riso al posto della pasta), oppure un alimento presente nelle sostituzioni approvate dal nutrizionista. In questo caso: stima breve che lo dica (es. "Mela al posto dei frutti di bosco: valori nutrizionali simili"), spiegazione di una frase, nessun suggerimento e un messaggio che confermi che va benissimo così.
+- "irrilevante" quando la variazione è uno scambio equivalente: stesso gruppo alimentare e quantità simile, anche se i valori differiscono di poco. Esempi: mela al posto dei frutti di bosco, mandorle al posto delle noci, merluzzo al posto dell'orata, riso, farro o pasta integrale al posto dell'orzo o della pasta, tacchino al posto del pollo, oppure un alimento presente nelle sostituzioni approvate dal nutrizionista. In questo caso: stima breve che lo dica (es. "Pasta integrale al posto dell'orzo: valori nutrizionali simili"), spiegazione vuota o di una frase, nessun suggerimento, messaggio breve che confermi che va bene così.
 - stima: una frase con l'effetto principale in termini semplici e approssimati (es. "Circa 25-30 g di proteine in meno del previsto", "Circa 250 kcal in più, soprattutto zuccheri"). Usa "circa": sono stime, non misure.
 - spiegazione: una o due frasi su cosa significa per la giornata, senza allarmismi.
-- suggerimenti (al massimo 2, solo se richiesti): piccoli aggiustamenti sui PASTI RIMASTI di oggi, usando solo alimenti già presenti nel piano del giorno, nelle sostituzioni o nelle indicazioni del nutrizionista. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
-- messaggio: una frase incoraggiante che ricordi che uno scostamento non rovina il percorso e che si riparte dal piano.
+- suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Usa solo alimenti già presenti nel piano del giorno, nelle sostituzioni o nelle indicazioni del nutrizionista. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
+- messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
+- Non parlare della frequenza degli scostamenti: ci pensa l'app.
 
 LIMITI INVIOLABILI
 - Mai suggerire digiuni, pasti saltati, riduzioni oltre circa un quarto di un pasto, eliminazione di gruppi alimentari, attività fisica per "compensare", lassativi o qualsiasi comportamento compensatorio.
 - Non dare indicazioni mediche, non cambiare il piano, non introdurre alimenti estranei al piano.
-- Se gli scostamenti sono frequenti (te lo indico), invita con gentilezza a parlarne con il nutrizionista.
 - Tono non giudicante: niente colpe, niente parole come "sgarro" o "errore".
 - Scrivi in italiano, rivolgendoti al paziente con il "tu".`;
 
@@ -794,15 +795,23 @@ const STRUMENTO_RISCONTRO = {
 
 /** Ripulisce il riscontro: solo pasti rimasti, niente suggerimenti vietati, testi brevi. */
 function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
-  const breve = (t, max) => String(t == null ? "" : t).replace(/\s+/g, " ").trim().slice(0, max);
+  // Accorcia senza troncare a metà frase: si ferma all'ultima frase intera
+  const breve = (t, max) => {
+    const x = String(t == null ? "" : t).replace(/\s+/g, " ").trim();
+    if (x.length <= max) return x;
+    const taglio = x.slice(0, max);
+    const fine = Math.max(taglio.lastIndexOf(". "), taglio.lastIndexOf("! "), taglio.lastIndexOf("? "));
+    if (fine > max * 0.4) return taglio.slice(0, fine + 1);
+    return taglio.slice(0, taglio.lastIndexOf(" ")).replace(/[,;:–-]\s*$/, "") + "…";
+  };
   const impatto = r.impatto === "nessuno" ? "irrilevante" : ["irrilevante", "lieve", "moderato", "rilevante"].includes(r.impatto) ? r.impatto : "lieve";
   // variazione irrilevante: mai aggiustamenti
   const suggerimenti = !conSuggerimenti || impatto === "irrilevante" ? [] : (Array.isArray(r.suggerimenti) ? r.suggerimenti : [])
-    .filter((x) => x && rimanenti.includes(x.pasto) && x.testo && !RE_SUGGERIMENTO_VIETATO.test(x.testo))
-    .slice(0, 2).map((x) => ({ pasto: x.pasto, testo: breve(x.testo, 260) }));
-  let messaggio = breve(r.messaggio, 260);
+    .filter((x) => x && rimanenti.includes(x.pasto) && x.testo && !RE_SUGGERIMENTO_VIETATO.test(x.testo) && !RE_SUGGERIMENTO_VUOTO.test(x.testo))
+    .slice(0, 2).map((x) => ({ pasto: x.pasto, testo: breve(x.testo, 300) }));
+  let messaggio = breve(r.messaggio, 240);
   if (!messaggio || RE_SUGGERIMENTO_VIETATO.test(messaggio)) messaggio = impatto === "irrilevante" ? "Va benissimo così: continua con il piano." : MESSAGGIO_BASE;
-  let spiegazione = breve(r.spiegazione, 360);
+  let spiegazione = breve(r.spiegazione, 420);
   if (RE_SUGGERIMENTO_VIETATO.test(spiegazione)) spiegazione = "";
   return { impatto, stima: breve(r.stima, 200), spiegazione, suggerimenti, messaggio };
 }
@@ -863,7 +872,6 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
     impostazioni.indicazioni ? `\nIndicazioni del nutrizionista per questi casi: ${String(impostazioni.indicazioni).slice(0, 600)}` : "",
     "",
     conSuggerimenti ? "Suggerimenti richiesti: sì, al massimo 2, solo sui pasti rimasti." : "Suggerimenti richiesti: no, lascia l'elenco vuoto.",
-    frequente ? "Nota: negli ultimi giorni gli scostamenti sono stati frequenti: invita con gentilezza a parlarne con il nutrizionista." : "",
   ].filter((x) => x !== "").join("\n");
 
   let risposta;

@@ -757,6 +757,7 @@
         ${r.spiegazione ? `<p class="riscontro__testo">${escapeHTML(r.spiegazione)}</p>` : ""}
         ${(r.suggerimenti || []).length ? `<ul class="riscontro__suggerimenti">${r.suggerimenti.map((x) => `<li><strong>${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}:</strong> ${escapeHTML(x.testo)}</li>`).join("")}</ul>` : ""}
         <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "")}</p>
+        ${r.frequente ? `<p class="riscontro__frequente">Negli ultimi giorni i pasti non come da piano sono stati diversi: può essere utile parlarne con il tuo nutrizionista.</p>` : ""}
         <p class="riscontro__nota">Stime indicative, basate sul tuo piano. Per dubbi, scrivi al tuo nutrizionista.</p>
       </div>`;
   }
