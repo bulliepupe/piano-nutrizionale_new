@@ -337,8 +337,54 @@
   // =======================================================================
   // LATO PAZIENTE
   // =======================================================================
+  // ---------------------------------------------------------------------
+  // Informativa al primo accesso (paziente e familiare)
+  // ---------------------------------------------------------------------
+  // Presa visione, non consenso: il titolare dei dati del paziente è il suo
+  // nutrizionista, che resta tenuto a fornire la propria informativa. Se
+  // l'informativa cambia in modo rilevante, basta alzare la versione e la
+  // schermata ricompare una volta.
+  const VERSIONE_INFORMATIVA = "2026-10-08";
+  const URL_INFORMATIVA = "https://ilmiopiano.it/privacy.html";
+
+  function mostraInformativaPrimoAccesso(utenteDati, ruolo) {
+    if (!utenteDati || utenteDati.informativaVersione === VERSIONE_INFORMATIVA) return;
+    if (document.getElementById("informativa-primo-accesso")) return;
+    const familiare = ruolo === "familiare";
+    const box = document.createElement("div");
+    box.id = "informativa-primo-accesso";
+    box.className = "informativa-primo";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    box.setAttribute("aria-labelledby", "informativa-titolo");
+    box.innerHTML = `
+      <div class="informativa-primo__carta">
+        <h2 id="informativa-titolo">Benvenuto in Il mio Piano</h2>
+        <p class="informativa-primo__intro">Prima di iniziare, ecco in breve come vengono trattati i tuoi dati.</p>
+        <ul>
+          ${familiare ? `
+          <li>Con l'account familiare usi solo la <strong>lista della spesa condivisa</strong>. I dati del tuo account (nome, email, lista) sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app.</li>
+          <li>Non vedi i piani, le misure o le note dei pazienti: solo gli alimenti della lista di casa.</li>` : `
+          <li>Il piano, i pasti che segni, le tue note, le misure e gli appuntamenti sono trattati dal <strong>tuo nutrizionista</strong>, che ne è il titolare. <strong>Bulli e Pupe S.r.l.</strong> gestisce l'app per suo conto. Il tuo nutrizionista ti fornisce anche la sua informativa.</li>
+          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic): per esempio il riscontro sui pasti non come da piano. In quei casi vengono inviati solo i testi dei pasti e le tue note, senza nome né altri dati identificativi. Il tuo nutrizionista può disattivarle.</li>`}
+          <li>I dati sono conservati su server nell'Unione Europea e protetti da accesso personale. Puoi esercitare i tuoi diritti (accesso, correzione, cancellazione) ${familiare ? "scrivendo a info@ilmiopiano.it" : "tramite il tuo nutrizionista o scrivendo a info@ilmiopiano.it"}.</li>
+        </ul>
+        <p><a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Leggi l'informativa completa ↗</a></p>
+        <button type="button" class="btn" id="informativa-ok">Ho letto, continua</button>
+      </div>`;
+    document.body.appendChild(box);
+    document.body.classList.add("con-informativa");
+    box.querySelector("#informativa-ok").addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      try { await window.cloud.segnaInformativaVista(UID, VERSIONE_INFORMATIVA); } catch (err) { /* si riproporrà al prossimo accesso */ }
+      box.remove();
+      document.body.classList.remove("con-informativa");
+    });
+  }
+
   async function avviaPaziente(utenteDati) {
     mostraSchermata("paziente");
+    mostraInformativaPrimoAccesso(utenteDati, "paziente");
     migraDominioSeServe(utenteDati);
     applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
@@ -745,6 +791,7 @@
         </div>
         ${r.stima ? `<p class="riscontro__testo">${escapeHTML(r.stima)}</p>` : ""}
         <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "Va benissimo così: continua con il piano.")}</p>
+        <p class="riscontro__nota">✨ Generato con intelligenza artificiale</p>
       </div>`;
     }
     return `
@@ -758,7 +805,7 @@
         ${(r.suggerimenti || []).length ? `<ul class="riscontro__suggerimenti">${r.suggerimenti.map((x) => `<li><strong>${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}:</strong> ${escapeHTML(x.testo)}</li>`).join("")}</ul>` : ""}
         <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "")}</p>
         ${r.frequente ? `<p class="riscontro__frequente">Negli ultimi giorni i pasti non come da piano sono stati diversi: può essere utile parlarne con il tuo nutrizionista.</p>` : ""}
-        <p class="riscontro__nota">Stime indicative, basate sul tuo piano. Per dubbi, scrivi al tuo nutrizionista.</p>
+        <p class="riscontro__nota">✨ Generato con intelligenza artificiale · Stime indicative, basate sul tuo piano. Per dubbi, scrivi al tuo nutrizionista.</p>
       </div>`;
   }
 
@@ -2902,6 +2949,7 @@
   // ---------------------------------------------------------------------
   async function avviaFamiliare(utenteDati) {
     mostraSchermata("paziente");
+    mostraInformativaPrimoAccesso(utenteDati, "familiare");
     document.body.classList.add("ruolo-familiare");
     applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
@@ -4451,8 +4499,9 @@
   const MAX_ALLEGATO = 10 * 1024 * 1024;
   const MAX_FILE_INSIEME = 20;
   // Servizio gratuito suggerito per ridurre i PDF troppo pesanti.
-  const URL_COMPRIMI_PDF = "https://www.ilovepdf.com/compress_pdf";
-  const LINK_COMPRIMI_HTML = `<a href="${URL_COMPRIMI_PDF}" target="_blank" rel="noopener" class="link-inline">Comprimilo con iLovePDF ↗</a>`;
+  // Nessun rimando a servizi online di compressione: i PDF possono contenere
+  // dati personali. Si suggerisce di ridurli con il programma che li ha creati.
+  const CONSIGLIO_PDF_PESANTE = "Riducilo dal programma con cui l'hai creato, per esempio salvandolo o esportandolo come PDF con dimensioni ridotte o qualità standard";
   const RICPRO = { elenco: [], unsub: null, pronto: false, bozza: null, gruppo: null };
 
   function scollegaRicettario() {
@@ -4576,7 +4625,7 @@
       <label class="btn ric-carica ${puoScrivere ? "" : "is-disabilitato"}">Carica ricette in PDF o foto
         <input type="file" id="ric-file-multipli" accept="application/pdf,image/*" multiple hidden ${puoScrivere ? "" : "disabled"}>
       </label>
-      <p class="stat-nota" style="margin:6px 2px 10px;">Puoi sceglierne più di una insieme: titolo e anteprima li ricava l'app dai file. Massimo 10 MB per file: se un PDF è più pesante, <a href="${URL_COMPRIMI_PDF}" target="_blank" rel="noopener" class="link-inline">comprimilo gratis con iLovePDF ↗</a>.</p>
+      <p class="stat-nota" style="margin:6px 2px 10px;">Puoi sceglierne più di una insieme: titolo e anteprima li ricava l'app dai file. Massimo 10 MB per file: se un PDF è più pesante, riducilo dal programma con cui l'hai creato.</p>
       <button type="button" class="btn btn--ghost" id="btn-nuova-ricetta" style="margin-bottom:16px;" ${puoScrivere ? "" : "disabled"}>Scrivi una ricetta nell'app</button>
       ${!puoScrivere ? `<p class="stat-nota" style="margin:-6px 2px 14px;">Per aggiungere o modificare ricette serve una licenza attiva.</p>` : ""}
       ${!RICPRO.pronto ? `<div class="empty">Caricamento…</div>`
@@ -4627,7 +4676,7 @@
     if (v.stato === "caricamento") return `Caricamento… ${Math.round((v.progresso || 0) * 100)}%`;
     if (v.stato === "fatto") return "✓ Pubblicata";
     if (v.codice === "troppo-grande") {
-      return `<span style="color:var(--stato-rosso)">Supera i 10 MB.</span> ${LINK_COMPRIMI_HTML}
+      return `<span style="color:var(--stato-rosso)">Supera i 10 MB.</span> ${CONSIGLIO_PDF_PESANTE}.
         <label class="link-inline">poi scegli il file compresso<input type="file" data-sostituisci-voce="${v.chiave}" accept="application/pdf" hidden></label>`;
     }
     return `<span style="color:var(--stato-rosso)">${escapeHTML(v.errore || "Errore")}</span>`;
@@ -4904,7 +4953,7 @@
             ${allegatoNome ? `<button type="button" class="link-btn" id="ric-allegato-togli">Togli il file</button>` : ""}
           </div>
         </div>
-        <p id="ric-allegato-stato" class="stat-nota" role="status" style="margin-top:8px;">Massimo 10 MB (se è più pesante, <a href="${URL_COMPRIMI_PDF}" target="_blank" rel="noopener" class="link-inline">comprimilo con iLovePDF ↗</a>). L'anteprima si ricava dalla prima pagina.</p>
+        <p id="ric-allegato-stato" class="stat-nota" role="status" style="margin-top:8px;">Massimo 10 MB (se è più pesante, riducilo dal programma con cui l'hai creato). L'anteprima si ricava dalla prima pagina.</p>
       </section>
 
       <section class="settings-section">
@@ -5010,7 +5059,7 @@
         renderEditorRicetta();
       } catch (err) {
         stato.innerHTML = err && err.message === "troppo-grande"
-          ? `<span style="color:var(--stato-rosso)">Il PDF supera i 10 MB.</span> ${LINK_COMPRIMI_HTML}, poi scegli il file compresso con "Scegli PDF o foto".`
+          ? `<span style="color:var(--stato-rosso)">Il PDF supera i 10 MB.</span> ${CONSIGLIO_PDF_PESANTE}, poi sceglilo di nuovo con "Scegli PDF o foto".`
           : `<span style="color:var(--stato-rosso)">${escapeHTML(messaggioErroreFile(err))}</span>`;
       }
     });
@@ -5243,7 +5292,7 @@
             <li><strong>Limiti fissi, sempre</strong>: mai digiuni, mai pasti saltati, mai tagli oltre circa un quarto di un pasto, mai attività fisica o altri comportamenti per "compensare". Il messaggio di fondo è sempre: si riparte dal piano al pasto successivo.</li>
             <li><strong>Stime indicative</strong>: l'impatto (irrilevante, lieve, moderato, rilevante) e i valori sono approssimati e dichiarati come tali al paziente. Gli scambi equivalenti, come mela al posto dei frutti di bosco o mandorle al posto delle noci, o le tue sostituzioni approvate, risultano <strong>irrilevanti</strong>: il paziente vede solo una conferma che va bene così.</li>
             <li><strong>Scostamenti frequenti</strong>: se nell'ultima settimana sono molti, il paziente viene invitato a parlarne con te.</li>
-            <li><strong>Privacy</strong>: all'AI arrivano solo i testi dei pasti, lo stato, il motivo e la nota del paziente, senza nome né dati identificativi.</li>
+            <li><strong>Privacy</strong>: all'AI arrivano solo i testi dei pasti, lo stato, il motivo e la nota del paziente, in forma pseudonimizzata (senza nome né altri dati identificativi). Il paziente ne è informato al primo accesso all'app.</li>
             <li><strong>Trasparenza</strong>: nella scheda "Andamento" vedi gli ultimi riscontri dati al paziente.</li>
             <li><strong>Quando spegnerlo</strong>: per pazienti con un rapporto difficile con il cibo o per i quali un riscontro su ogni scostamento non è indicato.</li>
           </ul>

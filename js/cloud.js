@@ -465,6 +465,11 @@
     // Statistiche per il professionista
     // ------------------------------------------------------------------
     /** Il paziente registra l'ultima apertura dell'app (serve all'avviso di abbandono). */
+    /** Il paziente (o familiare) ha preso visione dell'informativa al primo accesso. */
+    async segnaInformativaVista(uid, versione) {
+      await db.collection("users").doc(uid).update({ informativaVistaIl: FieldValue.serverTimestamp(), informativaVersione: versione });
+    },
+
     async registraAccesso(uid) {
       await db.collection("users").doc(uid).update({ ultimoAccesso: FieldValue.serverTimestamp() });
     },

@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v56";
+const CACHE_VERSION = "v57";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -21,6 +21,12 @@ const APP_SHELL = [
   "./manifest.json",
   "./config.json",
   "./css/style.css",
+  "./css/fonts.css",
+  "./fonts/fraunces-latin-opsz-normal.woff2",
+  "./fonts/inter-latin-400-normal.woff2",
+  "./fonts/inter-latin-500-normal.woff2",
+  "./fonts/inter-latin-600-normal.woff2",
+  "./fonts/inter-latin-700-normal.woff2",
   "./js/data.js",
   "./js/alimenti.js",
   "./js/mealprep.js",
