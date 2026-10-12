@@ -730,10 +730,13 @@
       mostraToast("Impossibile salvare: controlla la connessione");
     }
   }
+  const DETTATURA_DISPONIBILE = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
   // ---------------------------------------------------------------------
   // Riscontro AI sui pasti non come da piano
   // ---------------------------------------------------------------------
   const RISCONTRI = { data: null, perPasto: {}, unsub: null };
+  // Dettatura vocale della nota: riconoscimento del sistema del telefono (Google o Apple)
   const LS_RISCONTRI_CHIUSI = "pnut:riscontri-chiusi";
   const ETICHETTE_IMPATTO = { irrilevante: "Variazione irrilevante", nessuno: "Variazione irrilevante", lieve: "Impatto lieve", moderato: "Impatto moderato", rilevante: "Impatto rilevante" };
 
@@ -838,7 +841,10 @@
       ${attuale ? `<button type="button" class="btn btn--ghost" id="stato-pasto-togli">Togli la segnatura</button>` : ""}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
     `);
+    let dettatura = null;
+    const fermaDettatura = () => { if (dettatura) { try { dettatura.stop(); } catch (e) { /* già ferma */ } dettatura = null; } };
     const aggiorna = () => {
+      fermaDettatura();
       overlay.querySelectorAll("[data-scelta]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.scelta === scelta)));
       const box = overlay.querySelector("#stato-pasto-motivi");
       const elenco = scelta === "diverso" ? S.MOTIVI_DIVERSO : scelta === "parziale" ? S.MOTIVI_PARZIALE : scelta === "saltato" ? S.MOTIVI_SALTATO : [];
@@ -850,7 +856,7 @@
         <div class="ricette-filtri">${elenco.map((m) => `<button type="button" class="chip-filtro" data-motivo="${m}" aria-pressed="${motivo === m}">${escapeHTML(S.MOTIVI[m])}</button>`).join("")}</div>
         <label class="editor-campo stato-pasto__nota">Vuoi aggiungere un dettaglio? <span>(facoltativo)</span>
           <textarea id="stato-pasto-nota" rows="2" maxlength="${S.MAX_NOTA}" placeholder="${escapeHTML(S.SUGGERIMENTI_NOTA[motivo] || (scelta === "diverso" ? "Cosa hai mangiato al posto del pasto previsto?" : "Es. riso al posto della pasta, ho lasciato metà del secondo…"))}">${escapeHTML(nota)}</textarea>
-          <small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small>
+          <span class="stato-pasto__sotto">${DETTATURA_DISPONIBILE ? `<button type="button" class="btn-detta" id="stato-pasto-detta" aria-label="Detta la nota a voce">🎤 Detta</button>` : ""}<small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small></span>
         </label>` : "";
       box.querySelectorAll("[data-motivo]").forEach((b) => b.addEventListener("click", () => {
         motivo = motivo === b.dataset.motivo ? null : b.dataset.motivo;
@@ -861,10 +867,39 @@
         nota = nuovoCampo.value;
         box.querySelector("#stato-pasto-conta").textContent = `${nota.length}/${S.MAX_NOTA}`;
       });
+      const bDetta = box.querySelector("#stato-pasto-detta");
+      if (bDetta && nuovoCampo) bDetta.addEventListener("click", () => {
+        if (dettatura) { fermaDettatura(); return; }
+        const base = nuovoCampo.value.trim();
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const rec = new SR();
+        rec.lang = "it-IT"; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+        dettatura = rec;
+        bDetta.classList.add("is-ascolto"); bDetta.textContent = "⏹ Ti ascolto… tocca per fermare";
+        rec.onresult = (ev) => {
+          let detto = "";
+          for (let i = 0; i < ev.results.length; i++) detto += ev.results[i][0].transcript;
+          detto = detto.trim();
+          if (detto) detto = detto.charAt(0).toUpperCase() + detto.slice(1);
+          nuovoCampo.value = ((base ? base + " " : "") + detto).slice(0, S.MAX_NOTA);
+          nota = nuovoCampo.value;
+          box.querySelector("#stato-pasto-conta").textContent = `${nota.length}/${S.MAX_NOTA}`;
+        };
+        rec.onerror = (ev) => {
+          const e = ev && ev.error;
+          mostraToast(e === "not-allowed" || e === "service-not-allowed" ? "Consenti l'uso del microfono, oppure usa il microfono della tastiera"
+            : e === "no-speech" ? "Non ho sentito nulla: riprova"
+            : e === "network" ? "La dettatura richiede la connessione a internet"
+            : "Dettatura non disponibile: puoi usare il microfono della tastiera", 4500);
+        };
+        rec.onend = () => { dettatura = null; bDetta.classList.remove("is-ascolto"); bDetta.textContent = "🎤 Detta"; };
+        try { rec.start(); } catch (e) { dettatura = null; bDetta.classList.remove("is-ascolto"); bDetta.textContent = "🎤 Detta"; }
+      });
       overlay.querySelector("#stato-pasto-salva").disabled = !scelta;
     };
     overlay.querySelectorAll("[data-scelta]").forEach((b) => b.addEventListener("click", () => { scelta = b.dataset.scelta; aggiorna(); }));
     overlay.querySelector("#stato-pasto-salva").addEventListener("click", () => {
+      fermaDettatura();
       chiudiSheet();
       const campo = overlay.querySelector("#stato-pasto-nota");
       salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo, campo ? campo.value : "");
@@ -3112,6 +3147,118 @@
       </svg>`;
   }
 
+  // ---- Professionista: analisi AI dell'andamento (in cima alla scheda) ----
+  const ETICHETTE_ANALISI = { verde: "In linea con il piano", giallo: "Da tenere d'occhio", rosso: "Da contattare" };
+
+  function analisiAttesaHTML() {
+    return `
+      <div class="analisi-ai__testa"><span class="analisi-ai__icona" aria-hidden="true">✨</span><div><h2>Analisi AI dell'andamento</h2><p>Sto leggendo i dati degli ultimi 30 giorni…</p></div></div>
+      <div class="analisi-ai__attesa"><span></span><span></span><span></span></div>`;
+  }
+
+  /** Impronta dei dati: se non cambia, l'analisi salvata è ancora valida. */
+  function improntaDati(obj) {
+    const t = JSON.stringify(obj);
+    let h = 5381;
+    for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+    return "v1-" + h.toString(36) + "-" + t.length;
+  }
+
+  async function datiPerAnalisi(piano, r) {
+    const S = window.statistiche;
+    const lbl = (k) => (MEAL_META[k] ? MEAL_META[k].label : k);
+    const motivo = (m) => (m && S.MOTIVI[m]) || null;
+    const im = r.imprevisti || {};
+    const grp = (g) => g ? { totale: g.totale, motivi: Object.fromEntries(Object.entries(g.motivi || {}).map(([k, v]) => [motivo(k) || k, v])), perPasto: Object.fromEntries(Object.entries(g.perPasto || {}).map(([k, v]) => [lbl(k), v])) } : null;
+    let riscontri = [], misure = [];
+    try { riscontri = await window.cloud.leggiRiscontriPaziente(piano.pazienteUid, 80); } catch (e) { /* facoltativi */ }
+    try { misure = await window.cloud.leggiMisure(piano.id); } catch (e) { /* facoltative */ }
+    const limite = S.chiave(new Date(Date.now() - 30 * 86400000));
+    riscontri = riscontri.filter((x) => x.data && x.data >= limite);
+    const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0 };
+    riscontri.forEach((x) => { const k = x.impatto === "nessuno" ? "irrilevante" : x.impatto; if (k in conteggio) conteggio[k]++; });
+    const rp = riepilogoPeso(misure, piano.corpo);
+    return {
+      pianoIniziato: r.pianoIniziato, giorniValutati30: r.giorniValutati30,
+      aderenza7giorni: r.aderenza7 == null ? null : Math.round(r.aderenza7 * 100),
+      aderenza30giorni: r.aderenza30 == null ? null : Math.round(r.aderenza30 * 100),
+      aderenzaFeriali: r.feriali == null ? null : Math.round(r.feriali * 100),
+      aderenzaWeekend: r.weekend == null ? null : Math.round(r.weekend * 100),
+      giorniDiFilaRispettati: r.serie, record: r.record,
+      statoCalcolatoDallApp: ETICHETTE_STATO[r.stato] || r.stato, segnaliDellApp: r.motivi,
+      aderenzaPerSettimana: (r.settimane || []).map((x) => ({ settimanaDal: x.lunedi, aderenza: x.valore == null ? null : Math.round(x.valore * 100) })),
+      pastiUltimi30giorni: (r.perPasto || []).map((x) => ({ pasto: lbl(x.pasto), ...x.conta })),
+      pastiNonComeDaPiano: { fattiDiversamente: grp(im.diverso), fattiInParte: grp(im.parziale), saltati: grp(im.saltato) },
+      noteDelPaziente: (im.note || []).map((n) => ({ giorno: n.giorno, pasto: lbl(n.pasto), stato: n.stato, motivo: motivo(n.motivo), nota: n.nota })),
+      riscontriAI: { attivo: !(piano.feedbackAI && piano.feedbackAI.modo === "spento"), conteggioImpatti30giorni: conteggio, ultimi: riscontri.slice(0, 10).map((x) => ({ giorno: x.data, pasto: lbl(x.pasto), impatto: x.impatto, stima: x.stima })) },
+      peso: rp ? { ultimoKg: rp.ultimo.peso, ultimoIl: rp.ultimo.data, variazioneDallInizioKg: rp.variazioneInizio == null ? null : Math.round(rp.variazioneInizio * 10) / 10, variazioneUltimoControlloKg: rp.variazioneControllo == null ? null : Math.round(rp.variazioneControllo * 10) / 10, obiettivoKg: rp.obiettivo, misurazioni: rp.conPeso.length } : null,
+      usoApp: { ultimaInterazione: r.ultimaInterazione, giorniInattivo: r.giorniInattivo, promemoria: r.notifiche },
+      prossimoControllo: r.prossimoControllo ? { traGiorni: r.prossimoControllo.traGiorni } : null,
+      obiettivo: piano.obiettivo || (piano.paziente && piano.paziente.obiettivo) || null,
+    };
+  }
+
+  async function avviaAnalisiAndamento(piano, r, forza) {
+    const box = document.getElementById("analisi-ai");
+    if (!box || !window.cloud.analizzaAndamento) return;
+    const ancoraQui = () => pazienteSelezionatoId === piano.id && document.getElementById("analisi-ai") === box;
+    box.innerHTML = analisiAttesaHTML();
+    try {
+      const dati = await datiPerAnalisi(piano, r);
+      const impronta = improntaDati(dati);
+      let analisi = null;
+      if (!forza) {
+        try { analisi = await window.cloud.leggiAnalisiAndamento(piano.id); } catch (e) { analisi = null; }
+        if (analisi && (analisi.impronta !== impronta || Date.now() - (analisi.creata || 0) > 7 * 86400000)) analisi = null;
+      }
+      if (!analisi) analisi = await window.cloud.analizzaAndamento(piano.id, dati, impronta);
+      if (ancoraQui()) mostraAnalisiAndamento(box, piano, r, analisi);
+    } catch (err) {
+      if (!ancoraQui()) return;
+      const m = String((err && err.message) || "");
+      box.innerHTML = `
+        <div class="analisi-ai__testa"><span class="analisi-ai__icona" aria-hidden="true">✨</span><div><h2>Analisi AI dell'andamento</h2>
+        <p>${m === "limite-giornaliero" ? "Per oggi le analisi disponibili sono esaurite." : m === "licenza-non-attiva" ? "Serve una licenza attiva." : "Analisi non disponibile in questo momento."}</p></div></div>
+        <button type="button" class="btn btn--ghost" id="analisi-riprova">Riprova</button>`;
+      const b = document.getElementById("analisi-riprova");
+      if (b) b.addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
+    }
+  }
+
+  function mostraAnalisiAndamento(box, piano, r, a) {
+    const d = new Date(a.creata || Date.now());
+    const quando = `${d.getDate()}/${d.getMonth() + 1} alle ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    box.className = `analisi-ai analisi-ai--${a.valutazione}`;
+    box.innerHTML = `
+      <div class="analisi-ai__testa">
+        <span class="analisi-ai__icona" aria-hidden="true">✨</span>
+        <div>
+          <p class="analisi-ai__etichetta">Analisi AI dell'andamento</p>
+          <span class="analisi-ai__semaforo analisi-ai__semaforo--${a.valutazione}"><span></span>${ETICHETTE_ANALISI[a.valutazione] || ""}</span>
+          <h2>${escapeHTML(a.titolo || "")}</h2>
+        </div>
+      </div>
+      <p class="analisi-ai__sintesi">${escapeHTML(a.sintesi || "")}</p>
+      ${a.impattoScostamenti ? `<p class="analisi-ai__impatto"><strong>Scostamenti:</strong> ${escapeHTML(a.impattoScostamenti)}</p>` : ""}
+      <div class="analisi-ai__colonne">
+        ${a.puntiAttenzione && a.puntiAttenzione.length ? `<div><h3>Punti di attenzione</h3><ul>${a.puntiAttenzione.map((x) => `<li>${escapeHTML(x)}</li>`).join("")}</ul></div>` : ""}
+        ${a.puntiForza && a.puntiForza.length ? `<div><h3>Cosa va bene</h3><ul>${a.puntiForza.map((x) => `<li>${escapeHTML(x)}</li>`).join("")}</ul></div>` : ""}
+      </div>
+      <div class="analisi-ai__azione"><strong>${a.contattare ? "📞 Azione suggerita" : "✓ Azione suggerita"}</strong><span>${escapeHTML(a.azione || "")}</span></div>
+      ${a.messaggio ? `<button type="button" class="btn" id="analisi-usa-messaggio">Usa la bozza di messaggio proposta</button>` : ""}
+      <p class="analisi-ai__piede">✨ Generata con intelligenza artificiale il ${quando}, dai dati degli ultimi 30 giorni. È un supporto: la valutazione clinica resta tua. <button type="button" class="link-btn" id="analisi-rigenera">Rigenera</button></p>`;
+    const usa = document.getElementById("analisi-usa-messaggio");
+    if (usa) usa.addEventListener("click", () => {
+      const campo = document.getElementById("testo-incoraggiamento");
+      if (!campo) return;
+      campo.value = a.messaggio;
+      campo.scrollIntoView({ behavior: "smooth", block: "center" });
+      campo.focus();
+      mostraToast("Bozza inserita: rivedila prima di inviarla");
+    });
+    document.getElementById("analisi-rigenera").addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
+  }
+
   // ---- Professionista: ultimi riscontri AI dati al paziente ----
   async function caricaRiscontriProf(piano) {
     const box = document.getElementById("sezione-riscontri");
@@ -4216,6 +4363,8 @@
     profRoot.innerHTML = `
       <div class="nav-riga">${navLink("btn-torna-stat", "andamento", "Andamento dei pazienti", true)}${navLink("btn-piano-da-stat-su", "piano", "Piano del paziente", false)}</div>
 
+      <section class="analisi-ai" id="analisi-ai" aria-live="polite">${analisiAttesaHTML()}</section>
+
       <section class="stat-testata stat-card--${r.stato}">
         <span class="stato-badge stato-badge--${r.stato}"><span class="stato-punto"></span>${ETICHETTE_STATO[r.stato]}</span>
         ${r.motivi.length ? `<ul class="stat-motivi">${r.motivi.map((m) => `<li>${escapeHTML(m)}</li>`).join("")}</ul>` : `<p class="stat-motivi">Segue il piano con regolarità e ha i promemoria attivi.</p>`}
@@ -4313,6 +4462,7 @@
     document.getElementById("btn-piano-da-stat-su").addEventListener("click", () => apriEditorPaziente(id));
     collegaSezionePesoProf(piano);
     caricaRiscontriProf(piano);
+    avviaAnalisiAndamento(piano, r);
     const testo = () => document.getElementById("testo-incoraggiamento").value.trim();
     document.getElementById("btn-msg-whatsapp").addEventListener("click", () => {
       window.open("https://wa.me/?text=" + encodeURIComponent(testo()), "_blank", "noopener");

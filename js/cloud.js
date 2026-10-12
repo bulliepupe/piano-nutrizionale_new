@@ -139,6 +139,21 @@
      * server, che verifica licenza e limite di pazienti. Ritorna
      * { pazienteUid, pianoId }.
      */
+    /** Analisi AI dell'andamento di un paziente (professionista). */
+    async analizzaAndamento(pianoId, dati, impronta) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const r = await funzioni.httpsCallable("analizzaAndamento", { timeout: 120000 })({ pianoId, dati, impronta });
+      return r.data;
+    },
+    async leggiAnalisiAndamento(pianoId) {
+      const d = await db.collection("piani").doc(pianoId).collection("analisi").doc("ultima").get();
+      return d.exists ? d.data() : null;
+    },
+    async leggiMisure(pianoId) {
+      const snap = await db.collection("piani").doc(pianoId).collection("misure").get();
+      return snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+    },
+
     /** Riscontro AI su un pasto di oggi segnato come non da piano. */
     async valutaVariazione(pasto) {
       if (!funzioni) throw { code: "functions/unavailable" };
@@ -154,8 +169,8 @@
     },
 
     /** Ultimi riscontri dati a un paziente (per il professionista). */
-    async leggiRiscontriPaziente(pazienteUid) {
-      const snap = await db.collection("users").doc(pazienteUid).collection("riscontri").orderBy("creato", "desc").limit(10).get();
+    async leggiRiscontriPaziente(pazienteUid, limite) {
+      const snap = await db.collection("users").doc(pazienteUid).collection("riscontri").orderBy("creato", "desc").limit(limite || 10).get();
       return snap.docs.map((d) => d.data());
     },
 

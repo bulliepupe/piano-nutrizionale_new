@@ -2028,3 +2028,35 @@ select option { font-weight: 400; color: var(--ink); background: var(--surface);
 .informativa-primo__carta li { margin-bottom: 8px; }
 .informativa-primo__carta .btn { margin-top: 6px; }
 body.con-informativa { overflow: hidden; }
+
+/* Analisi AI dell'andamento (professionista) */
+.analisi-ai { margin: 0 0 18px; padding: 18px 18px 14px; border-radius: 18px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), var(--surface) 60%); border: 1.5px solid color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: var(--shadow-card); column-span: all; }
+.analisi-ai--giallo { border-color: color-mix(in srgb, var(--gold) 70%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--gold) 14%, var(--surface)), var(--surface) 60%); }
+.analisi-ai--rosso { border-color: color-mix(in srgb, var(--stato-rosso, #b4483c) 70%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--stato-rosso, #b4483c) 10%, var(--surface)), var(--surface) 60%); }
+.analisi-ai__testa { display: flex; gap: 12px; align-items: flex-start; }
+.analisi-ai__icona { flex: none; width: 40px; height: 40px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; font-size: 20px; background: var(--surface); border: 1px solid var(--border-soft); }
+.analisi-ai__testa h2 { font-family: var(--font-display); font-size: 21px; line-height: 1.25; margin: 4px 0 0; color: var(--ink); }
+.analisi-ai__testa p { margin: 2px 0 0; color: var(--ink-soft); font-size: 14px; }
+.analisi-ai__etichetta { font-size: 12px !important; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint) !important; margin: 0 0 4px !important; }
+.analisi-ai__semaforo { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
+.analisi-ai__semaforo span { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.analisi-ai__semaforo--giallo span { background: var(--gold); }
+.analisi-ai__semaforo--rosso span { background: var(--stato-rosso, #b4483c); }
+.analisi-ai__sintesi { font-size: 15.5px; line-height: 1.55; margin: 12px 0 6px; color: var(--ink); }
+.analisi-ai__impatto { font-size: 14px; margin: 0 0 8px; color: var(--ink-soft); }
+.analisi-ai__colonne { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 18px; }
+.analisi-ai__colonne h3 { font-size: 13px; font-weight: 700; margin: 6px 0 2px; color: var(--ink); }
+.analisi-ai__colonne ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.5; }
+.analisi-ai__azione { display: flex; flex-direction: column; gap: 2px; margin: 12px 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border-soft); font-size: 14.5px; }
+.analisi-ai__piede { font-size: 12px; color: var(--ink-faint); margin: 8px 0 0; }
+.analisi-ai__piede .link-btn { width: auto; padding: 0; margin-left: 6px; font-size: 12px; }
+.analisi-ai__attesa { display: flex; gap: 6px; margin: 14px 0 4px 52px; }
+.analisi-ai__attesa span { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); opacity: 0.3; animation: analisi-puntini 1.2s infinite ease-in-out; }
+.analisi-ai__attesa span:nth-child(2) { animation-delay: 0.2s; } .analisi-ai__attesa span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes analisi-puntini { 0%, 100% { opacity: 0.25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
+
+/* Dettatura vocale della nota */
+.stato-pasto__sotto { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.btn-detta { font-family: var(--font-body); font-size: 13.5px; font-weight: 600; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
+.btn-detta.is-ascolto { background: color-mix(in srgb, var(--stato-rosso, #b4483c) 12%, var(--surface)); border-color: var(--stato-rosso, #b4483c); animation: detta-pulsa 1.2s infinite; }
+@keyframes detta-pulsa { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--stato-rosso, #b4483c) 18%, transparent); } }

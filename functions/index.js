@@ -901,6 +901,126 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   return riscontro;
 });
 
+// =========================================================================
+// ANALISI AI DELL'ANDAMENTO DEL PAZIENTE (per il professionista)
+// =========================================================================
+// All'apertura della scheda Andamento l'app invia un riassunto dei dati del
+// paziente (aderenza, pasti non come da piano, riscontri, peso, uso
+// dell'app), senza nome né dati identificativi, con la sua "impronta". Il
+// risultato si salva in /piani/{id}/analisi/ultima, leggibile solo dal
+// professionista: se i dati non cambiano, l'app mostra quello salvato.
+const MODELLO_ANALISI = "claude-sonnet-5";
+const LIMITE_ANALISI_GIORNO = 80;
+
+const ISTRUZIONI_ANALISI = `Sei l'assistente di un nutrizionista che usa l'app "Il mio Piano". Ricevi i dati di andamento di un suo paziente (ultimi 30 giorni circa) e prepari per il professionista una lettura sintetica e utile, chiamando lo strumento analisi_andamento.
+
+COME VALUTARE
+- valutazione: "verde" se il paziente segue il piano con regolarità e gli scostamenti sono pochi o di scarso impatto; "giallo" se ci sono segnali da tenere d'occhio (aderenza in calo, scostamenti moderati ricorrenti su un pasto, uso dell'app discontinuo); "rosso" se conviene contattarlo (aderenza bassa, scostamenti rilevanti frequenti, pasti saltati ricorrenti, app non usata da giorni).
+- Valuta il peso degli scostamenti: gli scambi equivalenti o irrilevanti non sono un problema; conta la frequenza di quelli moderati e rilevanti e i pasti su cui si concentrano.
+- Se i dati sono pochi (piano iniziato da pochi giorni, poche segnalazioni), dillo e sii prudente.
+- Basati solo sui dati ricevuti: non inventare, non fare diagnosi, non dare indicazioni cliniche al posto del professionista.
+
+COSA SCRIVERE (in italiano, rivolto al professionista, tono professionale e concreto)
+- titolo: una frase breve che riassume (es. "Segue bene il piano, cena più difficile nel weekend").
+- sintesi: 2-3 frasi sull'andamento generale.
+- impattoScostamenti: una frase sul peso degli scostamenti (quanti e di che impatto, su quali pasti).
+- puntiAttenzione: fino a 4 punti brevi e specifici; puntiForza: fino a 3 punti brevi.
+- azione: una frase con l'azione suggerita al professionista (es. "Contattalo per capire le difficoltà a cena" oppure "Nessuna azione necessaria: conferma al prossimo controllo").
+- contattare: true se suggerisci di contattarlo prima del prossimo controllo.
+- messaggio: solo se contattare è true, una bozza breve (al massimo 5 righe) che il professionista può inviare al paziente: tono caldo, non giudicante, dando del tu, senza nome e senza firma. Altrimenti stringa vuota.`;
+
+const STRUMENTO_ANALISI = {
+  name: "analisi_andamento",
+  description: "Lettura dell'andamento del paziente per il professionista.",
+  input_schema: {
+    type: "object",
+    properties: {
+      valutazione: { type: "string", enum: ["verde", "giallo", "rosso"] },
+      titolo: { type: "string" },
+      sintesi: { type: "string" },
+      impattoScostamenti: { type: "string" },
+      puntiAttenzione: { type: "array", items: { type: "string" } },
+      puntiForza: { type: "array", items: { type: "string" } },
+      azione: { type: "string" },
+      contattare: { type: "boolean" },
+      messaggio: { type: "string" },
+    },
+    required: ["valutazione", "titolo", "sintesi", "impattoScostamenti", "puntiAttenzione", "puntiForza", "azione", "contattare", "messaggio"],
+  },
+};
+
+function normalizzaAnalisi(r) {
+  const breve = (t, max) => {
+    const x = String(t == null ? "" : t).replace(/[ \t]+/g, " ").trim();
+    if (x.length <= max) return x;
+    const taglio = x.slice(0, max);
+    const fine = Math.max(taglio.lastIndexOf(". "), taglio.lastIndexOf("! "), taglio.lastIndexOf("? "));
+    return fine > max * 0.4 ? taglio.slice(0, fine + 1) : taglio.slice(0, taglio.lastIndexOf(" ")) + "…";
+  };
+  const elenco = (a, n, max) => (Array.isArray(a) ? a : []).map((x) => breve(x, max)).filter(Boolean).slice(0, n);
+  const contattare = !!r.contattare;
+  return {
+    valutazione: ["verde", "giallo", "rosso"].includes(r.valutazione) ? r.valutazione : "giallo",
+    titolo: breve(r.titolo, 140),
+    sintesi: breve(r.sintesi, 600),
+    impattoScostamenti: breve(r.impattoScostamenti, 300),
+    puntiAttenzione: elenco(r.puntiAttenzione, 4, 200),
+    puntiForza: elenco(r.puntiForza, 3, 200),
+    azione: breve(r.azione, 240),
+    contattare,
+    messaggio: contattare ? breve(r.messaggio, 700) : "",
+  };
+}
+
+exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const pianoId = String((request.data && request.data.pianoId) || "");
+  const dati = request.data && request.data.dati;
+  const impronta = String((request.data && request.data.impronta) || "").slice(0, 64);
+  if (!pianoId || !dati || typeof dati !== "object") throw new HttpsError("invalid-argument", "Dati mancanti.");
+
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "professionista") throw new HttpsError("permission-denied", "Solo per i professionisti.");
+  if (!statoLicenzaServer(utente.licenza, Date.now()).attiva) throw new HttpsError("failed-precondition", "licenza-non-attiva");
+  const pianoRef = db.collection("piani").doc(pianoId);
+  const piano = (await pianoRef.get()).data();
+  if (!piano || piano.professionistaUid !== uid) throw new HttpsError("permission-denied", "Paziente non tuo.");
+
+  const oggi = new Date().toISOString().slice(0, 10);
+  const usate = (utente.analisiAI && utente.analisiAI.data === oggi) ? Number(utente.analisiAI.n) || 0 : 0;
+  if (usate >= LIMITE_ANALISI_GIORNO) throw new HttpsError("resource-exhausted", "limite-giornaliero");
+
+  const testo = JSON.stringify(dati).slice(0, 14000);
+  let risposta;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: MODELLO_ANALISI, max_tokens: 1500, system: ISTRUZIONI_ANALISI,
+        tools: [STRUMENTO_ANALISI], tool_choice: { type: "tool", name: "analisi_andamento" },
+        messages: [{ role: "user", content: `Dati di andamento del paziente (JSON):\n${testo}` }],
+      }),
+    });
+    risposta = await r.json();
+    if (!r.ok) {
+      console.error("Analisi AI: errore API", r.status, risposta && risposta.error && risposta.error.type);
+      throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+    }
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+  }
+  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "analisi_andamento");
+  if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
+  const analisi = Object.assign(normalizzaAnalisi(blocco.input), { impronta, creata: Date.now() });
+  await pianoRef.collection("analisi").doc("ultima").set(Object.assign({}, analisi, { aggiornata: FieldValue.serverTimestamp() }));
+  await utenteRef.set({ analisiAI: { data: oggi, n: usate + 1 } }, { merge: true });
+  return analisi;
+});
+
 // Esposta solo per i test automatici (Node), non usata da Firebase in produzione.
 
 // =========================================================================
@@ -1088,5 +1208,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { normalizzaAnalisi, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

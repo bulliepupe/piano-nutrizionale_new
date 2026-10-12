@@ -70,7 +70,7 @@ service cloud.firestore {
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI"]);
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
@@ -136,6 +136,11 @@ service cloud.firestore {
       // Note del controllo: solo il professionista
       match /noteMisure/{misuraId} {
         allow read, write: if eIlProfessionista();
+      }
+      // Analisi AI dell'andamento: la legge solo il professionista, la scrive il server
+      match /analisi/{analisiId} {
+        allow read: if eIlProfessionista();
+        allow write: if false;
       }
     }
 
