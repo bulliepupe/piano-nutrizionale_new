@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v58";
+const CACHE_VERSION = "v59";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -83,6 +83,13 @@ self.addEventListener("fetch", (event) => {
         if (risposta.ok) {
           const copia = risposta.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia));
+          return risposta;
+        }
+        // Il server risponde con un errore (per esempio una pagina "Site Not
+        // Found" durante un disservizio): all'apertura si usa la copia salvata
+        // dell'app, invece di mostrare la pagina di errore al paziente.
+        if (navigazione && risposta.status >= 400) {
+          return caches.match(event.request).then((r) => r || caches.match("./index.html")).then((r) => r || risposta);
         }
         return risposta;
       })
