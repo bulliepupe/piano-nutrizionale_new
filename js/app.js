@@ -437,7 +437,14 @@
   }
 
   async function avviaPaziente(utenteDati) {
+    AUTONOMO = !!utenteDati.autonomo;
     mostraSchermata("paziente");
+    aggiornaPremium();
+    if (!avviaPaziente.collegato) {
+      avviaPaziente.collegato = true;
+      document.addEventListener("click", (e) => { if (e.target.closest("[data-premium]")) apriPremium(); });
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") aggiornaPremium(); });
+    }
     mostraInformativaPrimoAccesso(utenteDati, "paziente");
     migraDominioSeServe(utenteDati);
     applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
@@ -621,6 +628,89 @@
   const EDITOR_PAZ = { settSel: 1, giornoSel: 0, ritorno: "oggi" };
   let PROVA_RICHIESTA = false;
 
+  // ---- Premium ----
+  // Lo stato lo decide il server (statoPremium): abbonamento, prova di 14
+  // giorni o nutrizionista con licenza attiva. Finché non è noto non si
+  // blocca nulla; i limiti veri li applica comunque il server.
+  const PREMIUM = { noto: false, attivo: true, origine: null, scadenza: null, provaUsata: false };
+  let AUTONOMO = false;
+  const LS_FINE_PROVA = "pnut:fine-prova-vista";
+
+  function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
+
+  function giorniProvaRimasti() {
+    if (!PREMIUM.attivo || PREMIUM.origine !== "prova" || !PREMIUM.scadenza) return null;
+    return Math.max(1, Math.ceil((PREMIUM.scadenza - Date.now()) / 86400000));
+  }
+
+  async function aggiornaPremium() {
+    if (RUOLO !== "paziente" || !window.cloud.chiamaFunzione) return;
+    try {
+      const r = await window.cloud.chiamaFunzione("statoPremium");
+      const prima = JSON.stringify([PREMIUM.attivo, PREMIUM.origine, PREMIUM.scadenza]);
+      Object.assign(PREMIUM, r || {}, { noto: true });
+      if (prima !== JSON.stringify([PREMIUM.attivo, PREMIUM.origine, PREMIUM.scadenza])
+        && ["oggi", "spesa", "impostazioni", "mioPiano"].includes(currentView)) render();
+      controllaFineProva();
+    } catch (e) { /* si riprova al prossimo rientro nell'app */ }
+  }
+
+  const FUNZIONI_PREMIUM = [
+    ["✨", "Lettura del piano con l'AI", "carichi il nuovo piano dal PDF o dalle foto in un minuto, a ogni cambio di stagione"],
+    ["💡", "Consigli quando un pasto cambia", "come riequilibrare la giornata quando mangi fuori o salti un pasto"],
+    ["🛒", "Lista della spesa della settimana", "tutta la settimana, divisa in una o due spese, condivisibile in famiglia"],
+    ["📈", "Andamento completo", "grafico del peso e storico delle misure"],
+  ];
+
+  function bannerPremiumHTML() {
+    if (!AUTONOMO || RUOLO !== "paziente") return "";
+    const giorni = giorniProvaRimasti();
+    if (giorni == null) return "";
+    return `<button type="button" class="banner-prova" data-premium>⭐ Prova Premium: ${giorni === 1 ? "ultimo giorno" : `ancora ${giorni} giorni`} <span>Scopri cosa include</span></button>`;
+  }
+
+  function bloccoPremiumHTML(testo) {
+    return `<button type="button" class="blocco-premium" data-premium><span>🔒 ${escapeHTML(testo)}</span><strong>Premium</strong></button>`;
+  }
+
+  function apriPremium() {
+    const giorni = giorniProvaRimasti();
+    const stato = PREMIUM.attivo
+      ? (PREMIUM.origine === "nutrizionista" ? "Premium è incluso perché sei seguito dal tuo nutrizionista."
+        : giorni != null ? `Sei in prova: ${giorni === 1 ? "oggi è l'ultimo giorno" : `ancora ${giorni} giorni`}.` : "Premium è attivo.")
+      : PREMIUM.provaUsata ? "La prova gratuita è terminata: ora usi la versione gratuita." : "Stai usando la versione gratuita.";
+    apriSheet(`
+      <h2 class="sheet__titolo">Il mio Piano Premium</h2>
+      <p class="sheet__nota">${escapeHTML(stato)}</p>
+      <ul class="premium-elenco">${FUNZIONI_PREMIUM.map(([i, t, d]) => `<li><span>${i}</span><div><strong>${escapeHTML(t)}</strong><small>${escapeHTML(d)}</small></div></li>`).join("")}</ul>
+      <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
+      ${PREMIUM.attivo && PREMIUM.origine !== "prova" ? "" : `<p class="hint">L'abbonamento si attiverà dall'app scaricata da Google Play o App Store, in arrivo a breve.</p>`}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+  }
+
+  /** Alla scadenza della prova, una volta sola: cosa ha usato e cosa si perde. */
+  function controllaFineProva() {
+    if (!AUTONOMO || !PREMIUM.noto || PREMIUM.attivo || !PREMIUM.provaUsata) return;
+    const chiave = `${LS_FINE_PROVA}:${UID}`;
+    if (localStorage.getItem(chiave)) return;
+    localStorage.setItem(chiave, "1");
+    const pesate = (MISURE.lista || []).length;
+    const usate = [
+      "il piano letto e caricato nell'app",
+      pesate ? `${pesate} ${pesate === 1 ? "misura registrata" : "misure registrate"} con il grafico dell'andamento` : null,
+      "la lista della spesa di tutta la settimana",
+      "i consigli quando un pasto va diversamente",
+    ].filter(Boolean);
+    apriSheet(`
+      <h2 class="sheet__titolo">La prova Premium è terminata</h2>
+      <p class="sheet__nota">In questi 14 giorni hai avuto:</p>
+      <ul class="premium-elenco premium-elenco--semplice">${usate.map((u) => `<li>✓ ${escapeHTML(u)}</li>`).join("")}</ul>
+      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, consigli sui pasti, lista della settimana e andamento completo richiedono Premium.</p>
+      <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
+      <p class="hint">L'abbonamento si attiverà dall'app scaricata da Google Play o App Store, in arrivo a breve.</p>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Continua con la versione gratuita</button>`);
+  }
+
   /** Il paziente gestisce da solo il proprio piano (registrato dall'app, non collegato). */
   function gestisceIlPiano() {
     return RUOLO === "paziente" && !!PIANO_ATTIVO && PIANO_ATTIVO.gestore === "paziente";
@@ -701,12 +791,13 @@
       conferma: () => (pastiCompilati(PIANO_ATTIVO) > 0 ? "Sostituire il tuo piano attuale con quello importato?" : null),
       extra: () => ({ bozza: false }),
       toastOk: "Piano salvato: ecco il tuo menù di oggi",
-      dopoSalvataggio: () => { attivaTab("oggi"); render(); window.scrollTo(0, 0); },
+      dopoSalvataggio: () => { attivaTab("oggi"); render(); window.scrollTo(0, 0); aggiornaPremium(); },
     };
   }
 
   function avviaImportazionePaziente() {
     if (!gestisceIlPiano()) return;
+    if (premiumLimitato() && PREMIUM.provaUsata) { apriPremium(); return; }
     avviaImportazioneAI(PIANO_ATTIVO, contestoImportPaziente());
   }
 
@@ -768,7 +859,8 @@
         ${!disponibili.length ? `<p class="hint">Il piano è ancora vuoto.</p>` : mancano
           ? `<p class="hint">Scegli un giorno, scrivi i pasti e salva: si passa da solo al giorno dopo. ${mancano === 1 ? "Manca 1 pasto" : `Mancano ${mancano} pasti`}. Se le settimane si ripetono, compilane una e copiala nelle altre qui sotto.</p>`
           : `<p class="hint">Qui puoi correggere un pasto, copiare una settimana o caricare un nuovo piano quando il nutrizionista te lo cambia.</p>`}
-        <button type="button" class="btn" id="btn-mio-piano-importa">✨ ${disponibili.length ? "Carica un nuovo piano (PDF o foto)" : "Carica il PDF o le foto del piano"}</button>
+        <button type="button" class="btn" id="btn-mio-piano-importa">${premiumLimitato() && PREMIUM.provaUsata ? "🔒" : "✨"} ${disponibili.length ? "Carica un nuovo piano (PDF o foto)" : "Carica il PDF o le foto del piano"}</button>
+        ${premiumLimitato() && PREMIUM.provaUsata ? `<p class="stat-nota" style="margin-top:6px;">La lettura con l'AI fa parte di Premium. Puoi sempre modificare il piano a mano qui sotto.</p>` : ""}
         ${disponibili.length ? "" : `<button type="button" class="btn btn--ghost" id="btn-mio-piano-manuale" style="margin-top:8px;">Compila a mano</button>`}
       </section>
       ${disponibili.length ? `
@@ -863,6 +955,7 @@
       PROVA_RICHIESTA = true;
       window.cloud.chiamaFunzione("avviaProva").then((r) => {
         if (r && r.attivo && r.origine === "prova") mostraToast("Prova gratuita di Premium attiva per 14 giorni", 4000);
+        aggiornaPremium();
       }).catch(() => { PROVA_RICHIESTA = false; });
     }
     return true;
@@ -894,6 +987,7 @@
     const numDiversi = MEAL_KEYS.filter((k) => statoDi(k) === "diverso").length;
 
     root.innerHTML = `
+      ${bannerPremiumHTML()}
       ${renderBannerRiattivaHTML()}
       ${renderAvvisoAppuntamentoHTML()}
       ${avvisoPesataHTML()}
@@ -1072,6 +1166,11 @@
 
   async function chiediRiscontro(key) {
     if (!riscontroAttivo() || !window.cloud.valutaVariazione) return;
+    if (premiumLimitato()) {
+      RISCONTRI.perPasto[key] = { bloccato: true };
+      if (currentView === "oggi") renderOggi();
+      return;
+    }
     RISCONTRI.perPasto[key] = { attesa: true };
     const chiusi = riscontriChiusi(); delete chiusi[`${chiaveData(new Date())}_${key}`];
     localStorage.setItem(LS_RISCONTRI_CHIUSI, JSON.stringify(chiusi));
@@ -1081,7 +1180,8 @@
       if (r && r.spento) delete RISCONTRI.perPasto[key];
       else RISCONTRI.perPasto[key] = r;
     } catch (err) {
-      RISCONTRI.perPasto[key] = { errore: /limite/.test(String(err && err.message)) ? "Per oggi i riscontri sono finiti: riparti dal piano al prossimo pasto." : "Riscontro non disponibile in questo momento." };
+      if (/premium-richiesto/.test(String(err && err.message))) { RISCONTRI.perPasto[key] = { bloccato: true }; aggiornaPremium(); }
+      else RISCONTRI.perPasto[key] = { errore: /limite/.test(String(err && err.message)) ? "Per oggi i riscontri sono finiti: riparti dal piano al prossimo pasto." : "Riscontro non disponibile in questo momento." };
     }
     if (currentView === "oggi") renderOggi();
   }
@@ -1092,6 +1192,12 @@
     if (!r) return "";
     const idChiuso = `${RISCONTRI.data}_${key}`;
     if (riscontriChiusi()[idChiuso]) return "";
+    if (r.bloccato) return `<div class="riscontro riscontro--bloccato">
+        <div class="riscontro__testa"><strong>💡 C'è un consiglio per riequilibrare la giornata</strong>
+          <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button></div>
+        <p class="riscontro__testo">Con Premium vedi l'impatto di questo pasto e come sistemare i prossimi.</p>
+        <button type="button" class="btn btn--ghost" data-premium>Scopri Premium</button>
+      </div>`;
     if (r.attesa) return `<div class="riscontro riscontro--attesa"><span class="import-attesa"></span> Sto valutando come riequilibrare la giornata…</div>`;
     if (r.errore) return `<div class="riscontro"><p class="riscontro__testo">${escapeHTML(r.errore)}</p></div>`;
     if (r.stato && r.stato !== stato) return ""; // il pasto è stato cambiato dopo il riscontro
@@ -1388,7 +1494,9 @@
     { id: "t1", titolo: "Spesa 1", per: "per lunedì, martedì e mercoledì", giorni: [0, 1, 2] },
     { id: "t2", titolo: "Spesa 2", per: "per giovedì, venerdì, sabato e domenica", giorni: [3, 4, 5, 6] },
   ];
-  function tempiSpesa() { return localStorage.getItem(LS_TEMPI_SPESA) === "2" ? 2 : 1; }
+  function tempiSpesa() { return !spesaLimitata() && localStorage.getItem(LS_TEMPI_SPESA) === "2" ? 2 : 1; }
+  /** Versione gratuita del paziente: lista solo per oggi, senza meal prep né condivisione. */
+  function spesaLimitata() { return premiumLimitato() && !LISTA.dati; }
 
   /**
    * Voci della settimana: piano (con quantità e giorni) + scelte fatte tra le
@@ -1476,11 +1584,11 @@
   }
 
   function modoSpesa() {
-    return mealPrepAttivo() && localStorage.getItem(LS_MODO_SPESA) === "prep" ? "prep" : "lista";
+    return !spesaLimitata() && mealPrepAttivo() && localStorage.getItem(LS_MODO_SPESA) === "prep" ? "prep" : "lista";
   }
 
   function interruttoreModoHTML(modo) {
-    if (!mealPrepAttivo()) return "";
+    if (!mealPrepAttivo() || spesaLimitata()) return "";
     return `
       <div class="spesa-modo" role="tablist" aria-label="Sezione">
         <button type="button" role="tab" data-modo="lista" aria-selected="${modo === "lista"}">🛒 Lista della spesa</button>
@@ -1604,14 +1712,23 @@
       return;
     }
     const settimane = settimaneSpesa();
-    const sel = settimane[SPESA.offset] || settimane[0];
-    const giorni = PIANO_ATTIVO ? PIANO_ATTIVO.settimane[sel.settimana] : [];
+    const limitata = spesaLimitata();
+    const sel = limitata ? settimane[0] : (settimane[SPESA.offset] || settimane[0]);
+    let giorni = PIANO_ATTIVO ? PIANO_ATTIVO.settimane[sel.settimana] : [];
     if (!giorni) {
       root.innerHTML = `<div class="empty">La settimana ${sel.settimana} non è presente nel piano caricato.</div>`;
       return;
     }
-    SPESA.contesto = { giorni, etichetta: sel.intervallo };
-    collegaAscoltoSpesa(sel.docId);
+    if (limitata) {
+      // versione gratuita: solo gli alimenti dei pasti di oggi
+      const oggi = window.weekLogic.menuDelGiorno(new Date(), CONFIG, PIANO_ATTIVO).giorno;
+      giorni = oggi ? [oggi] : [];
+      SPESA.contesto = { giorni, etichetta: "oggi" };
+      collegaAscoltoSpesa(chiaveData(new Date()));
+    } else {
+      SPESA.contesto = { giorni, etichetta: sel.intervallo };
+      collegaAscoltoSpesa(sel.docId);
+    }
     root.dataset.modo = modoSpesa();
     if (modoSpesa() === "prep") { renderMealPrep(settimane, sel); return; }
     const vista = vistaSpesa();
@@ -1621,9 +1738,10 @@
       <section class="hero" style="border-bottom:none; margin-bottom:8px; padding-bottom:6px;">
         <div class="spesa-intestazione">
           <div class="hero__eyebrow"><span class="dot"></span> ${LISTA.dati ? escapeHTML(LISTA.dati.nome || "Lista di casa") : "Lista della spesa"}</div>
-          <button type="button" class="btn-casa ${LISTA.dati ? "is-attiva" : ""}" id="btn-lista-casa-spesa">👥 ${LISTA.dati ? `${(LISTA.dati.membri || []).length} in lista` : "Condividi"}</button>
+          <button type="button" class="btn-casa ${LISTA.dati ? "is-attiva" : ""}" id="btn-lista-casa-spesa" ${limitata ? "hidden" : ""}>👥 ${LISTA.dati ? `${(LISTA.dati.membri || []).length} in lista` : "Condividi"}</button>
         </div>
-        <div class="spesa-testata">
+        ${limitata ? `<p class="spesa-oggi">Gli alimenti per i pasti di oggi</p>${bloccoPremiumHTML("Lista di tutta la settimana, divisa in due spese e condivisibile")}` : ""}
+        <div class="spesa-testata" ${limitata ? "hidden" : ""}>
           <select id="sel-settimana-spesa" aria-label="Settimana">
             ${settimane.map((s) => `<option value="${s.k}" ${s.k === sel.k ? "selected" : ""}>${escapeHTML(s.etichetta)}</option>`).join("")}
           </select>
@@ -2127,6 +2245,12 @@
     const permesso = ("Notification" in window) ? Notification.permission : "unsupported";
 
     root.innerHTML = `
+      ${AUTONOMO ? `
+      <section class="settings-section">
+        <h2>Premium</h2>
+        <p class="hint">${PREMIUM.attivo ? (PREMIUM.origine === "nutrizionista" ? "Incluso perché sei seguito dal tuo nutrizionista." : giorniProvaRimasti() != null ? `Prova gratuita: ${giorniProvaRimasti() === 1 ? "oggi è l'ultimo giorno" : `ancora ${giorniProvaRimasti()} giorni`}.` : PREMIUM.noto ? "Attivo." : "") : "Stai usando la versione gratuita."}</p>
+        <button type="button" class="btn btn--ghost" data-premium>Cosa include Premium</button>
+      </section>` : ""}
       ${gestisceIlPiano() ? `
       <section class="settings-section">
         <h2>Il mio piano</h2>
@@ -3814,8 +3938,8 @@
       <div class="progressi">
         <h3 class="stat-sottotitolo">I miei progressi</h3>
         ${r ? `
-          <p class="progressi__riga"><strong>${fmtKg(r.ultimo.peso)}</strong> <span>al ${dataBreve(r.ultimo.data)}${r.variazioneInizio != null ? ` · ${fmtVariazione(r.variazioneInizio)} dall'inizio` : ""}</span></p>
-          ${graficoPesoSVG(MISURE.lista)}
+          <p class="progressi__riga"><strong>${fmtKg(r.ultimo.peso)}</strong> <span>al ${dataBreve(r.ultimo.data)}${r.variazioneInizio != null && !premiumLimitato() ? ` · ${fmtVariazione(r.variazioneInizio)} dall'inizio` : ""}</span></p>
+          ${premiumLimitato() ? bloccoPremiumHTML("Grafico e andamento dall'inizio") : graficoPesoSVG(MISURE.lista)}
           ${vis === "casa" ? `<p class="gp-legenda"><span class="gp-l-punto"></span> controllo in studio <span class="gp-l-punto gp-l-punto--casa"></span> a casa</p>` : ""}`
           : `<p class="hint">Qui vedrai l'andamento delle misure registrate ai controlli.</p>`}
         ${vis === "casa" ? `
@@ -4274,7 +4398,16 @@
     IMPORTA.inCorso = true;
     const btn = document.getElementById("import-invia");
     btn.disabled = true;
-    btn.innerHTML = '<span class="import-attesa"></span> Sto leggendo il piano…';
+    const inizio = Date.now();
+    const fasi = [[0, "Leggo le pagine"], [15, "Riconosco giornate e pasti"], [40, "Ricostruisco la settimana"], [70, "Ultimi controlli"]];
+    const aggiornaAttesa = () => {
+      const sec = Math.round((Date.now() - inizio) / 1000);
+      const fase = fasi.filter(([t]) => sec >= t).pop()[1];
+      btn.innerHTML = `<span class="import-attesa"></span> ${fase}… ${sec} s`;
+    };
+    aggiornaAttesa();
+    const timer = setInterval(aggiornaAttesa, 1000);
+    btn.insertAdjacentHTML("afterend", '<p class="stat-nota" id="import-attesa-nota" style="margin-top:8px;">Di solito serve circa un minuto: non chiudere l\'app e non bloccare il telefono.</p>');
     try {
       const r = await window.cloud.importaPianoAI({
         pagine: IMPORTA.inviate.map((p) => ({ testo: p.testo, immagine: p.immagine.split(",")[1] })),
@@ -4289,6 +4422,9 @@
       btn.textContent = "✨ Leggi il piano";
       mostraToast(erroreImportazione(err), 6000);
     } finally {
+      clearInterval(timer);
+      const nota = document.getElementById("import-attesa-nota");
+      if (nota) nota.remove();
       IMPORTA.inCorso = false;
     }
   }

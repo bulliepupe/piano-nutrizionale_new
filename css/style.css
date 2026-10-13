@@ -2068,3 +2068,18 @@ body.con-informativa { overflow: hidden; }
 .benvenuto-autonomo { background: var(--surface, #fff); border: 1px solid var(--border-soft); border-radius: var(--radius-l, 16px); padding: 22px 20px; margin: 8px 0 16px; }
 .benvenuto-autonomo h2 { margin: 0 0 8px; font-size: 20px; }
 .benvenuto-autonomo p { margin: 0 0 10px; color: var(--ink-soft); }
+
+/* Premium: avviso della prova, blocchi e pannello */
+.banner-prova { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--border-soft); background: var(--surface); color: var(--ink); border-radius: 12px; padding: 10px 14px; margin: 0 0 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left; }
+.banner-prova span { font-weight: 500; color: var(--ink-soft); font-size: 13px; }
+.blocco-premium { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 10px; border: 1px dashed var(--border); background: transparent; color: var(--ink-soft); border-radius: 10px; padding: 10px 12px; margin: 8px 0; font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
+.blocco-premium strong { color: var(--ink); font-size: 12.5px; }
+.riscontro--bloccato .btn { margin-top: 8px; }
+.spesa-oggi { margin: 6px 0 0; color: var(--ink-soft); font-size: 14px; }
+.premium-elenco { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.premium-elenco li { display: flex; gap: 10px; align-items: flex-start; }
+.premium-elenco li > span { font-size: 18px; line-height: 1.2; }
+.premium-elenco strong { display: block; font-size: 14.5px; }
+.premium-elenco small { display: block; color: var(--ink-soft); font-size: 13px; }
+.premium-elenco--semplice li { font-size: 14px; }
+.premium-prezzo { margin: 6px 0 10px; font-size: 15px; }
