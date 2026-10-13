@@ -643,16 +643,26 @@
     return Math.max(1, Math.ceil((PREMIUM.scadenza - Date.now()) / 86400000));
   }
 
-  async function aggiornaPremium() {
-    if (RUOLO !== "paziente" || !window.cloud.chiamaFunzione) return;
+  let TENTATIVI_PREMIUM = 0;
+  async function aggiornaPremium(ridisegna) {
+    if (RUOLO !== "paziente") return;
+    const prima = JSON.stringify([PREMIUM.noto, PREMIUM.attivo, PREMIUM.origine, PREMIUM.scadenza, PREMIUM.errore]);
     try {
+      if (!window.cloud.chiamaFunzione) throw { code: "app-non-aggiornata" };
       const r = await window.cloud.chiamaFunzione("statoPremium");
-      const prima = JSON.stringify([PREMIUM.attivo, PREMIUM.origine, PREMIUM.scadenza]);
-      Object.assign(PREMIUM, r || {}, { noto: true });
-      if (prima !== JSON.stringify([PREMIUM.attivo, PREMIUM.origine, PREMIUM.scadenza])
-        && ["oggi", "spesa", "impostazioni", "mioPiano"].includes(currentView)) render();
-      controllaFineProva();
-    } catch (e) { /* si riprova al prossimo rientro nell'app */ }
+      if (!r || typeof r.attivo !== "boolean") throw { code: "risposta-non-valida" };
+      Object.assign(PREMIUM, r, { noto: true, errore: null });
+      TENTATIVI_PREMIUM = 0;
+    } catch (e) {
+      PREMIUM.errore = String((e && (e.code || e.message)) || "errore");
+      // nuovo tentativo automatico dopo 5, 15 e 45 secondi
+      if (TENTATIVI_PREMIUM < 3) { const attesa = [5, 15, 45][TENTATIVI_PREMIUM++] * 1000; setTimeout(() => aggiornaPremium(), attesa); }
+    }
+    const dopo = JSON.stringify([PREMIUM.noto, PREMIUM.attivo, PREMIUM.origine, PREMIUM.scadenza, PREMIUM.errore]);
+    if ((ridisegna || prima !== dopo) && ["oggi", "spesa", "impostazioni", "mioPiano"].includes(currentView)) {
+      try { render(); } catch (e) { console.warn(e); }
+    }
+    if (PREMIUM.noto) controllaFineProva();
   }
 
   const FUNZIONI_PREMIUM = [
@@ -676,7 +686,8 @@
 
   function apriPremium() {
     const giorni = giorniProvaRimasti();
-    const stato = PREMIUM.attivo
+    const stato = !PREMIUM.noto ? "Non riesco a verificare il tuo stato Premium in questo momento."
+      : PREMIUM.attivo
       ? (PREMIUM.origine === "nutrizionista" ? "Premium è incluso perché sei seguito dal tuo nutrizionista."
         : giorni != null ? `Sei in prova: ${giorni === 1 ? "oggi è l'ultimo giorno" : `ancora ${giorni} giorni`}.` : "Premium è attivo.")
       : PREMIUM.provaUsata ? "La prova gratuita è terminata: ora usi la versione gratuita." : "Stai usando la versione gratuita.";
@@ -2257,8 +2268,12 @@
       ${AUTONOMO ? `
       <section class="settings-section">
         <h2>Premium</h2>
-        <p class="hint">${PREMIUM.attivo ? (PREMIUM.origine === "nutrizionista" ? "Incluso perché sei seguito dal tuo nutrizionista." : giorniProvaRimasti() != null ? `Prova gratuita: ${giorniProvaRimasti() === 1 ? "oggi è l'ultimo giorno" : `ancora ${giorniProvaRimasti()} giorni`}.` : PREMIUM.noto ? "Attivo." : "") : "Stai usando la versione gratuita."}</p>
+        <p class="hint">${!PREMIUM.noto ? (PREMIUM.errore ? `Stato non verificato (${escapeHTML(PREMIUM.errore)}).` : "Verifica in corso…")
+          : PREMIUM.attivo ? (PREMIUM.origine === "nutrizionista" ? "Incluso perché sei seguito dal tuo nutrizionista." : giorniProvaRimasti() != null ? `Prova gratuita: ${giorniProvaRimasti() === 1 ? "oggi è l'ultimo giorno" : `ancora ${giorniProvaRimasti()} giorni`}.` : "Abbonamento attivo.")
+          : "Stai usando la versione gratuita."}</p>
+        ${!PREMIUM.noto && PREMIUM.errore ? `<button type="button" class="btn btn--ghost" id="btn-verifica-premium" style="margin-bottom:8px;">Verifica di nuovo</button>` : ""}
         <button type="button" class="btn btn--ghost" data-premium>Cosa include Premium</button>
+        <p class="stat-nota" style="margin-top:8px;">Accesso come ${escapeHTML((window.cloud.utenteCorrente && window.cloud.utenteCorrente() && window.cloud.utenteCorrente().email) || "—")}</p>
       </section>` : ""}
       ${gestisceIlPiano() ? `
       <section class="settings-section">
@@ -2339,6 +2354,8 @@
       </section>`}
     `;
     collegaPulsantiMioPiano(root, "impostazioni");
+    const verificaPremium = document.getElementById("btn-verifica-premium");
+    if (verificaPremium) verificaPremium.addEventListener("click", () => { TENTATIVI_PREMIUM = 0; aggiornaPremium(true); });
 
     document.getElementById("chk-notifiche").addEventListener("change", onToggleNotificheDettaglio);
     root.querySelectorAll("[data-apri-guida-ios]").forEach((b) => b.addEventListener("click", apriGuidaIOS));

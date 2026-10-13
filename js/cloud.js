@@ -544,6 +544,9 @@
       return cred.user;
     },
 
+    /** Utente collegato (per mostrare con quale account si è entrati). */
+    utenteCorrente() { return auth.currentUser; },
+
     /** Chiama una Cloud Function "callable" del paziente e ne restituisce i dati. */
     async chiamaFunzione(nome, dati) {
       if (!funzioni) throw { code: "functions/unavailable" };
