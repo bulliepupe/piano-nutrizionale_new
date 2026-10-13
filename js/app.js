@@ -659,6 +659,7 @@
     ["✨", "Lettura del piano con l'AI", "carichi il nuovo piano dal PDF o dalle foto in un minuto, a ogni cambio di stagione"],
     ["💡", "Consigli quando un pasto cambia", "come riequilibrare la giornata quando mangi fuori o salti un pasto"],
     ["🛒", "Lista della spesa della settimana", "tutta la settimana, divisa in una o due spese, condivisibile in famiglia"],
+    ["🥡", "Meal prep", "cosa preparare in anticipo per i pasti della settimana"],
     ["📈", "Andamento completo", "grafico del peso e storico delle misure"],
   ];
 
@@ -698,14 +699,14 @@
     const usate = [
       "il piano letto e caricato nell'app",
       pesate ? `${pesate} ${pesate === 1 ? "misura registrata" : "misure registrate"} con il grafico dell'andamento` : null,
-      "la lista della spesa di tutta la settimana",
+      "la lista della spesa di tutta la settimana e il meal prep",
       "i consigli quando un pasto va diversamente",
     ].filter(Boolean);
     apriSheet(`
       <h2 class="sheet__titolo">La prova Premium è terminata</h2>
       <p class="sheet__nota">In questi 14 giorni hai avuto:</p>
       <ul class="premium-elenco premium-elenco--semplice">${usate.map((u) => `<li>✓ ${escapeHTML(u)}</li>`).join("")}</ul>
-      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, consigli sui pasti, lista della settimana e andamento completo richiedono Premium.</p>
+      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, consigli sui pasti, lista della settimana, meal prep e andamento completo richiedono Premium.</p>
       <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
       <p class="hint">L'abbonamento si attiverà dall'app scaricata da Google Play o App Store, in arrivo a breve.</p>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Continua con la versione gratuita</button>`);
@@ -1588,7 +1589,15 @@
   }
 
   function interruttoreModoHTML(modo) {
-    if (!mealPrepAttivo() || spesaLimitata()) return "";
+    if (!mealPrepAttivo()) return "";
+    if (spesaLimitata()) {
+      // versione gratuita: il meal prep si vede ma apre il pannello Premium
+      return `
+      <div class="spesa-modo" role="tablist" aria-label="Sezione">
+        <button type="button" role="tab" aria-selected="true">🛒 Lista della spesa</button>
+        <button type="button" role="tab" aria-selected="false" data-premium>🔒 Meal prep</button>
+      </div>`;
+    }
     return `
       <div class="spesa-modo" role="tablist" aria-label="Sezione">
         <button type="button" role="tab" data-modo="lista" aria-selected="${modo === "lista"}">🛒 Lista della spesa</button>
@@ -1740,7 +1749,7 @@
           <div class="hero__eyebrow"><span class="dot"></span> ${LISTA.dati ? escapeHTML(LISTA.dati.nome || "Lista di casa") : "Lista della spesa"}</div>
           <button type="button" class="btn-casa ${LISTA.dati ? "is-attiva" : ""}" id="btn-lista-casa-spesa" ${limitata ? "hidden" : ""}>👥 ${LISTA.dati ? `${(LISTA.dati.membri || []).length} in lista` : "Condividi"}</button>
         </div>
-        ${limitata ? `<p class="spesa-oggi">Gli alimenti per i pasti di oggi</p>${bloccoPremiumHTML("Lista di tutta la settimana, divisa in due spese e condivisibile")}` : ""}
+        ${limitata ? `<p class="spesa-oggi">Gli alimenti per i pasti di oggi</p>${bloccoPremiumHTML("Lista di tutta la settimana, in due spese e condivisibile")}` : ""}
         <div class="spesa-testata" ${limitata ? "hidden" : ""}>
           <select id="sel-settimana-spesa" aria-label="Settimana">
             ${settimane.map((s) => `<option value="${s.k}" ${s.k === sel.k ? "selected" : ""}>${escapeHTML(s.etichetta)}</option>`).join("")}
@@ -2864,6 +2873,14 @@
     // Dalla prossima apertura dell'app, queste ricette non sono più "nuove".
     localStorage.setItem(LS_RICETTE_VISTE, String(Date.now()));
 
+    if (!PIANO_ATTIVO || !PIANO_ATTIVO.professionistaUid) {
+      root.innerHTML = `<section class="benvenuto-autonomo">
+        <h2>Le ricette del tuo nutrizionista</h2>
+        <p>Qui compaiono le ricette che il tuo nutrizionista prepara per te, con ingredienti e procedimento.</p>
+        <p class="hint">Se il tuo nutrizionista usa Il mio Piano, chiedigli il suo codice studio: quando ti colleghi, le sue ricette arrivano qui.</p>
+      </section>`;
+      return;
+    }
     if (!RIC.pronte) {
       root.innerHTML = `<div class="empty">Caricamento delle ricette…</div>`;
       return;
