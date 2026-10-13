@@ -3259,39 +3259,74 @@
     document.getElementById("analisi-rigenera").addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
   }
 
-  // ---- Professionista: consigli AI dati al paziente (riepilogo + dettaglio a scomparsa) ----
+  // ---- Professionista: consigli AI dati al paziente ----
+  // Nella scheda Andamento solo i numeri; l'elenco completo è nel registro.
+  async function leggiRiscontri30(piano) {
+    const tutti = await window.cloud.leggiRiscontriPaziente(piano.pazienteUid, 80);
+    const limite = chiaveData(new Date(Date.now() - 29 * 86400000));
+    return tutti.filter((r) => r.data && r.data >= limite);
+  }
+
+  function sintesiRiscontri(lista) {
+    const ORDINE = ["irrilevante", "lieve", "moderato", "rilevante"];
+    const NOMI = { irrilevante: ["irrilevante", "irrilevanti"], lieve: ["lieve", "lievi"], moderato: ["moderato", "moderati"], rilevante: ["rilevante", "rilevanti"] };
+    const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0 };
+    lista.forEach((r) => { const k = r.impatto === "nessuno" ? "irrilevante" : r.impatto; if (k in conteggio) conteggio[k]++; });
+    return ORDINE.filter((k) => conteggio[k]).map((k) => `${conteggio[k]} ${NOMI[k][conteggio[k] === 1 ? 0 : 1]}`).join(", ");
+  }
+
+  function rigaRiscontroHTML(r) {
+    const STATI = { diverso: "fatto diversamente", parziale: "in parte", saltato: "saltato" };
+    const d = window.statistiche.daChiave(r.data);
+    return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(MEAL_META[r.pasto] ? MEAL_META[r.pasto].label : r.pasto)} · ${STATI[r.stato] || ""} · impatto ${escapeHTML(r.impatto || "")}${r.frequente ? " · ⚠️ scostamenti frequenti" : ""}</span>
+        <span>${escapeHTML(r.stima || "")}</span>
+        ${(r.suggerimenti || []).map((x) => `<span>→ ${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}: ${escapeHTML(x.testo)}</span>`).join("")}</li>`;
+  }
+
   async function caricaRiscontriProf(piano) {
-    const box = document.getElementById("sezione-riscontri");
-    if (!box || !piano.pazienteUid || !window.cloud.leggiRiscontriPaziente) return;
+    const riga = document.getElementById("riga-consigli-ai");
+    if (!riga || !piano.pazienteUid || !window.cloud.leggiRiscontriPaziente) return;
     try {
-      const tutti = await window.cloud.leggiRiscontriPaziente(piano.pazienteUid, 80);
-      const limite = chiaveData(new Date(Date.now() - 29 * 86400000));
-      const lista = tutti.filter((r) => r.data && r.data >= limite);
+      const lista = await leggiRiscontri30(piano);
       if (!lista.length || pazienteSelezionatoId !== piano.id) return;
-      const STATI = { diverso: "fatto diversamente", parziale: "in parte", saltato: "saltato" };
-      const ORDINE = ["irrilevante", "lieve", "moderato", "rilevante"];
-      const NOMI = { irrilevante: ["irrilevante", "irrilevanti"], lieve: ["lieve", "lievi"], moderato: ["moderato", "moderati"], rilevante: ["rilevante", "rilevanti"] };
-      const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0 };
-      lista.forEach((r) => { const k = r.impatto === "nessuno" ? "irrilevante" : r.impatto; if (k in conteggio) conteggio[k]++; });
-      const sintesi = ORDINE.filter((k) => conteggio[k]).map((k) => `${conteggio[k]} ${NOMI[k][conteggio[k] === 1 ? 0 : 1]}`).join(", ");
-      const evidenza = lista.filter((r) => r.impatto === "rilevante" || r.frequente).slice(0, 3);
-      const riga = (r) => {
-        const d = window.statistiche.daChiave(r.data);
-        return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(MEAL_META[r.pasto] ? MEAL_META[r.pasto].label : r.pasto)} · ${STATI[r.stato] || ""} · impatto ${escapeHTML(r.impatto || "")}${r.frequente ? " · ⚠️ scostamenti frequenti" : ""}</span>
-            <span>${escapeHTML(r.stima || "")}</span>
-            ${(r.suggerimenti || []).map((x) => `<span>→ ${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}: ${escapeHTML(x.testo)}</span>`).join("")}</li>`;
-      };
-      box.innerHTML = `
+      riga.innerHTML = `<span>Consigli AI dati al paziente</span><strong>${lista.length}: ${escapeHTML(sintesiRiscontri(lista))}</strong>`;
+      riga.hidden = false;
+    } catch (e) { /* riga facoltativa */ }
+  }
+
+  /** Registro dettagliato: note del paziente e consigli AI degli ultimi 30 giorni. */
+  function renderRegistroPaziente(id) {
+    const piano = PAZIENTI_PROF.find((p) => p.id === id);
+    const x = STAT.risultati[id];
+    if (!piano || !x || x.errore) { renderStatistiche(); return; }
+    vistaProfCorrente = "registro"; segnaVistaProf("statPaziente");
+    pazienteSelezionatoId = id;
+    const nome = (piano.pazienteNome || "Paziente").split(" ")[0];
+    const note = ((x.r.imprevisti && x.r.imprevisti.note) || []).map(notaPazienteHTML).join("");
+    profRoot.innerHTML = `
+      <div class="nav-riga">${navLink("btn-torna-stat-paziente", "andamento", `Andamento di ${escapeHTML(nome)}`, true)}</div>
+      <section class="settings-section">
+        <h2>Registro dettagliato</h2>
+        <p class="hint">Ultimi 30 giorni, oggi compreso. Da consultare quando serve, ad esempio prima di una visita.</p>
+      </section>
+      <section class="settings-section">
+        <h2>Cosa ha scritto il paziente</h2>
+        ${note ? `<ul class="stat-note-pasti">${note}</ul>` : `<p class="stat-nota">Nessuna nota scritta.</p>`}
+      </section>
+      <section class="settings-section" id="registro-consigli">
         <h2>Consigli AI dati al paziente</h2>
-        <p class="hint">Ultimi 30 giorni. ${piano.feedbackAI && piano.feedbackAI.modo === "spento" ? "Ora il riscontro è <strong>spento</strong> per questo paziente." : "Puoi cambiare le impostazioni nel piano."}</p>
-        <p class="stat-riga"><span>${lista.length === 1 ? "1 consiglio" : `${lista.length} consigli`}</span><strong>${escapeHTML(sintesi)}</strong></p>
-        ${evidenza.length ? `<h3 class="stat-sottotitolo">Da guardare</h3><ul class="stat-note-pasti">${evidenza.map(riga).join("")}</ul>` : ""}
-        <details class="stat-dettagli">
-          <summary>Tutti i consigli (${lista.length})</summary>
-          <ul class="stat-note-pasti">${lista.map(riga).join("")}</ul>
-        </details>`;
-      box.hidden = false;
-    } catch (e) { /* sezione facoltativa */ }
+        <p class="stat-nota">Caricamento…</p>
+      </section>`;
+    window.scrollTo(0, 0);
+    document.getElementById("btn-torna-stat-paziente").addEventListener("click", () => renderStatistichePaziente(id));
+    const box = document.getElementById("registro-consigli");
+    if (!piano.pazienteUid || !window.cloud.leggiRiscontriPaziente) { box.querySelector(".stat-nota").textContent = "Nessun consiglio."; return; }
+    leggiRiscontri30(piano).then((lista) => {
+      if (vistaProfCorrente !== "registro" || pazienteSelezionatoId !== id) return;
+      box.innerHTML = `<h2>Consigli AI dati al paziente</h2>${lista.length
+        ? `<p class="stat-riga"><span>${lista.length === 1 ? "1 consiglio" : `${lista.length} consigli`}</span><strong>${escapeHTML(sintesiRiscontri(lista))}</strong></p><ul class="stat-note-pasti" style="margin-top:10px;">${lista.map(rigaRiscontroHTML).join("")}</ul>`
+        : `<p class="stat-nota">Nessun consiglio negli ultimi 30 giorni.</p>`}`;
+    }).catch(() => { box.querySelector(".stat-nota").textContent = "Registro dei consigli non disponibile in questo momento."; });
   }
 
   // ---- Professionista: sezione nella scheda di andamento ----
@@ -4324,6 +4359,15 @@
       </div>`;
   }
 
+  /** Una nota scritta dal paziente su un pasto non come da piano (registro dettagliato). */
+  function notaPazienteHTML(n) {
+    const S = window.statistiche;
+    const GIORNI_SETT = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"];
+    const d = S.daChiave(n.giorno);
+    const quando = `${GIORNI_SETT[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+    return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${quando} · ${escapeHTML(MEAL_META[n.pasto].label)} · ${n.stato === "diverso" ? "fatto diversamente" : n.stato === "parziale" ? "in parte" : "saltato"}${n.motivo ? ` · ${escapeHTML(S.MOTIVI[n.motivo].toLowerCase())}` : ""}</span><span>“${escapeHTML(n.nota)}”</span></li>`;
+  }
+
   /** Riepilogo dei pasti fatti in parte o saltati, con i motivi indicati dal paziente. */
   function imprevistiHTML(r) {
     const S = window.statistiche;
@@ -4341,19 +4385,13 @@
           <p class="stat-nota" style="margin:4px 0 0;">Quali: ${escapeHTML(pasti)}.${motivi ? ` Motivi indicati: ${motivi}.` : ""}</p>
         </div>`;
     };
-    const GIORNI_SETT = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"];
-    const note = (im.note || []).map((n) => {
-      const d = S.daChiave(n.giorno);
-      const quando = `${GIORNI_SETT[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
-      return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${quando} · ${escapeHTML(MEAL_META[n.pasto].label)} · ${n.stato === "diverso" ? "fatto diversamente" : n.stato === "parziale" ? "in parte" : "saltato"}${n.motivo ? ` · ${escapeHTML(S.MOTIVI[n.motivo].toLowerCase())}` : ""}</span><span>“${escapeHTML(n.nota)}”</span></li>`;
-    }).join("");
     return `
       <section class="settings-section">
         <h2>Pasti non come da piano (30 giorni, oggi compreso)</h2>
         ${im.diverso ? riga(im.diverso, "Fatti diversamente") : ""}
         ${riga(im.parziale, "Fatti in parte")}
         ${riga(im.saltato, "Saltati")}
-        ${note ? `<details class="stat-dettagli"><summary>Cosa ha scritto il paziente (${(im.note || []).length})</summary><ul class="stat-note-pasti">${note}</ul></details>` : ""}
+        <p class="stat-riga" id="riga-consigli-ai" hidden></p>
       </section>`;
   }
 
@@ -4438,7 +4476,6 @@
       </section>
 
       ${imprevistiHTML(r)}
-      <section class="settings-section" id="sezione-riscontri" hidden></section>
 
       <section class="settings-section">
         <h2>Uso dell'app</h2>
@@ -4469,10 +4506,12 @@
       </section>
 
       <button type="button" class="btn btn--ghost" id="btn-apri-piano-da-stat">Apri il piano di ${escapeHTML((piano.pazienteNome || "questo paziente").split(" ")[0])}</button>
+      <p class="registro-link"><button type="button" class="link-btn" id="btn-registro-dettagliato">Registro dettagliato (note e consigli AI)</button></p>
     `;
 
     document.getElementById("btn-torna-stat").addEventListener("click", renderStatistiche);
     document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
+    document.getElementById("btn-registro-dettagliato").addEventListener("click", () => renderRegistroPaziente(id));
     document.getElementById("btn-piano-da-stat-su").addEventListener("click", () => apriEditorPaziente(id));
     collegaSezionePesoProf(piano);
     caricaRiscontriProf(piano);
