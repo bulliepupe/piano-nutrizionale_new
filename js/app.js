@@ -3259,23 +3259,37 @@
     document.getElementById("analisi-rigenera").addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
   }
 
-  // ---- Professionista: ultimi riscontri AI dati al paziente ----
+  // ---- Professionista: consigli AI dati al paziente (riepilogo + dettaglio a scomparsa) ----
   async function caricaRiscontriProf(piano) {
     const box = document.getElementById("sezione-riscontri");
     if (!box || !piano.pazienteUid || !window.cloud.leggiRiscontriPaziente) return;
     try {
-      const lista = await window.cloud.leggiRiscontriPaziente(piano.pazienteUid);
+      const tutti = await window.cloud.leggiRiscontriPaziente(piano.pazienteUid, 80);
+      const limite = chiaveData(new Date(Date.now() - 29 * 86400000));
+      const lista = tutti.filter((r) => r.data && r.data >= limite);
       if (!lista.length || pazienteSelezionatoId !== piano.id) return;
       const STATI = { diverso: "fatto diversamente", parziale: "in parte", saltato: "saltato" };
-      box.innerHTML = `
-        <h2>Riscontri AI dati al paziente</h2>
-        <p class="hint">Gli ultimi riscontri mostrati sotto i pasti non come da piano. ${piano.feedbackAI && piano.feedbackAI.modo === "spento" ? "Ora il riscontro è <strong>spento</strong> per questo paziente." : "Puoi cambiare le impostazioni nel piano."}</p>
-        <ul class="stat-note-pasti">${lista.map((r) => {
-          const d = window.statistiche.daChiave(r.data);
-          return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(MEAL_META[r.pasto] ? MEAL_META[r.pasto].label : r.pasto)} · ${STATI[r.stato] || ""} · impatto ${escapeHTML(r.impatto || "")}${r.frequente ? " · ⚠️ scostamenti frequenti" : ""}</span>
+      const ORDINE = ["irrilevante", "lieve", "moderato", "rilevante"];
+      const NOMI = { irrilevante: ["irrilevante", "irrilevanti"], lieve: ["lieve", "lievi"], moderato: ["moderato", "moderati"], rilevante: ["rilevante", "rilevanti"] };
+      const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0 };
+      lista.forEach((r) => { const k = r.impatto === "nessuno" ? "irrilevante" : r.impatto; if (k in conteggio) conteggio[k]++; });
+      const sintesi = ORDINE.filter((k) => conteggio[k]).map((k) => `${conteggio[k]} ${NOMI[k][conteggio[k] === 1 ? 0 : 1]}`).join(", ");
+      const evidenza = lista.filter((r) => r.impatto === "rilevante" || r.frequente).slice(0, 3);
+      const riga = (r) => {
+        const d = window.statistiche.daChiave(r.data);
+        return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(MEAL_META[r.pasto] ? MEAL_META[r.pasto].label : r.pasto)} · ${STATI[r.stato] || ""} · impatto ${escapeHTML(r.impatto || "")}${r.frequente ? " · ⚠️ scostamenti frequenti" : ""}</span>
             <span>${escapeHTML(r.stima || "")}</span>
             ${(r.suggerimenti || []).map((x) => `<span>→ ${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}: ${escapeHTML(x.testo)}</span>`).join("")}</li>`;
-        }).join("")}</ul>`;
+      };
+      box.innerHTML = `
+        <h2>Consigli AI dati al paziente</h2>
+        <p class="hint">Ultimi 30 giorni. ${piano.feedbackAI && piano.feedbackAI.modo === "spento" ? "Ora il riscontro è <strong>spento</strong> per questo paziente." : "Puoi cambiare le impostazioni nel piano."}</p>
+        <p class="stat-riga"><span>${lista.length === 1 ? "1 consiglio" : `${lista.length} consigli`}</span><strong>${escapeHTML(sintesi)}</strong></p>
+        ${evidenza.length ? `<h3 class="stat-sottotitolo">Da guardare</h3><ul class="stat-note-pasti">${evidenza.map(riga).join("")}</ul>` : ""}
+        <details class="stat-dettagli">
+          <summary>Tutti i consigli (${lista.length})</summary>
+          <ul class="stat-note-pasti">${lista.map(riga).join("")}</ul>
+        </details>`;
       box.hidden = false;
     } catch (e) { /* sezione facoltativa */ }
   }
@@ -4339,7 +4353,7 @@
         ${im.diverso ? riga(im.diverso, "Fatti diversamente") : ""}
         ${riga(im.parziale, "Fatti in parte")}
         ${riga(im.saltato, "Saltati")}
-        ${note ? `<h3 class="stat-sottotitolo">Cosa ha scritto il paziente</h3><ul class="stat-note-pasti">${note}</ul>` : ""}
+        ${note ? `<details class="stat-dettagli"><summary>Cosa ha scritto il paziente (${(im.note || []).length})</summary><ul class="stat-note-pasti">${note}</ul></details>` : ""}
       </section>`;
   }
 
@@ -4392,7 +4406,6 @@
       </section>
 
       ${sezionePesoProfHTML(piano)}
-      <section class="settings-section" id="sezione-riscontri" hidden></section>
 
       <section class="settings-section">
         <h2>Andamento settimanale</h2>
@@ -4425,6 +4438,7 @@
       </section>
 
       ${imprevistiHTML(r)}
+      <section class="settings-section" id="sezione-riscontri" hidden></section>
 
       <section class="settings-section">
         <h2>Uso dell'app</h2>
