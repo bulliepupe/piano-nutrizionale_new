@@ -51,6 +51,7 @@ function settimaneDisponibili(piano) {
 
 /**
  * Data di inizio del piano del SINGOLO paziente (campo piano.dataInizio,
+ * con la settimana di partenza in piano.settimanaIniziale, predefinita la 1;
  * formato "YYYY-MM-DD", impostato dal professionista). Se presente, il ciclo
  * parte da lì: la settimana di quella data è la "Settimana 1" e poi si ruota
  * su tutte le settimane compilate nel piano (1→2→…→N→1). Se manca (piani
@@ -63,8 +64,11 @@ function settimanaDaDataInizio(lunedi, piano) {
   const lunediStart = lunediDellaSettimana(new Date(a, m - 1, g));
   const msPerSettimana = 7 * 24 * 60 * 60 * 1000;
   const trascorse = Math.round((lunedi.getTime() - lunediStart.getTime()) / msPerSettimana);
-  if (trascorse < 0) return { settimana: disp[0], pianoIniziato: false };
-  return { settimana: disp[trascorse % disp.length], pianoIniziato: true };
+  // settimanaIniziale: la settimana del piano da cui si parte alla data di
+  // inizio (es. il piano riparte dalla 3 perché segue il menù della mensa).
+  const inizio = Math.max(0, disp.indexOf(Number(piano.settimanaIniziale)));
+  if (trascorse < 0) return { settimana: disp[inizio], pianoIniziato: false };
+  return { settimana: disp[(inizio + trascorse) % disp.length], pianoIniziato: true };
 }
 
 function calcolaSettimanaGiorno(date, config, piano) {

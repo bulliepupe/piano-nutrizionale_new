@@ -699,7 +699,7 @@
       pianoCorrente: () => PIANO_ATTIVO,
       salvaTesto: "Salva il mio piano",
       conferma: () => (pastiCompilati(PIANO_ATTIVO) > 0 ? "Sostituire il tuo piano attuale con quello importato?" : null),
-      extra: (p) => ({ bozza: false, dataInizio: p.dataInizio || lunediCorrenteISO() }),
+      extra: () => ({ bozza: false }),
       toastOk: "Piano salvato: ecco il tuo menù di oggi",
       dopoSalvataggio: () => { attivaTab("oggi"); render(); window.scrollTo(0, 0); },
     };
@@ -721,7 +721,7 @@
     const esito = validaPiano({ paziente: PIANO_ATTIVO.paziente || {}, orariDefault: PIANO_ATTIVO.orariDefault || {}, normeGenerali: [], sostituzioni: [], settimane: { 1: giorni } });
     if (!esito.ok) { mostraToast("Non riesco a preparare il piano: riprova"); return; }
     try {
-      await window.cloud.salvaPiano(PIANO_ATTIVO.id, Object.assign(esito.piano, { bozza: true, dataInizio: PIANO_ATTIVO.dataInizio || lunediCorrenteISO() }));
+      await window.cloud.salvaPiano(PIANO_ATTIVO.id, Object.assign(esito.piano, { bozza: true, dataInizio: PIANO_ATTIVO.dataInizio || lunediCorrenteISO(), settimanaIniziale: 1 }));
       Object.assign(PIANO_ATTIVO, esito.piano);
       EDITOR_PAZ.settSel = 1; EDITOR_PAZ.giornoSel = 0;
       apriMioPiano();
@@ -735,6 +735,24 @@
     document.querySelectorAll(".tabbar__btn").forEach((b) => b.classList.toggle("is-active", b.dataset.view === "impostazioni"));
     render();
     window.scrollTo(0, 0);
+  }
+
+  /** Data di inizio e settimana del piano da cui partire (per paziente e professionista). */
+  function sceltaInizioHTML(dataInizio, settimanaIniziale, numeri) {
+    const sel = numeri.includes(Number(settimanaIniziale)) ? Number(settimanaIniziale) : numeri[0];
+    return `
+      <div class="ric-griglia">
+        <label class="editor-campo"><span>Data di inizio</span><input type="date" id="inizio-data" value="${escapeHTML(dataInizio || "")}"></label>
+        <label class="editor-campo"><span>Si parte dalla</span>
+          <select id="inizio-settimana">${numeri.map((n) => `<option value="${n}" ${n === sel ? "selected" : ""}>Settimana ${n}</option>`).join("")}</select></label>
+      </div>
+      <p class="hint">Dalla settimana della data scelta il piano parte dalla settimana indicata, poi prosegue con le successive e ricomincia. Utile se il piano nuovo deve continuare un ciclo già avviato.</p>`;
+  }
+
+  function leggiSceltaInizio() {
+    const data = (document.getElementById("inizio-data") || {}).value || "";
+    const sett = Number((document.getElementById("inizio-settimana") || {}).value) || 1;
+    return { dataInizio: /^\d{4}-\d{2}-\d{2}$/.test(data) ? data : null, settimanaIniziale: sett };
   }
 
   function renderMioPiano() {
@@ -758,9 +776,8 @@
       ${renderCopiaSettimanaHTML(disponibili, EDITOR_PAZ.settSel)}
       <section class="settings-section">
         <h2>Inizio del piano</h2>
-        <label class="editor-campo"><span>Data di inizio</span><input type="date" id="mio-data-inizio" value="${escapeHTML(piano.dataInizio || "")}"></label>
-        <p class="hint">La settimana di questa data è la Settimana 1, poi il ciclo passa alle settimane successive e ricomincia.</p>
-        <button type="button" class="btn btn--ghost" id="btn-mio-data-inizio" style="margin-top:8px;">Salva la data</button>
+        ${sceltaInizioHTML(piano.dataInizio, piano.settimanaIniziale, disponibili)}
+        <button type="button" class="btn btn--ghost" id="btn-mio-data-inizio" style="margin-top:8px;">Salva</button>
       </section>
       <section class="settings-section">
         <h2>Regole generali</h2>
@@ -784,8 +801,7 @@
     document.getElementById("btn-salva-pasto").addEventListener("click", salvaGiornoPaziente);
     collegaCopiaSettimana(piano, (nuovo) => { Object.assign(PIANO_ATTIVO, nuovo); controllaPianoCompleto(nuovo); renderMioPiano(); });
     document.getElementById("btn-mio-data-inizio").addEventListener("click", async () => {
-      const v = document.getElementById("mio-data-inizio").value;
-      try { await window.cloud.salvaPiano(piano.id, { dataInizio: v || null }); mostraToast("Data salvata"); }
+      try { await window.cloud.salvaPiano(piano.id, leggiSceltaInizio()); mostraToast("Inizio del piano salvato"); }
       catch (err) { mostraToast(msgErroreScrittura(err, "Non salvata: controlla la connessione")); }
     });
     document.getElementById("btn-mio-norme").addEventListener("click", async () => {
@@ -4314,6 +4330,10 @@
           </details>`).join("")}
       </section>
       <section class="settings-section">
+        <h2>Quando inizia</h2>
+        ${sceltaInizioHTML(IMPORTA.piano.dataInizio || lunediCorrenteISO(), IMPORTA.piano.settimanaIniziale, r.settimane.map((_, i) => i + 1))}
+      </section>
+      <section class="settings-section">
         <h2>Regole generali</h2>
         <textarea id="import-regole" rows="${Math.min(12, r.normeGenerali.length + 2)}" style="width:100%;">${escapeHTML(r.normeGenerali.join("\n"))}</textarea>
         <p class="stat-nota">Una regola per riga.</p>
@@ -4377,13 +4397,16 @@
     if (errori.length) { mostraToast("Sostituzioni: riga non valida (serve \"Nome: opzione1, opzione2\"): " + errori[0], 5000); return; }
     const esito = validaPiano(nuovo);
     if (!esito.ok) { mostraToast("Non salvato — " + esito.errori[0], 5000); return; }
+    const inizio = leggiSceltaInizio();
+    if (!inizio.dataInizio) { mostraToast("Indica la data di inizio del piano", 4000); return; }
     const domanda = IMPORTA.ctx.conferma(piano);
     if (domanda && !window.confirm(domanda)) return;
     const btn = document.getElementById("import-salva");
     btn.disabled = true;
     try {
-      await window.cloud.salvaPiano(piano.id, IMPORTA.ctx.extra ? Object.assign({}, esito.piano, IMPORTA.ctx.extra(piano)) : esito.piano);
-      if (IMPORTA.ctx.paziente) Object.assign(PIANO_ATTIVO, esito.piano, IMPORTA.ctx.extra(piano));
+      const campi = Object.assign({}, esito.piano, inizio, IMPORTA.ctx.extra ? IMPORTA.ctx.extra(piano) : {});
+      await window.cloud.salvaPiano(piano.id, campi);
+      if (IMPORTA.ctx.paziente) Object.assign(PIANO_ATTIVO, campi);
       mostraToast(IMPORTA.ctx.toastOk, 3500);
       if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } }
       IMPORTA.pdf = null; IMPORTA.inviate = null; IMPORTA.pagine = [];
@@ -5876,8 +5899,8 @@
             ${Object.entries(VISIBILITA_PESO).map(([k, t]) => `<option value="${k}" ${visibilitaPeso(piano) === k ? "selected" : ""}>${escapeHTML(t)}</option>`).join("")}
           </select></label>
         <p class="hint">Per alcuni pazienti vedere spesso il peso non aiuta: scegli tu, caso per caso. Il peso e le misure si registrano nella scheda "Andamento".</p>
-        <label class="editor-campo" style="margin-top:10px;"><span>Data di inizio del piano</span><input type="date" id="editor-data-inizio" value="${escapeHTML(piano.dataInizio || "")}"></label>
-        <p class="hint">La settimana di questa data è la Settimana 1; poi il ciclo passa alle settimane successive compilate e ricomincia. ${piano.dataInizio ? "" : "Se la lasci vuota vale il calendario generale dell'app."}</p>
+        <div style="margin-top:10px;">${sceltaInizioHTML(piano.dataInizio, piano.settimanaIniziale, disponibili.length ? disponibili : [1])}</div>
+        ${piano.dataInizio ? "" : `<p class="hint">Se lasci vuota la data vale il calendario generale dell'app.</p>`}
         <button type="button" class="btn" id="btn-salva-dati-paziente" style="margin-top:14px;">Salva dati paziente</button>
       </section>
 
@@ -6192,8 +6215,8 @@
       // pazienteNome è il nome "mostrato" nella lista pazienti: è un campo
       // separato dal contenuto del piano validato, lo aggiungiamo qui.
       const extra = { pazienteNome: nuovoPazienteNome };
-      const di = (document.getElementById("editor-data-inizio") || {}).value;
-      if (di) extra.dataInizio = di;
+      const inizio = leggiSceltaInizio();
+      if (inizio.dataInizio) Object.assign(extra, inizio);
       const altezza = Number((document.getElementById("editor-altezza") || {}).value);
       const obiettivo = Number(String((document.getElementById("editor-peso-obiettivo") || {}).value || "").replace(",", "."));
       extra.corpo = {
