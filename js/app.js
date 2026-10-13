@@ -602,6 +602,7 @@
     else if (currentView === "settimana") renderSettimana();
     else if (currentView === "spesa") renderSpesa();
     else if (currentView === "ricette") renderRicette();
+    else if (currentView === "mioPiano") renderMioPiano();
     else renderImpostazioni();
   }
 
@@ -613,24 +614,246 @@
   // ---------------------------------------------------------------------
   // Vista "Oggi"
   // ---------------------------------------------------------------------
-  /** Piano del paziente autonomo ancora da caricare. */
+  // ---------------------------------------------------------------------
+  // Paziente autonomo: il suo piano (importazione da PDF o foto, a mano)
+  // ---------------------------------------------------------------------
+  const DA_COMPILARE = "Da compilare";
+  const EDITOR_PAZ = { settSel: 1, giornoSel: 0, ritorno: "oggi" };
+  let PROVA_RICHIESTA = false;
+
+  /** Il paziente gestisce da solo il proprio piano (registrato dall'app, non collegato). */
+  function gestisceIlPiano() {
+    return RUOLO === "paziente" && !!PIANO_ATTIVO && PIANO_ATTIVO.gestore === "paziente";
+  }
+
+  function contaPasti(piano, filtro) {
+    let n = 0;
+    Object.values((piano && piano.settimane) || {}).forEach((giorni) => {
+      if (Array.isArray(giorni)) giorni.forEach((g) => { if (g) MEAL_KEYS.forEach((k) => { if (filtro(g[k])) n++; }); });
+    });
+    return n;
+  }
+  const pastiDaCompilare = (piano) => contaPasti(piano, (v) => v === DA_COMPILARE);
+  const pastiCompilati = (piano) => contaPasti(piano, (v) => typeof v === "string" && v.trim().length > 1 && v !== DA_COMPILARE);
+
+  /** Piano del paziente autonomo ancora da caricare (nessun pasto scritto). */
   function pianoAutonomoVuoto() {
-    if (!PIANO_ATTIVO || PIANO_ATTIVO.gestore !== "paziente") return false;
-    const sett = PIANO_ATTIVO.settimane || {};
-    return !Object.values(sett).some((giorni) => Array.isArray(giorni) && giorni.some((g) =>
-      g && ["colazione", "spuntinoMattina", "pranzo", "spuntinoPomeriggio", "cena"].some((k) => typeof g[k] === "string" && g[k].trim().length > 1)));
+    return gestisceIlPiano() && pastiCompilati(PIANO_ATTIVO) === 0 && pastiDaCompilare(PIANO_ATTIVO) === 0;
+  }
+
+  /** Piano del paziente autonomo in compilazione a mano. */
+  function pianoInCompilazione() {
+    return gestisceIlPiano() && pastiDaCompilare(PIANO_ATTIVO) > 0;
+  }
+
+  function lunediCorrenteISO() {
+    const d = new Date();
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  function attivaTab(view) {
+    currentView = view;
+    document.querySelectorAll(".tabbar__btn").forEach((b) => b.classList.toggle("is-active", b.dataset.view === view));
   }
 
   function benvenutoAutonomoHTML() {
+    if (pianoInCompilazione()) {
+      const mancano = pastiDaCompilare(PIANO_ATTIVO);
+      return `<section class="benvenuto-autonomo">
+        <h2>Il tuo piano è in compilazione</h2>
+        <p>${mancano === 1 ? "Manca ancora 1 pasto" : `Mancano ancora ${mancano} pasti`} da scrivere. Quando hai finito, qui compare il menù del giorno e partono i promemoria.</p>
+        <button type="button" class="btn" data-mio-piano="modifica">Continua a compilare</button>
+      </section>`;
+    }
     return `<section class="benvenuto-autonomo">
       <h2>Benvenuto in Il mio Piano</h2>
       <p>Per iniziare carica il piano alimentare che ti ha dato il tuo nutrizionista: poi l'app ti mostra il menù del giorno e ti ricorda i pasti.</p>
-      <p class="hint">Il caricamento del piano sarà disponibile a breve.</p>
+      <button type="button" class="btn" data-mio-piano="importa">✨ Carica il PDF o le foto del piano</button>
+      <p class="hint" style="margin-top:8px;">L'intelligenza artificiale legge il piano e lo converte: tu controlli e confermi. Con il primo caricamento parte la prova gratuita di Premium di 14 giorni.</p>
+      <button type="button" class="btn btn--ghost" data-mio-piano="manuale">Oppure compilalo a mano</button>
     </section>`;
   }
 
+  function mostraBenvenutoAutonomo() {
+    root.innerHTML = benvenutoAutonomoHTML();
+    collegaPulsantiMioPiano(root, currentView);
+  }
+
+  function collegaPulsantiMioPiano(contenitore, ritorno) {
+    contenitore.querySelectorAll("[data-mio-piano]").forEach((b) => b.addEventListener("click", () => {
+      EDITOR_PAZ.ritorno = ritorno || "oggi";
+      if (b.dataset.mioPiano === "importa") avviaImportazionePaziente();
+      else if (b.dataset.mioPiano === "manuale") creaBozzaManuale();
+      else apriMioPiano();
+    }));
+  }
+
+  function contestoImportPaziente() {
+    return {
+      paziente: true,
+      radice: () => root,
+      titolo: () => { currentView = "importa"; root.dataset.vista = "importa"; window.scrollTo(0, 0); },
+      indietroIcona: "piano", indietroTesto: "Il mio piano",
+      indietro: () => apriMioPiano(),
+      pianoCorrente: () => PIANO_ATTIVO,
+      salvaTesto: "Salva il mio piano",
+      conferma: () => (pastiCompilati(PIANO_ATTIVO) > 0 ? "Sostituire il tuo piano attuale con quello importato?" : null),
+      extra: (p) => ({ bozza: false, dataInizio: p.dataInizio || lunediCorrenteISO() }),
+      toastOk: "Piano salvato: ecco il tuo menù di oggi",
+      dopoSalvataggio: () => { attivaTab("oggi"); render(); window.scrollTo(0, 0); },
+    };
+  }
+
+  function avviaImportazionePaziente() {
+    if (!gestisceIlPiano()) return;
+    avviaImportazioneAI(PIANO_ATTIVO, contestoImportPaziente());
+  }
+
+  /** Compilazione a mano: una settimana di 7 giorni da riempire, poi la si copia nelle altre. */
+  async function creaBozzaManuale() {
+    if (!gestisceIlPiano()) return;
+    const giorni = window.weekLogic.GIORNI.map((g) => {
+      const d = { giorno: g, coccola: "", kcal: null };
+      MEAL_KEYS.forEach((k) => { d[k] = DA_COMPILARE; });
+      return d;
+    });
+    const esito = validaPiano({ paziente: PIANO_ATTIVO.paziente || {}, orariDefault: PIANO_ATTIVO.orariDefault || {}, normeGenerali: [], sostituzioni: [], settimane: { 1: giorni } });
+    if (!esito.ok) { mostraToast("Non riesco a preparare il piano: riprova"); return; }
+    try {
+      await window.cloud.salvaPiano(PIANO_ATTIVO.id, Object.assign(esito.piano, { bozza: true, dataInizio: PIANO_ATTIVO.dataInizio || lunediCorrenteISO() }));
+      Object.assign(PIANO_ATTIVO, esito.piano);
+      EDITOR_PAZ.settSel = 1; EDITOR_PAZ.giornoSel = 0;
+      apriMioPiano();
+    } catch (err) {
+      mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"), 4000);
+    }
+  }
+
+  function apriMioPiano() {
+    attivaTab("mioPiano");
+    document.querySelectorAll(".tabbar__btn").forEach((b) => b.classList.toggle("is-active", b.dataset.view === "impostazioni"));
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  function renderMioPiano() {
+    if (!gestisceIlPiano()) { attivaTab("oggi"); renderOggi(); return; }
+    const piano = PIANO_ATTIVO;
+    const disponibili = [1, 2, 3, 4, 5].filter((n) => Array.isArray(piano.settimane && piano.settimane[n]));
+    if (!disponibili.includes(EDITOR_PAZ.settSel)) EDITOR_PAZ.settSel = disponibili[0] || 1;
+    const mancano = pastiDaCompilare(piano);
+    root.innerHTML = `
+      <div class="nav-riga">${navLink("btn-mio-piano-indietro", "piano", EDITOR_PAZ.ritorno === "impostazioni" ? "Impostazioni" : "Oggi", true)}</div>
+      <section class="settings-section">
+        <h2>Il mio piano</h2>
+        ${!disponibili.length ? `<p class="hint">Il piano è ancora vuoto.</p>` : mancano
+          ? `<p class="hint">Scegli un giorno, scrivi i pasti e salva: si passa da solo al giorno dopo. ${mancano === 1 ? "Manca 1 pasto" : `Mancano ${mancano} pasti`}. Se le settimane si ripetono, compilane una e copiala nelle altre qui sotto.</p>`
+          : `<p class="hint">Qui puoi correggere un pasto, copiare una settimana o caricare un nuovo piano quando il nutrizionista te lo cambia.</p>`}
+        <button type="button" class="btn" id="btn-mio-piano-importa">✨ ${disponibili.length ? "Carica un nuovo piano (PDF o foto)" : "Carica il PDF o le foto del piano"}</button>
+        ${disponibili.length ? "" : `<button type="button" class="btn btn--ghost" id="btn-mio-piano-manuale" style="margin-top:8px;">Compila a mano</button>`}
+      </section>
+      ${disponibili.length ? `
+      ${renderEditorPastoHTML(piano, EDITOR_PAZ.settSel, EDITOR_PAZ.giornoSel, disponibili)}
+      ${renderCopiaSettimanaHTML(disponibili, EDITOR_PAZ.settSel)}
+      <section class="settings-section">
+        <h2>Inizio del piano</h2>
+        <label class="editor-campo"><span>Data di inizio</span><input type="date" id="mio-data-inizio" value="${escapeHTML(piano.dataInizio || "")}"></label>
+        <p class="hint">La settimana di questa data è la Settimana 1, poi il ciclo passa alle settimane successive e ricomincia.</p>
+        <button type="button" class="btn btn--ghost" id="btn-mio-data-inizio" style="margin-top:8px;">Salva la data</button>
+      </section>
+      <section class="settings-section">
+        <h2>Regole generali</h2>
+        <p class="hint">Le indicazioni generali del nutrizionista (acqua, olio, cotture…), una per riga.</p>
+        <textarea id="mio-norme" rows="5" style="width:100%;">${(piano.normeGenerali || []).map(escapeHTML).join("\n")}</textarea>
+        <button type="button" class="btn btn--ghost" id="btn-mio-norme" style="margin-top:8px;">Salva le regole</button>
+      </section>
+      <section class="settings-section">
+        <h2>Sostituzioni</h2>
+        <p class="hint">Gli alimenti equivalenti indicati dal nutrizionista. Un gruppo per riga: <code class="inline">Nome: opzione 1, opzione 2</code>.</p>
+        <textarea id="mio-sostituzioni" rows="5" style="width:100%;" placeholder="Frutta: Mela 150g, Pera 150g, Arancia 150g">${(piano.sostituzioni || []).map((g) => escapeHTML(g.nome + ": " + g.opzioni.join(", "))).join("\n")}</textarea>
+        <button type="button" class="btn btn--ghost" id="btn-mio-sostituzioni" style="margin-top:8px;">Salva le sostituzioni</button>
+      </section>` : ""}`;
+    document.getElementById("btn-mio-piano-indietro").addEventListener("click", () => { attivaTab(EDITOR_PAZ.ritorno === "impostazioni" ? "impostazioni" : "oggi"); render(); });
+    document.getElementById("btn-mio-piano-importa").addEventListener("click", avviaImportazionePaziente);
+    const manuale = document.getElementById("btn-mio-piano-manuale");
+    if (manuale) manuale.addEventListener("click", creaBozzaManuale);
+    if (!disponibili.length) return;
+    document.getElementById("sel-edit-settimana").addEventListener("change", (e) => { EDITOR_PAZ.settSel = Number(e.target.value); EDITOR_PAZ.giornoSel = 0; renderMioPiano(); });
+    document.getElementById("sel-edit-giorno").addEventListener("change", (e) => { EDITOR_PAZ.giornoSel = Number(e.target.value); renderMioPiano(); });
+    document.getElementById("btn-salva-pasto").addEventListener("click", salvaGiornoPaziente);
+    collegaCopiaSettimana(piano, (nuovo) => { Object.assign(PIANO_ATTIVO, nuovo); controllaPianoCompleto(nuovo); renderMioPiano(); });
+    document.getElementById("btn-mio-data-inizio").addEventListener("click", async () => {
+      const v = document.getElementById("mio-data-inizio").value;
+      try { await window.cloud.salvaPiano(piano.id, { dataInizio: v || null }); mostraToast("Data salvata"); }
+      catch (err) { mostraToast(msgErroreScrittura(err, "Non salvata: controlla la connessione")); }
+    });
+    document.getElementById("btn-mio-norme").addEventListener("click", async () => {
+      const normeGenerali = document.getElementById("mio-norme").value.split("\n").map((r) => r.trim()).filter(Boolean);
+      try { await window.cloud.salvaPiano(piano.id, { normeGenerali }); mostraToast("Regole salvate"); }
+      catch (err) { mostraToast(msgErroreScrittura(err, "Non salvate: controlla la connessione")); }
+    });
+    document.getElementById("btn-mio-sostituzioni").addEventListener("click", async () => {
+      const righe = document.getElementById("mio-sostituzioni").value.split("\n").map((x) => x.trim()).filter(Boolean);
+      const errata = righe.find((r) => { const i = r.indexOf(":"); return i <= 0 || r.slice(i + 1).split(",").map((o) => o.trim()).filter(Boolean).length < 2; });
+      if (errata) { mostraToast("Riga non valida (serve \"Nome: opzione1, opzione2\"): " + errata, 5000); return; }
+      const sostituzioni = righe.map((r) => { const i = r.indexOf(":"); return { nome: r.slice(0, i).trim(), opzioni: r.slice(i + 1).split(",").map((o) => o.trim()).filter(Boolean) }; });
+      try { await window.cloud.salvaPiano(piano.id, { sostituzioni }); mostraToast("Sostituzioni salvate"); }
+      catch (err) { mostraToast(msgErroreScrittura(err, "Non salvate: controlla la connessione")); }
+    });
+  }
+
+  async function salvaGiornoPaziente() {
+    const piano = PIANO_ATTIVO;
+    const { settSel, giornoSel } = EDITOR_PAZ;
+    const campi = {};
+    document.querySelectorAll("#editor-pasti-form [data-campo]").forEach((el) => { campi[el.dataset.campo] = el.value.trim(); });
+    if (!campi.colazione) campi.colazione = "Nessuna colazione";
+    if (!campi.spuntinoMattina) campi.spuntinoMattina = "Nessuno spuntino";
+    if (!campi.spuntinoPomeriggio) campi.spuntinoPomeriggio = "Nessuno spuntino";
+    const mancanti = ["pranzo", "cena"].filter((k) => !campi[k]);
+    if (mancanti.length) { mostraToast("Scrivi anche " + mancanti.map((k) => MEAL_META[k].label.toLowerCase()).join(" e ") + " (o \"Pasto libero\")", 4200); return; }
+    const modificato = JSON.parse(JSON.stringify({ paziente: piano.paziente || {}, orariDefault: piano.orariDefault || {}, normeGenerali: piano.normeGenerali || [], sostituzioni: piano.sostituzioni || [], settimane: piano.settimane }));
+    const g = modificato.settimane[settSel][giornoSel];
+    MEAL_KEYS.forEach((k) => { g[k] = campi[k]; });
+    g.coccola = campi.coccola || "";
+    const kcal = Number(campi.kcal);
+    g.kcal = campi.kcal && !Number.isNaN(kcal) ? kcal : null;
+    const esito = validaPiano(modificato);
+    if (!esito.ok) { mostraToast("Non salvato — " + esito.errori[0], 4200); return; }
+    const btn = document.getElementById("btn-salva-pasto");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+    try {
+      await window.cloud.salvaPiano(piano.id, esito.piano);
+      Object.assign(PIANO_ATTIVO, esito.piano);
+      mostraToast(`${window.weekLogic.GIORNI[giornoSel]} salvato`);
+      const completo = await controllaPianoCompleto(esito.piano);
+      if (!completo && giornoSel < 6) EDITOR_PAZ.giornoSel = giornoSel + 1;
+      renderMioPiano();
+      if (completo) mostraToast("Piano completo: ecco il tuo menù nella scheda Oggi", 4000);
+    } catch (err) {
+      btn.disabled = false; btn.textContent = "Salva questo giorno";
+      mostraToast(msgErroreScrittura(err, "Salvataggio non riuscito: controlla la connessione"), 4000);
+    }
+  }
+
+  /** Quando non resta nessun pasto da scrivere: fine bozza e avvio della prova Premium. */
+  async function controllaPianoCompleto(piano) {
+    if (pastiDaCompilare(piano) > 0) return false;
+    if (PIANO_ATTIVO.bozza) {
+      try { await window.cloud.salvaPiano(PIANO_ATTIVO.id, { bozza: false }); PIANO_ATTIVO.bozza = false; } catch (e) { /* riprova al prossimo salvataggio */ }
+    }
+    if (!PROVA_RICHIESTA && window.cloud.chiamaFunzione) {
+      PROVA_RICHIESTA = true;
+      window.cloud.chiamaFunzione("avviaProva").then((r) => {
+        if (r && r.attivo && r.origine === "prova") mostraToast("Prova gratuita di Premium attiva per 14 giorni", 4000);
+      }).catch(() => { PROVA_RICHIESTA = false; });
+    }
+    return true;
+  }
+
   function renderOggi() {
-    if (pianoAutonomoVuoto()) { root.innerHTML = benvenutoAutonomoHTML(); return; }
+    if (pianoAutonomoVuoto() || pianoInCompilazione()) { mostraBenvenutoAutonomo(); return; }
     if (!PIANO_ATTIVO) {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account. Controlla di nuovo più tardi.</div>`;
       return;
@@ -1005,7 +1228,7 @@
   // Vista "Settimana"
   // ---------------------------------------------------------------------
   function renderSettimana() {
-    if (pianoAutonomoVuoto()) { root.innerHTML = benvenutoAutonomoHTML(); return; }
+    if (pianoAutonomoVuoto() || pianoInCompilazione()) { mostraBenvenutoAutonomo(); return; }
     if (!PIANO_ATTIVO) {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
       return;
@@ -1359,7 +1582,7 @@
   }
 
   function renderSpesa() {
-    if (pianoAutonomoVuoto()) { root.innerHTML = benvenutoAutonomoHTML(); return; }
+    if (pianoAutonomoVuoto() || pianoInCompilazione()) { mostraBenvenutoAutonomo(); return; }
     if (!PIANO_ATTIVO && RUOLO !== "familiare") {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
       return;
@@ -1888,6 +2111,12 @@
     const permesso = ("Notification" in window) ? Notification.permission : "unsupported";
 
     root.innerHTML = `
+      ${gestisceIlPiano() ? `
+      <section class="settings-section">
+        <h2>Il mio piano</h2>
+        <p class="hint">Correggi un pasto, copia una settimana o carica il nuovo piano quando il nutrizionista te lo cambia.</p>
+        <button type="button" class="btn" data-mio-piano="modifica">Gestisci il mio piano</button>
+      </section>` : ""}
       <section class="settings-section">
         <h2>Promemoria pasti</h2>
         <p class="hint">Un avviso sul telefono prima di ogni pasto, con il menu del momento — anche ad app chiusa.</p>
@@ -1938,6 +2167,11 @@
         </div>
       </section>
 
+      ${gestisceIlPiano() ? (progressiPazienteHTML() ? `
+      <section class="settings-section">
+        <h2>Il tuo andamento</h2>
+        ${progressiPazienteHTML()}
+      </section>` : "") : `
       <section class="settings-section">
         <h2>Il mio piano</h2>
         ${appuntamentoPazienteHTML()}
@@ -1953,8 +2187,9 @@
           ${renderContattoNutrizionistaHTML()}
         ` : `<p class="hint">Nessun piano assegnato ancora.</p>`}
         <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
-      </section>
+      </section>`}
     `;
+    collegaPulsantiMioPiano(root, "impostazioni");
 
     document.getElementById("chk-notifiche").addEventListener("change", onToggleNotificheDettaglio);
     root.querySelectorAll("[data-apri-guida-ios]").forEach((b) => b.addEventListener("click", apriGuidaIOS));
@@ -3114,6 +3349,8 @@
   const MISURE = { pianoId: null, lista: [], note: {}, unsub: null, unsubNote: null };
 
   function visibilitaPeso(piano) {
+    // il paziente che gestisce da solo il piano registra sempre peso e misure a casa
+    if (piano && piano.gestore === "paziente") return "casa";
     const v = piano && piano.corpo && piano.corpo.visibilita;
     return VISIBILITA_PESO[v] ? v : "controlli";
   }
@@ -3636,9 +3873,31 @@
   const CAMPI_IMPORTAZIONE = [["colazione", "Colazione"], ["spuntinoMattina", "Spuntino di metà mattina"], ["pranzo", "Pranzo"], ["spuntinoPomeriggio", "Spuntino del pomeriggio"], ["cena", "Cena"], ["coccola", "Coccola (facoltativa)"]];
   const VUOTI_IMPORTAZIONE = { colazione: "Nessuna colazione", spuntinoMattina: "Nessuno spuntino", pranzo: "Pasto libero", spuntinoPomeriggio: "Nessuno spuntino", cena: "Pasto libero" };
 
-  function avviaImportazioneAI(piano) {
+  /**
+   * Contesto dell'importazione: la stessa procedura serve al professionista
+   * (pannello, piano di un suo paziente) e al paziente autonomo (la sua app,
+   * il suo piano, anche da foto delle pagine).
+   */
+  function contestoImportProfessionista(piano) {
+    return {
+      paziente: false,
+      radice: () => profRoot,
+      titolo: (t) => { segnaVistaProf("importaAI"); document.getElementById("prof-header-titolo").textContent = t; },
+      indietroIcona: "piano", indietroTesto: "Piano del paziente",
+      indietro: () => apriEditorPaziente(piano.id),
+      pianoCorrente: () => PAZIENTI_PROF.find((p) => p.id === piano.id) || piano,
+      salvaTesto: "Salva nel piano del paziente",
+      conferma: (p) => `Sostituire il piano attuale di ${p.pazienteNome || "questo paziente"} con quello importato?`,
+      toastOk: "Piano importato e sincronizzato con il paziente",
+      dopoSalvataggio: () => apriEditorPaziente(piano.id),
+    };
+  }
+
+  function radiceImport() { return IMPORTA.ctx.radice(); }
+
+  function avviaImportazioneAI(piano, ctx) {
     if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } }
-    Object.assign(IMPORTA, { piano, pdf: null, nomeFile: "", pagine: [], inviate: null, risultato: null, inCorso: false,
+    Object.assign(IMPORTA, { piano, ctx: ctx || contestoImportProfessionista(piano), pdf: null, nomeFile: "", pagine: [], inviate: null, risultato: null, inCorso: false,
       termini: String(piano.pazienteNome || "").split(/\s+/).map((t) => t.trim()).filter((t) => t.length >= 2) });
     renderImportazioneAI();
   }
@@ -3646,38 +3905,44 @@
   function testataImportazioneHTML(passo) {
     const passi = ["Documento e pagine", "Controllo dell'invio", "Revisione"];
     return `
-      <div class="nav-riga">${navLink("btn-import-indietro", "piano", "Piano del paziente", true)}</div>
+      <div class="nav-riga">${navLink("btn-import-indietro", IMPORTA.ctx.indietroIcona, IMPORTA.ctx.indietroTesto, true)}</div>
       <ol class="import-passi">${passi.map((t, i) => `<li class="${i + 1 === passo ? "is-attivo" : i + 1 < passo ? "is-fatto" : ""}">${i + 1}. ${t}</li>`).join("")}</ol>`;
   }
 
   function collegaIndietroImportazione() {
-    document.getElementById("btn-import-indietro").addEventListener("click", () => apriEditorPaziente(IMPORTA.piano.id));
+    document.getElementById("btn-import-indietro").addEventListener("click", () => IMPORTA.ctx.indietro());
   }
 
   // ---- passo 1: PDF, pagine, parole da nascondere ----
   function renderImportazioneAI() {
     const piano = IMPORTA.piano;
-    segnaVistaProf("importaAI");
-    document.getElementById("prof-header-titolo").textContent = "Importa il piano da un PDF";
+    const paz = IMPORTA.ctx.paziente;
+    IMPORTA.ctx.titolo("Importa il piano da un PDF");
     const sel = IMPORTA.pagine.filter((p) => p.sel).length;
-    profRoot.innerHTML = `
+    const daFoto = IMPORTA.pagine.length && IMPORTA.pagine[0].foto;
+    radiceImport().innerHTML = `
       ${testataImportazioneHTML(1)}
       <section class="settings-section">
-        <h2>Il piano di ${escapeHTML(piano.pazienteNome || "questo paziente")}</h2>
-        <p class="hint">Carica il PDF che consegni di solito al paziente: l'intelligenza artificiale lo legge e lo converte nel formato dell'app. Prima di salvare potrai rivedere e correggere tutto. Il piano attuale verrà sostituito solo quando confermi.</p>
+        <h2>${paz ? "Il tuo piano" : `Il piano di ${escapeHTML(piano.pazienteNome || "questo paziente")}`}</h2>
+        <p class="hint">${paz
+          ? "Carica il PDF che ti ha dato il tuo nutrizionista, oppure fotografa le pagine del piano stampato: l'intelligenza artificiale lo legge e lo converte nel formato dell'app. Prima di salvare potrai rivedere e correggere tutto."
+          : "Carica il PDF che consegni di solito al paziente: l'intelligenza artificiale lo legge e lo converte nel formato dell'app. Prima di salvare potrai rivedere e correggere tutto. Il piano attuale verrà sostituito solo quando confermi."}</p>
         <label class="btn ${IMPORTA.pdf ? "btn--ghost" : ""}" for="import-file">${IMPORTA.pdf ? `📄 ${escapeHTML(IMPORTA.nomeFile)} · cambia file` : "📄 Scegli il PDF del piano"}</label>
         <input type="file" id="import-file" accept="application/pdf,.pdf" hidden>
-        <p class="stat-nota" style="margin-top:6px;">Un file Word? Aprilo e salvalo come PDF. Al massimo ${12} pagine per volta.</p>
+        ${paz ? `
+        <label class="btn btn--ghost" for="import-foto" style="margin-top:8px;">${daFoto ? "📷 Aggiungi altre foto" : "📷 Fotografa le pagine o scegli le foto"}</label>
+        <input type="file" id="import-foto" accept="image/*" multiple hidden>` : ""}
+        <p class="stat-nota" style="margin-top:6px;">${paz ? "Foto: una per pagina, dritta e ben illuminata. " : "Un file Word? Aprilo e salvalo come PDF. "}Al massimo ${12} pagine per volta.</p>
       </section>
       ${IMPORTA.pagine.length ? `
       <section class="settings-section">
         <h2>Quali pagine contengono il piano?</h2>
-        <p class="hint">Ho già selezionato quelle con i pasti. Le pagine segnate <strong>⚠️ dati del paziente</strong> contengono misure o dati personali: se ti servono (per esempio hanno anche delle indicazioni sul piano), selezionale e al passo successivo copri la zona con i dati. <strong>Le pagine non selezionate non escono dal tuo computer.</strong></p>
+        <p class="hint">${daFoto ? "Tocca una foto per toglierla dall'invio." : `Ho già selezionato quelle con i pasti. Le pagine segnate <strong>⚠️ dati ${paz ? "personali" : "del paziente"}</strong> contengono misure o dati personali: se ti servono (per esempio hanno anche delle indicazioni sul piano), selezionale e al passo successivo copri la zona con i dati.`} <strong>Le pagine non selezionate non escono dal tuo ${paz ? "telefono" : "computer"}.</strong></p>
         <div class="import-pagine">
           ${IMPORTA.pagine.map((p, i) => `
             <button type="button" class="import-pagina ${p.sel ? "is-sel" : ""}" data-pagina="${i}" aria-pressed="${p.sel}">
               <img src="${p.miniatura}" alt="Pagina ${i + 1}">
-              <span>Pagina ${i + 1}${p.senzaTesto ? " · scansione" : ""}</span>
+              <span>${p.foto ? "Foto" : "Pagina"} ${i + 1}${p.senzaTesto && !p.foto ? " · scansione" : ""}</span>
               ${p.personali ? '<span class="import-pagina__avviso">⚠️ dati del paziente</span>' : ""}
             </button>`).join("")}
         </div>
@@ -3685,11 +3950,11 @@
       </section>
       <section class="settings-section">
         <h2>Cosa nascondere</h2>
-        <p class="hint">Queste parole vengono tolte dal testo e coperte nelle immagini prima dell'invio. Ci sono già nome e cognome del paziente: aggiungi, separandoli con una virgola, altri dati che compaiono nelle pagine scelte.</p>
+        <p class="hint">${daFoto ? "Nelle foto il testo non si legge in automatico: al passo successivo copri a mano il tuo nome e gli altri dati personali con \"Copri una zona\"." : `Queste parole vengono tolte dal testo e coperte nelle immagini prima dell'invio. Ci sono già ${paz ? "il tuo nome" : "nome e cognome del paziente"}: aggiungi, separandoli con una virgola, altri dati che compaiono nelle pagine scelte.`}</p>
         <label class="editor-campo"><span>Parole da nascondere</span>
           <input type="text" id="import-termini" value="${escapeHTML(IMPORTA.termini.join(", "))}" placeholder="Nome, Cognome, …"></label>
         <label class="editor-campo" style="margin-top:10px;"><span>Indicazioni per la lettura (facoltative)</span>
-          <textarea id="import-note" rows="2" maxlength="500" placeholder="Es. il paziente si allena martedì e giovedì; la colonna di sinistra è il pranzo"></textarea></label>
+          <textarea id="import-note" rows="2" maxlength="500" placeholder="${paz ? "Es. la colonna di sinistra è il pranzo; il giorno A è il lunedì" : "Es. il paziente si allena martedì e giovedì; la colonna di sinistra è il pranzo"}"></textarea></label>
         <button type="button" class="btn" id="import-prepara" style="margin-top:12px;" ${sel ? "" : "disabled"}>Prepara l'invio (${sel} ${sel === 1 ? "pagina" : "pagine"})</button>
       </section>` : ""}
     `;
@@ -3699,7 +3964,13 @@
       e.target.value = "";
       if (f) caricaPdfImportazione(f);
     });
-    profRoot.querySelectorAll("[data-pagina]").forEach((b) => b.addEventListener("click", () => {
+    const inputFoto = document.getElementById("import-foto");
+    if (inputFoto) inputFoto.addEventListener("change", (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (files.length) caricaFotoImportazione(files);
+    });
+    radiceImport().querySelectorAll("[data-pagina]").forEach((b) => b.addEventListener("click", () => {
       const p = IMPORTA.pagine[Number(b.dataset.pagina)];
       p.sel = !p.sel;
       if (IMPORTA.pagine.filter((x) => x.sel).length > 12) { p.sel = false; mostraToast("Al massimo 12 pagine per volta"); }
@@ -3748,6 +4019,50 @@
     }
   }
 
+  /** Legge un'immagine e la ridimensiona: { grande (per l'invio), miniatura }. */
+  function leggiFotoPagina(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const disegna = (larghezza, qualita) => {
+          const scala = Math.min(1, larghezza / img.naturalWidth);
+          const c = document.createElement("canvas");
+          c.width = Math.round(img.naturalWidth * scala); c.height = Math.round(img.naturalHeight * scala);
+          const ctx = c.getContext("2d");
+          ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          return c.toDataURL("image/jpeg", qualita);
+        };
+        const out = { grande: disegna(1400, 0.75), miniatura: disegna(220, 0.7) };
+        URL.revokeObjectURL(url);
+        resolve(out);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("immagine-non-leggibile")); };
+      img.src = url;
+    });
+  }
+
+  async function caricaFotoImportazione(files) {
+    const immagini = files.filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|heic|webp)$/i.test(f.name));
+    if (!immagini.length) { mostraToast("Scegli delle foto"); return; }
+    // si passa dal PDF alle foto: si riparte da zero
+    if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } IMPORTA.pdf = null; IMPORTA.nomeFile = ""; IMPORTA.pagine = []; }
+    mostraToast("Preparo le foto…");
+    try {
+      for (const f of immagini) {
+        if (IMPORTA.pagine.length >= 12) { mostraToast("Al massimo 12 pagine per volta"); break; }
+        const { grande, miniatura } = await leggiFotoPagina(f);
+        IMPORTA.pagine.push({ n: IMPORTA.pagine.length + 1, foto: grande, testo: "", senzaTesto: true, personali: false, sel: true, zone: [], miniatura });
+      }
+      IMPORTA.inviate = null;
+      renderImportazioneAI();
+    } catch (err) {
+      console.warn(err);
+      mostraToast("Non riesco a leggere una delle foto: prova a scattarla di nuovo", 4500);
+    }
+  }
+
   function escapeRegExp(t) { return String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
   /** Testo e immagine di una pagina con le parole da nascondere tolte e coperte. */
@@ -3755,8 +4070,28 @@
     return zone.some((z) => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h);
   }
 
+  /** Foto di una pagina con le zone scelte coperte. */
+  function fotoOscurata(pagina, zone) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        ctx.fillStyle = "#1e2b21";
+        zone.forEach((z) => ctx.fillRect(z.x * c.width, z.y * c.height, z.w * c.width, z.h * c.height));
+        resolve({ testo: "", immagine: c.toDataURL("image/jpeg", 0.75), coperte: 0 });
+      };
+      img.onerror = () => reject(new Error("immagine-non-leggibile"));
+      img.src = pagina.foto;
+    });
+  }
+
   async function paginaOscurata(numero, zone) {
     zone = zone || [];
+    const daFoto = IMPORTA.pagine.find((p) => p.n === numero);
+    if (daFoto && daFoto.foto) return fotoOscurata(daFoto, zone);
     const pdfjs = await caricaPdfJs();
     const pagina = await IMPORTA.pdf.getPage(numero);
     const contenuto = await pagina.getTextContent();
@@ -3820,17 +4155,19 @@
 
   function renderInvioImportazione() {
     const scansioni = IMPORTA.inviate.filter((p) => p.senzaTesto).length;
-    profRoot.innerHTML = `
+    radiceImport().innerHTML = `
       ${testataImportazioneHTML(2)}
       <section class="settings-section">
         <h2>Ecco cosa viene inviato</h2>
         <p class="hint">Le parole da nascondere sono coperte da un riquadro scuro${IMPORTA.inviate.some((p) => p.coperte) ? "" : " (in queste pagine non ne ho trovate)"}. Controlla le pagine: se vedi ancora dati del paziente, torna indietro e aggiungili tra le parole da nascondere, oppure togli la pagina.</p>
-        ${scansioni ? `<div class="nota-versione">⚠️ ${scansioni === 1 ? "Una pagina è una scansione" : `${scansioni} pagine sono scansioni`}: il testo non è leggibile dal computer, quindi il nome non si può coprire in automatico. Se contengono dati del paziente, togli quelle pagine.</div>` : ""}
+        ${IMPORTA.inviate.some((p) => (IMPORTA.pagine.find((x) => x.n === p.n) || {}).foto)
+          ? `<div class="nota-versione">📷 Nelle foto il nome non si copre da solo: se una foto mostra il tuo nome o altri dati personali, tocca <strong>Copri una zona</strong> e trascina il dito sopra quella parte.</div>`
+          : scansioni ? `<div class="nota-versione">⚠️ ${scansioni === 1 ? "Una pagina è una scansione" : `${scansioni} pagine sono scansioni`}: il testo non è leggibile dal computer, quindi il nome non si può coprire in automatico. Se contengono dati ${IMPORTA.ctx.paziente ? "personali" : "del paziente"}, togli quelle pagine.</div>` : ""}
         <div class="import-anteprime">
           ${IMPORTA.inviate.map((p, i) => {
             const zone = (IMPORTA.pagine.find((x) => x.n === p.n) || {}).zone || [];
             return `<figure class="${p.personali && !zone.length ? "is-attenzione" : ""}"><img src="${p.immagine}" alt="Pagina ${p.n}">
-              <figcaption>Pagina ${p.n}${p.coperte ? ` · ${p.coperte} ${p.coperte === 1 ? "parola coperta" : "parole coperte"}` : ""}${zone.length ? ` · ${zone.length} ${zone.length === 1 ? "zona coperta" : "zone coperte"}` : ""}${p.personali && !zone.length ? " · ⚠️ contiene dati del paziente" : ""}</figcaption>
+              <figcaption>${(IMPORTA.pagine.find((x) => x.n === p.n) || {}).foto ? "Foto" : "Pagina"} ${p.n}${p.coperte ? ` · ${p.coperte} ${p.coperte === 1 ? "parola coperta" : "parole coperte"}` : ""}${zone.length ? ` · ${zone.length} ${zone.length === 1 ? "zona coperta" : "zone coperte"}` : ""}${p.personali && !zone.length ? " · ⚠️ contiene dati del paziente" : ""}</figcaption>
               <button type="button" class="btn btn--ghost import-copri" data-copri="${i}">▭ Copri una zona</button></figure>`;
           }).join("")}
         </div>
@@ -3842,7 +4179,7 @@
       </section>`;
     collegaIndietroImportazione();
     document.getElementById("import-torna").addEventListener("click", renderImportazioneAI);
-    profRoot.querySelectorAll("[data-copri]").forEach((b) => b.addEventListener("click", () => apriCopriZona(Number(b.dataset.copri))));
+    radiceImport().querySelectorAll("[data-copri]").forEach((b) => b.addEventListener("click", () => apriCopriZona(Number(b.dataset.copri))));
     document.getElementById("import-invia").addEventListener("click", inviaImportazione);
   }
 
@@ -3907,6 +4244,8 @@
     const c = String((err && err.code) || "");
     if (m === "limite-mensile") return "Hai raggiunto le importazioni disponibili per questo mese. Scrivici a info@ilmiopiano.it se te ne servono altre.";
     if (m === "licenza-non-attiva") return "La tua licenza non è attiva: rinnovala per usare l'importazione.";
+    if (m === "premium-richiesto") return "La lettura del piano con l'AI fa parte di Premium: la prova gratuita è terminata.";
+    if (m === "piano-del-nutrizionista") return "Il tuo piano lo gestisce il tuo nutrizionista: è lui a poterlo aggiornare.";
     if (m === "troppe-pagine") return "Troppe pagine: scegline al massimo 12.";
     if (m === "nessun-pasto-trovato") return "Non ho trovato pasti in queste pagine: controlla di aver scelto quelle con il piano.";
     if (/deadline|timeout/i.test(c + m)) return "La lettura ha richiesto troppo tempo: prova con meno pagine.";
@@ -3942,11 +4281,11 @@
   function renderRevisioneImportazione() {
     const r = IMPORTA.risultato;
     const GG = window.weekLogic.GIORNI;
-    profRoot.innerHTML = `
+    radiceImport().innerHTML = `
       ${testataImportazioneHTML(3)}
       <section class="settings-section">
         <h2>Controlla il piano letto</h2>
-        <p class="hint">Rivedi e correggi quello che serve: nulla è ancora salvato. Quando è tutto a posto, salvalo nel piano del paziente.</p>
+        <p class="hint">Rivedi e correggi quello che serve: nulla è ancora salvato. Quando è tutto a posto, salvalo nel ${IMPORTA.ctx.paziente ? "tuo piano" : "piano del paziente"}.</p>
         ${r.domande.length ? `<div class="import-domande"><strong>Da decidere</strong><ul>${r.domande.map((d) => `<li>${escapeHTML(d)}</li>`).join("")}</ul></div>` : ""}
         ${r.avvisi.length ? `<div class="nota-versione"><strong>Cosa ho interpretato</strong><ul>${r.avvisi.map((a) => `<li>${escapeHTML(a)}</li>`).join("")}</ul></div>` : ""}
       </section>
@@ -3986,34 +4325,34 @@
         <p class="stat-nota">Un gruppo per riga: nome, due punti, alimenti equivalenti separati da virgole.</p>
       </section>
       <section class="settings-section">
-        <p class="hint">Salvando, il piano attuale di ${escapeHTML(IMPORTA.piano.pazienteNome || "questo paziente")} viene sostituito. Obiettivo, dati, appuntamenti e misure restano come sono.</p>
+        <p class="hint">${IMPORTA.ctx.paziente ? "Salvando, il tuo piano attuale viene sostituito. Peso e misure restano come sono." : `Salvando, il piano attuale di ${escapeHTML(IMPORTA.piano.pazienteNome || "questo paziente")} viene sostituito. Obiettivo, dati, appuntamenti e misure restano come sono.`}</p>
         <div class="import-azioni">
           <button type="button" class="btn btn--ghost" id="import-annulla">Annulla</button>
-          <button type="button" class="btn" id="import-salva">Salva nel piano del paziente</button>
+          <button type="button" class="btn" id="import-salva">${IMPORTA.ctx.salvaTesto}</button>
         </div>
         ${typeof IMPORTA.rimaste === "number" ? `<p class="stat-nota" style="margin-top:8px;">Importazioni ancora disponibili questo mese: ${IMPORTA.rimaste}.</p>` : ""}
       </section>`;
     collegaIndietroImportazione();
     // le caselle si allungano secondo il testo, anche quando si apre una giornata
     const adatta = (el) => { el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; };
-    const adattaTutte = () => profRoot.querySelectorAll(".import-giornata[open] textarea, #import-regole, #import-sostituzioni").forEach(adatta);
+    const adattaTutte = () => radiceImport().querySelectorAll(".import-giornata[open] textarea, #import-regole, #import-sostituzioni").forEach(adatta);
     adattaTutte();
-    profRoot.querySelectorAll(".import-giornata").forEach((d) => d.addEventListener("toggle", adattaTutte));
-    profRoot.querySelectorAll("textarea").forEach((el) => el.addEventListener("input", () => adatta(el)));
-    profRoot.querySelectorAll("[data-giornata]").forEach((el) => el.addEventListener("input", () => {
+    radiceImport().querySelectorAll(".import-giornata").forEach((d) => d.addEventListener("toggle", adattaTutte));
+    radiceImport().querySelectorAll("textarea").forEach((el) => el.addEventListener("input", () => adatta(el)));
+    radiceImport().querySelectorAll("[data-giornata]").forEach((el) => el.addEventListener("input", () => {
       const gi = r.giornate[Number(el.dataset.giornata)];
       gi[el.dataset.campo] = el.dataset.campo === "kcal" ? (Number(el.value) || null) : el.value;
     }));
-    profRoot.querySelectorAll("[data-sett]").forEach((el) => el.addEventListener("change", () => {
+    radiceImport().querySelectorAll("[data-sett]").forEach((el) => el.addEventListener("change", () => {
       r.settimane[Number(el.dataset.sett)][Number(el.dataset.giorno)] = el.value;
     }));
-    document.getElementById("import-annulla").addEventListener("click", () => apriEditorPaziente(IMPORTA.piano.id));
+    document.getElementById("import-annulla").addEventListener("click", () => IMPORTA.ctx.indietro());
     document.getElementById("import-salva").addEventListener("click", salvaImportazione);
   }
 
   async function salvaImportazione() {
     const r = IMPORTA.risultato;
-    const piano = PAZIENTI_PROF.find((p) => p.id === IMPORTA.piano.id) || IMPORTA.piano;
+    const piano = IMPORTA.ctx.pianoCorrente();
     const GG = window.weekLogic.GIORNI;
     const perNome = new Map(r.giornate.map((g) => [g.nome, g]));
     const nuovo = JSON.parse(JSON.stringify(piano));
@@ -4038,15 +4377,17 @@
     if (errori.length) { mostraToast("Sostituzioni: riga non valida (serve \"Nome: opzione1, opzione2\"): " + errori[0], 5000); return; }
     const esito = validaPiano(nuovo);
     if (!esito.ok) { mostraToast("Non salvato — " + esito.errori[0], 5000); return; }
-    if (!window.confirm(`Sostituire il piano attuale di ${piano.pazienteNome || "questo paziente"} con quello importato?`)) return;
+    const domanda = IMPORTA.ctx.conferma(piano);
+    if (domanda && !window.confirm(domanda)) return;
     const btn = document.getElementById("import-salva");
     btn.disabled = true;
     try {
-      await window.cloud.salvaPiano(piano.id, esito.piano);
-      mostraToast("Piano importato e sincronizzato con il paziente", 3500);
+      await window.cloud.salvaPiano(piano.id, IMPORTA.ctx.extra ? Object.assign({}, esito.piano, IMPORTA.ctx.extra(piano)) : esito.piano);
+      if (IMPORTA.ctx.paziente) Object.assign(PIANO_ATTIVO, esito.piano, IMPORTA.ctx.extra(piano));
+      mostraToast(IMPORTA.ctx.toastOk, 3500);
       if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } }
-      IMPORTA.pdf = null; IMPORTA.inviate = null;
-      apriEditorPaziente(piano.id);
+      IMPORTA.pdf = null; IMPORTA.inviate = null; IMPORTA.pagine = [];
+      IMPORTA.ctx.dopoSalvataggio();
     } catch (err) {
       btn.disabled = false;
       mostraToast(msgErroreScrittura(err, "Salvataggio non riuscito: controlla la connessione"), 4500);
@@ -5676,7 +6017,7 @@
           ${MEAL_KEYS.map((key) => `
             <label class="editor-campo">
               <span>${MEAL_META[key].label}</span>
-              <textarea data-campo="${key}" rows="2">${escapeHTML(giornoEdit[key] || "")}</textarea>
+              <textarea data-campo="${key}" rows="2" placeholder="${key.startsWith("spuntino") ? "Es. Frutta 150g (vuoto = nessuno spuntino)" : ""}">${escapeHTML(giornoEdit[key] === DA_COMPILARE ? "" : (giornoEdit[key] || ""))}</textarea>
             </label>
           `).join("")}
           <label class="editor-campo">
@@ -5873,8 +6214,9 @@
   // ---------------------------------------------------------------------
   // Copia di una settimana su altre settimane
   // ---------------------------------------------------------------------
-  function renderCopiaSettimanaHTML(disponibili) {
-    const origine = disponibili.includes(EDITOR_PROF.settSel) ? EDITOR_PROF.settSel : disponibili[0];
+  function renderCopiaSettimanaHTML(disponibili, settSel) {
+    const sel = typeof settSel === "number" ? settSel : EDITOR_PROF.settSel;
+    const origine = disponibili.includes(sel) ? sel : disponibili[0];
     return `
       <section class="settings-section">
         <h2>Copia una settimana</h2>
@@ -5900,7 +6242,7 @@
     `;
   }
 
-  function collegaCopiaSettimana() {
+  function collegaCopiaSettimana(pianoCopia, dopoCopia) {
     const sel = document.getElementById("sel-copia-origine");
     if (!sel) return;
     sel.addEventListener("change", () => {
@@ -5912,11 +6254,11 @@
         cb.closest(".chip-check").classList.toggle("is-disabled", n === origine);
       });
     });
-    document.getElementById("btn-copia-settimana").addEventListener("click", copiaSettimanaProfessionista);
+    document.getElementById("btn-copia-settimana").addEventListener("click", () => copiaSettimanaProfessionista(pianoCopia, dopoCopia));
   }
 
-  async function copiaSettimanaProfessionista() {
-    const piano = PIANO_ATTIVO_PROF;
+  async function copiaSettimanaProfessionista(pianoParam, dopoCopia) {
+    const piano = pianoParam || PIANO_ATTIVO_PROF;
     const origine = Number(document.getElementById("sel-copia-origine").value);
     const destinazioni = Array.from(document.querySelectorAll("#copia-dest input[type=checkbox]:checked"))
       .map((cb) => Number(cb.value))
@@ -5959,6 +6301,7 @@
       await window.cloud.salvaPiano(piano.id, risultato.piano);
       const elenco = destinazioni.sort((a, b) => a - b).join(", ");
       mostraToast(`Settimana ${origine} copiata in: ${elenco}`);
+      if (dopoCopia) dopoCopia(risultato.piano);
     } catch (e) {
       mostraToast(msgErroreScrittura(e, "Copia non riuscita: controlla la connessione"), 4000);
     } finally {
