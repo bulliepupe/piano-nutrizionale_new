@@ -248,6 +248,28 @@ exports.eliminaPaziente = onCall(async (request) => {
     if (utente.exists && utente.data().ruolo !== "paziente") {
       throw new HttpsError("permission-denied", "L'account collegato non è un paziente: eliminazione bloccata.");
     }
+    // Il paziente si era registrato da solo: il professionista non può
+    // cancellargli l'account, lo scollega soltanto (resta autonomo con il piano).
+    if (utente.exists && utente.data().autonomo) {
+      await scollegaPazienteDalProfessionista(pazienteUid, pianoRef);
+      return { ok: true, scollegato: true };
+    }
+  }
+
+  await cancellaDatiPaziente(pazienteUid, pianoRef);
+  return { ok: true };
+});
+
+/**
+ * Cancella tutto ciò che riguarda un paziente: account di accesso, eventuale
+ * lista di casa, documento utente con sottoraccolte, registro dei promemoria
+ * e infine il piano (con misure e note). Usata dal professionista
+ * (eliminaPaziente) e dal paziente stesso (eliminaAccount).
+ */
+async function cancellaDatiPaziente(pazienteUid, pianoRef) {
+  if (pazienteUid) {
+    const utenteRef = db.collection("users").doc(pazienteUid);
+    const utente = await utenteRef.get();
 
     // 1) Account di accesso (se era già stato cancellato, si prosegue).
     try {
@@ -258,26 +280,37 @@ exports.eliminaPaziente = onCall(async (request) => {
 
     // 2) Esce dalla eventuale lista di casa (gli altri membri non vedono più i suoi alimenti)
     if (utente.exists && utente.data().listaCasa) await lasciaLista(pazienteUid, utente.data().listaCasa).catch(() => {});
-    // 3) Documento utente + sottoraccolte (spunte "pasto fatto").
+    // 3) Documento utente + sottoraccolte (spunte "pasto fatto", spesa, riscontri).
     if (utente.exists) await db.recursiveDelete(utenteRef);
 
     // 4) Registro dei promemoria inviati (documenti "<uid>_<data>").
-    const registro = await db.collection("notificheInviate")
-      .orderBy(FieldPath.documentId())
-      .startAt(pazienteUid + "_")
-      .endAt(pazienteUid + "_\uf8ff")
-      .get();
-    for (let i = 0; i < registro.docs.length; i += 400) {
-      const batch = db.batch();
-      registro.docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
-      await batch.commit();
-    }
+    await cancellaRegistroNotifiche(pazienteUid);
   }
 
   // 5) Il piano, per ultimo, con misure e note dei controlli.
-  await db.recursiveDelete(pianoRef);
-  return { ok: true };
-});
+  if (pianoRef) await db.recursiveDelete(pianoRef);
+}
+
+async function cancellaRegistroNotifiche(uid) {
+  const registro = await db.collection("notificheInviate")
+    .orderBy(FieldPath.documentId())
+    .startAt(uid + "_")
+    .endAt(uid + "_\uf8ff")
+    .get();
+  for (let i = 0; i < registro.docs.length; i += 400) {
+    const batch = db.batch();
+    registro.docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+/** Il paziente autonomo torna a gestire da solo il proprio piano. */
+async function scollegaPazienteDalProfessionista(pazienteUid, pianoRef) {
+  await db.runTransaction(async (t) => {
+    t.update(db.collection("users").doc(pazienteUid), { professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp() });
+    t.update(pianoRef, { professionistaUid: null, gestore: "paziente", aggiornato: FieldValue.serverTimestamp() });
+  });
+}
 
 // =========================================================================
 // CREAZIONE DI UN PAZIENTE (con controllo del limite della licenza)
@@ -292,7 +325,7 @@ exports.eliminaPaziente = onCall(async (request) => {
  * partenza preparato dall'app (settimane, regole, dati paziente...).
  * Ritorna { pazienteUid, pianoId }.
  */
-const CAMPI_PIANO_RISERVATI = ["professionistaUid", "pazienteUid", "pazienteNome", "pazienteEmail", "aggiornato", "creato"];
+const CAMPI_PIANO_RISERVATI = ["professionistaUid", "pazienteUid", "pazienteNome", "pazienteEmail", "aggiornato", "creato", "gestore"];
 
 function statoLicenzaServer(licenza, adesso) {
   if (!licenza || licenza.stato !== "attiva") return { attiva: false, max: 0 };
@@ -371,6 +404,7 @@ exports.creaPaziente = onCall(async (request) => {
       });
       t.create(pianoRef, Object.assign(pulito, {
         professionistaUid: uidProf,
+        gestore: "professionista",
         pazienteUid: utente.uid,
         pazienteNome: nome,
         pazienteEmail: email,
@@ -388,6 +422,272 @@ exports.creaPaziente = onCall(async (request) => {
   }
 
   return { pazienteUid: utente.uid, pianoId: pianoRef.id };
+});
+
+// =========================================================================
+// PAZIENTE AUTONOMO E PREMIUM
+// =========================================================================
+// Il paziente può registrarsi da solo dall'app ("autonomo"): in quel caso è
+// lui il gestore del proprio piano (piani/{id}.gestore = "paziente"). Può
+// collegarsi a un nutrizionista con il codice studio: il nutrizionista
+// diventa gestore dello STESSO piano (gestore = "professionista") e lo
+// ritrova con tutto lo storico. Se si scollega torna gestore lui.
+//
+// Premium (importazione AI, consigli AI sui pasti e le altre funzioni a
+// pagamento) è attivo se:
+//   - il paziente è seguito da un nutrizionista con licenza attiva, oppure
+//   - ha un abbonamento attivo (users/{uid}.premium, stato "attivo"), oppure
+//   - è nei 14 giorni di prova (stato "prova").
+// users/{uid}.premium lo scrive SOLO il server: { stato, origine,
+// provaIniziata, scadenza }. La prova parte una sola volta, quando il primo
+// piano viene caricato (importazione AI o inserimento a mano + avviaProva).
+const GIORNI_PROVA = 14;
+const LIMITE_IMPORTAZIONI_PAZIENTE_MESE = 10;
+const ALFABETO_CODICE_STUDIO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // niente 0/O, 1/I
+
+function millisDi(t) {
+  if (t == null) return null;
+  if (typeof t.toMillis === "function") return t.toMillis();
+  if (typeof t === "number") return t;
+  return null;
+}
+
+/**
+ * Stato Premium di un paziente. licenzaProf è la licenza del suo
+ * nutrizionista (o null se non è seguito). Ritorna
+ * { attivo, origine: "nutrizionista"|"prova"|"abbonamento"|null, scadenza, provaUsata }.
+ */
+function statoPremiumServer(premium, licenzaProf, adesso) {
+  const provaUsata = !!(premium && premium.provaIniziata);
+  if (licenzaProf && statoLicenzaServer(licenzaProf, adesso).attiva) {
+    return { attivo: true, origine: "nutrizionista", scadenza: null, provaUsata };
+  }
+  if (premium && (premium.stato === "attivo" || premium.stato === "prova")) {
+    const scadenza = millisDi(premium.scadenza);
+    if (scadenza == null || scadenza > adesso) {
+      return { attivo: true, origine: premium.stato === "prova" ? "prova" : "abbonamento", scadenza, provaUsata };
+    }
+  }
+  return { attivo: false, origine: null, scadenza: null, provaUsata };
+}
+
+async function statoPremiumPaziente(utente, adesso) {
+  let licenzaProf = null;
+  if (utente && utente.professionistaUid) {
+    const prof = await db.collection("users").doc(utente.professionistaUid).get();
+    licenzaProf = prof.exists ? prof.data().licenza || null : null;
+  }
+  return statoPremiumServer(utente && utente.premium, licenzaProf, adesso);
+}
+
+function nuovaProva(adesso) {
+  return {
+    stato: "prova",
+    origine: "prova",
+    provaIniziata: Timestamp.fromMillis(adesso),
+    scadenza: Timestamp.fromMillis(adesso + GIORNI_PROVA * 86400000),
+  };
+}
+
+/** Vero se almeno un pasto di almeno una settimana è compilato. */
+function pianoHaContenuto(piano) {
+  const settimane = (piano && piano.settimane) || {};
+  return Object.values(settimane).some((giorni) => Array.isArray(giorni) && giorni.some((g) =>
+    g && CAMPI_PASTO_AI.some((k) => typeof g[k] === "string" && g[k].trim().length > 1)));
+}
+
+function codiceStudioValido(c) {
+  return typeof c === "string" && /^[A-HJ-NP-Z2-9]{6}$/.test(c);
+}
+
+function nuovoCodiceStudio() {
+  let c = "";
+  for (let i = 0; i < 6; i++) c += ALFABETO_CODICE_STUDIO[Math.floor(Math.random() * ALFABETO_CODICE_STUDIO.length)];
+  return c;
+}
+
+async function pianoDelPaziente(uid) {
+  const snap = await db.collection("piani").where("pazienteUid", "==", uid).limit(1).get();
+  return snap.empty ? null : snap.docs[0];
+}
+
+/**
+ * Registrazione del paziente autonomo. L'app crea prima l'account di accesso
+ * (email e password), poi chiama questa funzione che crea profilo e piano.
+ * Dati attesi: { nome, piano } (piano = piano di partenza, anche vuoto).
+ */
+exports.registraPaziente = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const d = request.data || {};
+  const nome = String(d.nome || "").trim().slice(0, 120);
+  const email = String((request.auth.token && request.auth.token.email) || "").toLowerCase();
+  if (!nome) throw new HttpsError("invalid-argument", "Indica il tuo nome.");
+  if (!email) throw new HttpsError("invalid-argument", "Account senza email.");
+  const piano = d.piano && typeof d.piano === "object" && !Array.isArray(d.piano) ? d.piano : { settimane: {} };
+  if (Buffer.byteLength(JSON.stringify(piano)) > 900 * 1024) {
+    throw new HttpsError("invalid-argument", "Piano di partenza troppo grande.");
+  }
+
+  const utenteRef = db.collection("users").doc(uid);
+  const pianoRef = db.collection("piani").doc();
+  const pulito = Object.assign({ settimane: {} }, piano);
+  CAMPI_PIANO_RISERVATI.forEach((k) => delete pulito[k]);
+  delete pulito.feedbackAI;
+  await db.runTransaction(async (t) => {
+    const esistente = await t.get(utenteRef);
+    if (esistente.exists) throw new HttpsError("already-exists", "profilo-esistente");
+    t.create(utenteRef, { ruolo: "paziente", nome, email, autonomo: true, creato: FieldValue.serverTimestamp() });
+    t.create(pianoRef, Object.assign(pulito, {
+      professionistaUid: null,
+      gestore: "paziente",
+      pazienteUid: uid,
+      pazienteNome: nome,
+      pazienteEmail: email,
+      creato: FieldValue.serverTimestamp(),
+      aggiornato: FieldValue.serverTimestamp(),
+    }));
+  });
+  return { pianoId: pianoRef.id };
+});
+
+/** Stato Premium del paziente che la chiama (per mostrarlo nell'app). */
+exports.statoPremium = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const utente = (await db.collection("users").doc(uid).get()).data() || {};
+  if (utente.ruolo !== "paziente") return { attivo: false, origine: null, scadenza: null, provaUsata: false };
+  return statoPremiumPaziente(utente, Date.now());
+});
+
+/**
+ * Avvia la prova di 14 giorni quando il paziente autonomo ha salvato a mano
+ * il suo primo piano. Una sola volta per account; se è già Premium o la prova
+ * è già stata usata non cambia nulla.
+ */
+exports.avviaProva = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const utenteRef = db.collection("users").doc(uid);
+  const adesso = Date.now();
+  return db.runTransaction(async (t) => {
+    const snap = await t.get(utenteRef);
+    const utente = snap.data() || {};
+    if (utente.ruolo !== "paziente" || !utente.autonomo) throw new HttpsError("permission-denied", "Solo per i pazienti registrati dall'app.");
+    if (utente.premium && utente.premium.provaIniziata) return statoPremiumServer(utente.premium, null, adesso);
+    const pianoSnap = await t.get(db.collection("piani").where("pazienteUid", "==", uid).limit(1));
+    if (pianoSnap.empty || !pianoHaContenuto(pianoSnap.docs[0].data())) throw new HttpsError("failed-precondition", "piano-vuoto");
+    const prova = nuovaProva(adesso);
+    t.update(utenteRef, { premium: prova });
+    return statoPremiumServer(prova, null, adesso);
+  });
+});
+
+/** Codice studio del professionista (lo crea la prima volta). */
+exports.codiceStudio = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const profRef = db.collection("users").doc(uid);
+  const prof = (await profRef.get()).data() || {};
+  if (prof.ruolo !== "professionista") throw new HttpsError("permission-denied", "Solo per i professionisti.");
+  if (codiceStudioValido(prof.codiceStudio)) return { codice: prof.codiceStudio };
+  for (let tentativo = 0; tentativo < 8; tentativo++) {
+    const codice = nuovoCodiceStudio();
+    const codiceRef = db.collection("codiciStudio").doc(codice);
+    try {
+      await db.runTransaction(async (t) => {
+        const c = await t.get(codiceRef);
+        if (c.exists) throw new Error("occupato");
+        t.create(codiceRef, { professionistaUid: uid, creato: FieldValue.serverTimestamp() });
+        t.update(profRef, { codiceStudio: codice });
+      });
+      return { codice };
+    } catch (e) {
+      if (e.message !== "occupato") throw e;
+    }
+  }
+  throw new HttpsError("internal", "Impossibile creare il codice studio, riprova.");
+});
+
+/**
+ * Il paziente autonomo si collega al nutrizionista con il codice studio. Il
+ * nutrizionista diventa gestore dello stesso piano; il paziente conta nella
+ * sua licenza.
+ */
+exports.collegaNutrizionista = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const codice = String((request.data && request.data.codice) || "").trim().toUpperCase();
+  if (!codiceStudioValido(codice)) throw new HttpsError("invalid-argument", "codice-non-valido");
+
+  const codiceSnap = await db.collection("codiciStudio").doc(codice).get();
+  if (!codiceSnap.exists) throw new HttpsError("not-found", "codice-non-trovato");
+  const profUid = codiceSnap.data().professionistaUid;
+  const profRef = db.collection("users").doc(profUid);
+  const utenteRef = db.collection("users").doc(uid);
+  const queryPazienti = db.collection("piani").where("professionistaUid", "==", profUid);
+
+  const nomeStudio = await db.runTransaction(async (t) => {
+    const [utenteSnap, profSnap] = await Promise.all([t.get(utenteRef), t.get(profRef)]);
+    const utente = utenteSnap.data() || {};
+    if (utente.ruolo !== "paziente" || !utente.autonomo) throw new HttpsError("permission-denied", "Solo per i pazienti registrati dall'app.");
+    if (utente.professionistaUid) throw new HttpsError("failed-precondition", "gia-collegato");
+    const prof = profSnap.data() || {};
+    if (prof.ruolo !== "professionista") throw new HttpsError("not-found", "codice-non-trovato");
+    const lic = statoLicenzaServer(prof.licenza, Date.now());
+    if (!lic.attiva) throw new HttpsError("failed-precondition", "licenza-nutrizionista-non-attiva");
+    const usati = (await t.get(queryPazienti.count())).data().count;
+    if (usati >= lic.max) throw new HttpsError("resource-exhausted", "limite-nutrizionista");
+    const pianoSnap = await t.get(db.collection("piani").where("pazienteUid", "==", uid).limit(1));
+    if (pianoSnap.empty) throw new HttpsError("failed-precondition", "nessun-piano");
+    t.update(utenteRef, { professionistaUid: profUid, collegato: FieldValue.serverTimestamp() });
+    t.update(pianoSnap.docs[0].ref, { professionistaUid: profUid, gestore: "professionista", aggiornato: FieldValue.serverTimestamp() });
+    return prof.nome || prof.studio || "";
+  });
+  return { ok: true, nutrizionista: nomeStudio };
+});
+
+/** Il paziente autonomo si scollega dal nutrizionista e torna gestore del piano. */
+exports.scollegaNutrizionista = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const utente = (await db.collection("users").doc(uid).get()).data() || {};
+  if (utente.ruolo !== "paziente" || !utente.autonomo) throw new HttpsError("permission-denied", "Solo per i pazienti registrati dall'app.");
+  if (!utente.professionistaUid) return { ok: true };
+  const piano = await pianoDelPaziente(uid);
+  if (!piano) throw new HttpsError("failed-precondition", "nessun-piano");
+  await scollegaPazienteDalProfessionista(uid, piano.ref);
+  return { ok: true };
+});
+
+/**
+ * Eliminazione dell'account da parte dell'utente stesso (obbligatoria per gli
+ * store). Paziente: tutti i dati, piano compreso. Familiare: esce dalla lista
+ * e viene cancellato. Per il professionista non è ancora disponibile qui
+ * (ha pazienti e abbonamento da chiudere): scrive a info@ilmiopiano.it.
+ */
+exports.eliminaAccount = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const utenteRef = db.collection("users").doc(uid);
+  const utenteSnap = await utenteRef.get();
+  const utente = utenteSnap.data() || {};
+  if (utente.ruolo === "professionista") throw new HttpsError("failed-precondition", "professionista");
+  if (utente.ruolo === "paziente") {
+    const piano = await pianoDelPaziente(uid);
+    await cancellaDatiPaziente(uid, piano ? piano.ref : null);
+    return { ok: true };
+  }
+  // Familiare (o profilo incompleto)
+  try {
+    await getAuth().deleteUser(uid);
+  } catch (e) {
+    if (e.code !== "auth/user-not-found") throw new HttpsError("internal", "Impossibile eliminare l'account di accesso.");
+  }
+  if (utente.listaCasa) await lasciaLista(uid, utente.listaCasa).catch(() => {});
+  if (utenteSnap.exists) await db.recursiveDelete(utenteRef);
+  await cancellaRegistroNotifiche(uid);
+  return { ok: true };
 });
 
 // =========================================================================
@@ -668,12 +968,28 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
-  if (utente.ruolo !== "professionista") throw new HttpsError("permission-denied", "Solo per i professionisti.");
-  if (!statoLicenzaServer(utente.licenza, Date.now()).attiva) throw new HttpsError("failed-precondition", "licenza-non-attiva");
+  const adesso = Date.now();
+  let limiteMese = LIMITE_IMPORTAZIONI_MESE;
+  if (utente.ruolo === "professionista") {
+    if (!statoLicenzaServer(utente.licenza, adesso).attiva) throw new HttpsError("failed-precondition", "licenza-non-attiva");
+  } else if (utente.ruolo === "paziente" && utente.autonomo) {
+    // Paziente autonomo: importa nel proprio piano, solo se ne è il gestore.
+    const pianoDoc = await pianoDelPaziente(uid);
+    if (!pianoDoc || pianoDoc.data().gestore !== "paziente") throw new HttpsError("permission-denied", "piano-del-nutrizionista");
+    const premium = await statoPremiumPaziente(utente, adesso);
+    if (!premium.attivo) {
+      // La prima importazione avvia la prova di 14 giorni; dopo serve Premium.
+      if (premium.provaUsata) throw new HttpsError("failed-precondition", "premium-richiesto");
+      await utenteRef.update({ premium: nuovaProva(adesso) });
+    }
+    limiteMese = LIMITE_IMPORTAZIONI_PAZIENTE_MESE;
+  } else {
+    throw new HttpsError("permission-denied", "Funzione non disponibile per questo account.");
+  }
 
   const mese = new Date().toISOString().slice(0, 7);
   const usate = (utente.importazioniAI && utente.importazioniAI.mese === mese) ? Number(utente.importazioniAI.n) || 0 : 0;
-  if (usate >= LIMITE_IMPORTAZIONI_MESE) throw new HttpsError("resource-exhausted", "limite-mensile");
+  if (usate >= limiteMese) throw new HttpsError("resource-exhausted", "limite-mensile");
 
   const pagine = Array.isArray(request.data && request.data.pagine) ? request.data.pagine : [];
   if (!pagine.length) throw new HttpsError("invalid-argument", "Nessuna pagina da leggere.");
@@ -729,7 +1045,7 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
     importazioniAI: { mese, n: usate + 1, ultimaIl: FieldValue.serverTimestamp() },
   }, { merge: true });
   console.log("Importazione AI completata", { uid, pagine: pagine.length, input: uso.input_tokens, output: uso.output_tokens });
-  return { piano, rimaste: LIMITE_IMPORTAZIONI_MESE - usate - 1 };
+  return { piano, rimaste: limiteMese - usate - 1 };
 });
 
 // =========================================================================
@@ -825,6 +1141,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (!(await statoPremiumPaziente(utente, Date.now())).attivo) throw new HttpsError("failed-precondition", "premium-richiesto");
   const pianiSnap = await db.collection("piani").where("pazienteUid", "==", uid).limit(1).get();
   if (pianiSnap.empty) throw new HttpsError("failed-precondition", "nessun-piano");
   const piano = pianiSnap.docs[0].data();
@@ -1208,5 +1525,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { normalizzaAnalisi, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

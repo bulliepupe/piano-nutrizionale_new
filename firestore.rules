@@ -15,6 +15,11 @@
 //   professionista proprietario; si modifica solo dal professionista, e solo
 //   con licenza attiva. Il paziente continua a leggere il suo piano anche se
 //   la licenza del professionista scade;
+// - il paziente può anche registrarsi da solo dall'app ("autonomo"): finché
+//   non è collegato a un nutrizionista è lui il gestore del proprio piano
+//   (piani/{id}.gestore = "paziente") e può modificarlo e registrare peso e
+//   misure. Profilo e piano li crea il server (registraPaziente); Premium,
+//   collegamento e codice studio li scrive solo il server;
 // - le spunte "pasto fatto" e la lista della spesa vivono sotto l'utente
 //   paziente e le scrive lui; il suo professionista può solo LEGGERE le
 //   spunte, per le statistiche di andamento.
@@ -70,7 +75,7 @@ service cloud.firestore {
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato"]);
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
@@ -105,9 +110,17 @@ service cloud.firestore {
       // I piani nuovi li crea solo il server, insieme al paziente (funzione
       // creaPaziente, che controlla il limite della licenza).
       allow create: if false;
-      allow update: if isProfessionista() && licenzaAttiva()
-        && resource.data.professionistaUid == request.auth.uid
-        && request.resource.data.professionistaUid == request.auth.uid;
+      // Lo modifica il professionista gestore (con licenza attiva) oppure,
+      // se il paziente si è registrato da solo e non è collegato a un
+      // nutrizionista (gestore "paziente"), il paziente stesso. Chi è gestore
+      // e a chi appartiene il piano lo decide solo il server.
+      allow update: if (isProfessionista() && licenzaAttiva()
+          && resource.data.professionistaUid == request.auth.uid
+          && request.resource.data.professionistaUid == request.auth.uid
+          && request.resource.data.get("gestore", "professionista") == resource.data.get("gestore", "professionista"))
+        || (isSignedIn() && resource.data.get("gestore", "professionista") == "paziente"
+          && resource.data.pazienteUid == request.auth.uid
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["professionistaUid", "pazienteUid", "gestore", "pazienteEmail", "creato"]));
       // Eliminare un paziente è sempre possibile (anche a licenza scaduta).
       allow delete: if isProfessionista() && resource.data.professionistaUid == request.auth.uid;
 
@@ -118,6 +131,7 @@ service cloud.firestore {
       function visibilitaPeso() { return pianoCorrente().get("corpo", {}).get("visibilita", "controlli"); }
       function eIlProfessionista() { return isSignedIn() && pianoCorrente().professionistaUid == request.auth.uid; }
       function eIlPaziente() { return isSignedIn() && pianoCorrente().pazienteUid == request.auth.uid; }
+      function gestitoDalPaziente() { return pianoCorrente().get("gestore", "professionista") == "paziente"; }
       function misuraValida(d) {
         return d.data is string && d.data.size() == 10
           && d.peso is number && d.peso >= 20 && d.peso <= 400
@@ -125,8 +139,12 @@ service cloud.firestore {
           && d.keys().hasOnly(["data", "peso", "vita", "fianchi", "grasso", "muscolo", "fonte", "aggiornata"]);
       }
       match /misure/{misuraId} {
-        allow read: if eIlProfessionista() || (eIlPaziente() && visibilitaPeso() != "nascosto");
+        allow read: if eIlProfessionista() || (eIlPaziente() && (gestitoDalPaziente() || visibilitaPeso() != "nascosto"));
         allow create, update: if (eIlProfessionista() && licenzaAttiva() && misuraValida(request.resource.data))
+          // paziente autonomo: registra liberamente le sue misure (sempre "casa")
+          || (eIlPaziente() && gestitoDalPaziente() && misuraValida(request.resource.data)
+              && request.resource.data.fonte == "casa"
+              && (resource == null || resource.data.fonte == "casa"))
           || (eIlPaziente() && visibilitaPeso() == "casa" && misuraValida(request.resource.data)
               && request.resource.data.fonte == "casa"
               && request.resource.data.keys().hasOnly(["data", "peso", "fonte", "aggiornata"])
