@@ -527,6 +527,30 @@
       }, { merge: true });
     },
 
+    /**
+     * Registrazione del paziente autonomo: account di accesso, poi profilo e
+     * piano (vuoto) creati dal server. Se il server non risponde, l'account
+     * appena creato viene cancellato, così si può riprovare con la stessa email.
+     */
+    async registraPaziente(email, password, nome) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const cred = await auth.createUserWithEmailAndPassword(email.trim(), password);
+      try {
+        await funzioni.httpsCallable("registraPaziente")({ nome: (nome || "").trim(), piano: { settimane: {} } });
+      } catch (e) {
+        await cred.user.delete().catch(() => {});
+        throw e;
+      }
+      return cred.user;
+    },
+
+    /** Chiama una Cloud Function "callable" del paziente e ne restituisce i dati. */
+    async chiamaFunzione(nome, dati) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const r = await funzioni.httpsCallable(nome)(dati || {});
+      return r.data;
+    },
+
     // ------------------------------------------------------------------
     // Lista di casa (spesa condivisa)
     // ------------------------------------------------------------------

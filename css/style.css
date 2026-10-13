@@ -2063,3 +2063,8 @@ body.con-informativa { overflow: hidden; }
 .btn-detta { font-family: var(--font-body); font-size: 13.5px; font-weight: 600; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
 .btn-detta.is-ascolto { background: color-mix(in srgb, var(--stato-rosso, #b4483c) 12%, var(--surface)); border-color: var(--stato-rosso, #b4483c); animation: detta-pulsa 1.2s infinite; }
 @keyframes detta-pulsa { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--stato-rosso, #b4483c) 18%, transparent); } }
+
+/* Paziente autonomo: benvenuto prima di caricare il piano */
+.benvenuto-autonomo { background: var(--surface, #fff); border: 1px solid var(--border-soft); border-radius: var(--radius-l, 16px); padding: 22px 20px; margin: 8px 0 16px; }
+.benvenuto-autonomo h2 { margin: 0 0 8px; font-size: 20px; }
+.benvenuto-autonomo p { margin: 0 0 10px; color: var(--ink-soft); }

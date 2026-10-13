@@ -50,6 +50,22 @@
 
     <p class="avviso-invito" id="avviso-invito" hidden>👥 Hai ricevuto un invito a una <strong>lista della spesa condivisa</strong>: accedi con il tuo account, oppure registrati qui sotto come familiare.</p>
 
+    <div id="blocco-signup-paziente" hidden>
+      <p class="hint">Hai un piano alimentare dal tuo nutrizionista?</p>
+      <button type="button" class="btn" id="btn-mostra-signup-paziente">Crea il tuo account</button>
+    </div>
+
+    <form id="form-signup-paziente" class="auth-form" hidden>
+      <label class="auth-field"><span>Nome</span><input type="text" id="paz-nome" required autocomplete="given-name"></label>
+      <label class="auth-field"><span>Email</span><input type="email" id="paz-email" required autocomplete="email"></label>
+      <label class="auth-field"><span>Password (almeno 6 caratteri)</span><input type="password" id="paz-password" required minlength="6" autocomplete="new-password"></label>
+      <p class="auth-error" id="paz-error" hidden></p>
+      <p class="hint">Dopo l'iscrizione carichi il piano che ti ha dato il tuo nutrizionista e ricevi i promemoria dei pasti.</p>
+      <label class="auth-check"><input type="checkbox" required> <span>Accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" data-link="termini">Termini di servizio</a> e ho letto l'<a href="https://ilmiopiano.it/privacy.html" target="_blank" rel="noopener" data-link="privacy">Informativa privacy</a></span></label>
+      <button type="submit" class="btn" id="btn-signup-paziente">Crea account</button>
+      <button type="button" class="link-btn" id="btn-annulla-signup-paziente">Torna all'accesso</button>
+    </form>
+
     <div id="blocco-signup-familiare">
       <p class="hint">Fai la spesa con un paziente di Il mio Piano?</p>
       <button type="button" class="btn btn--ghost" id="btn-mostra-signup-familiare">Registrati come familiare</button>

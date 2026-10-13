@@ -66,6 +66,8 @@
 
   // ---- stato lato paziente ----
   let PIANO_ATTIVO = null; // piano corrente letto da Firestore in tempo reale
+  let ATTESA_REGISTRAZIONE = null; // registrazione del paziente autonomo in corso
+  let REGISTRAZIONE_PAZIENTE_APERTA = false; // pulsante pubblico (config.json → registrazionePaziente)
   let PASTI_FATTI_OGGI = {};
   let unsubPiano = null;
   let unsubPastiOggi = null;
@@ -130,6 +132,11 @@
       return;
     }
     UID = user.uid;
+    // Registrazione del paziente in corso: profilo e piano li crea il server
+    // dopo l'account di accesso, quindi si aspetta che abbia finito.
+    if (ATTESA_REGISTRAZIONE) {
+      try { await ATTESA_REGISTRAZIONE; } catch (e) { return; } // l'account viene cancellato: arriverà il logout
+    }
     // Subito dopo una registrazione, Firebase può avvisare dell'accesso avvenuto
     // prima che il documento users/{uid} (scritto subito dopo, in una chiamata
     // separata) sia effettivamente disponibile in lettura: qualche tentativo con
@@ -229,6 +236,7 @@
     function modalitaRegistrazione(attiva) {
       document.getElementById("blocco-signup-professionista").hidden = attiva;
       document.getElementById("blocco-signup-familiare").hidden = attiva;
+      document.getElementById("blocco-signup-paziente").hidden = attiva || !REGISTRAZIONE_PAZIENTE_APERTA;
       document.getElementById("form-login").hidden = attiva;
       document.getElementById("btn-password-dimenticata").hidden = attiva;
       document.getElementById("form-signup").hidden = !attiva;
@@ -236,11 +244,45 @@
     }
     document.getElementById("btn-mostra-signup").addEventListener("click", () => modalitaRegistrazione(true));
 
+    // Registrazione del paziente autonomo. Il pulsante pubblico compare solo
+    // se config.json ha "registrazionePaziente": true; nel frattempo la si
+    // prova aprendo l'app con l'indirizzo che finisce in #nuovo-paziente.
+    const SUB_PAZIENTE = "Crea il tuo account: poi carichi il piano del tuo nutrizionista.";
+    function modalitaPaziente(attiva) {
+      ["blocco-signup-professionista", "blocco-signup-familiare", "blocco-signup-paziente", "form-login", "btn-password-dimenticata"]
+        .forEach((id) => { document.getElementById(id).hidden = attiva || (id === "blocco-signup-paziente" && !REGISTRAZIONE_PAZIENTE_APERTA); });
+      document.getElementById("form-signup-paziente").hidden = !attiva;
+      document.getElementById("auth-sub").textContent = attiva ? SUB_PAZIENTE : SUB_ACCESSO;
+    }
+    document.getElementById("btn-mostra-signup-paziente").addEventListener("click", () => modalitaPaziente(true));
+    document.getElementById("btn-annulla-signup-paziente").addEventListener("click", () => modalitaPaziente(false));
+    document.getElementById("form-signup-paziente").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("btn-signup-paziente");
+      document.getElementById("paz-error").hidden = true;
+      btn.disabled = true; btn.textContent = "Creazione in corso…";
+      ATTESA_REGISTRAZIONE = window.cloud.registraPaziente(
+        document.getElementById("paz-email").value,
+        document.getElementById("paz-password").value,
+        document.getElementById("paz-nome").value
+      );
+      try {
+        await ATTESA_REGISTRAZIONE;
+      } catch (err) {
+        mostraErroreIn("paz-error", traduciErroreAuth(err));
+      } finally {
+        ATTESA_REGISTRAZIONE = null;
+        btn.disabled = false; btn.textContent = "Crea account";
+      }
+    });
+    if (/^#nuovo-paziente/.test(location.hash)) modalitaPaziente(true);
+
     // Registrazione del familiare (solo spesa condivisa)
     const SUB_FAMILIARE = "Crea il tuo account per la spesa condivisa: vedrai solo la lista della spesa di casa.";
     function modalitaFamiliare(attiva) {
       document.getElementById("blocco-signup-professionista").hidden = attiva;
       document.getElementById("blocco-signup-familiare").hidden = attiva;
+      document.getElementById("blocco-signup-paziente").hidden = attiva || !REGISTRAZIONE_PAZIENTE_APERTA;
       document.getElementById("form-login").hidden = attiva;
       document.getElementById("btn-password-dimenticata").hidden = attiva;
       document.getElementById("form-signup-familiare").hidden = !attiva;
@@ -273,6 +315,11 @@
 
     // Link legali presi da config.json (così si cambiano in un posto solo)
     caricaConfig().then((c) => {
+      REGISTRAZIONE_PAZIENTE_APERTA = c.registrazionePaziente === true;
+      if (REGISTRAZIONE_PAZIENTE_APERTA && document.getElementById("form-signup-paziente").hidden
+        && !document.getElementById("form-login").hidden) {
+        document.getElementById("blocco-signup-paziente").hidden = false;
+      }
       const mappa = { privacy: c.linkPrivacy, termini: c.linkTermini, dpa: c.linkAccordoDati };
       document.querySelectorAll("[data-link]").forEach((a) => { if (mappa[a.dataset.link]) a.href = mappa[a.dataset.link]; });
     });
@@ -329,6 +376,9 @@
       "auth/weak-password": "Password troppo debole (minimo 6 caratteri).",
       "auth/too-many-requests": "Troppi tentativi, riprova tra qualche minuto.",
       "auth/network-request-failed": "Problema di connessione.",
+      "functions/unavailable": "Servizio non raggiungibile: controlla la connessione e riprova.",
+      "functions/internal": "Il server non ha risposto correttamente. Riprova tra poco.",
+      "functions/already-exists": "Esiste già un profilo per questo account.",
       "permission-denied": "Permesso negato da Firestore: controlla di aver pubblicato le regole di sicurezza corrette nella console Firebase.",
     };
     return (code && mappa[code]) || "Si è verificato un errore imprevisto. Riprova.";
@@ -351,6 +401,7 @@
     if (!utenteDati || utenteDati.informativaVersione === VERSIONE_INFORMATIVA) return;
     if (document.getElementById("informativa-primo-accesso")) return;
     const familiare = ruolo === "familiare";
+    const autonomo = !familiare && !!utenteDati.autonomo && !utenteDati.professionistaUid;
     const box = document.createElement("div");
     box.id = "informativa-primo-accesso";
     box.className = "informativa-primo";
@@ -364,10 +415,13 @@
         <ul>
           ${familiare ? `
           <li>Con l'account familiare usi solo la <strong>lista della spesa condivisa</strong>. I dati del tuo account (nome, email, lista) sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app.</li>
-          <li>Non vedi i piani, le misure o le note dei pazienti: solo gli alimenti della lista di casa.</li>` : `
+          <li>Non vedi i piani, le misure o le note dei pazienti: solo gli alimenti della lista di casa.</li>` : autonomo ? `
+          <li>Il piano che carichi, i pasti che segni, le tue note e le misure sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app ed è titolare di questi dati. Servono solo a farti seguire il piano.</li>
+          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic): la lettura del piano dal PDF e i consigli sui pasti non come da piano. Vengono inviati solo i testi del piano e dei pasti, senza nome né altri dati identificativi.</li>
+          <li>Se ti colleghi a un nutrizionista con il suo codice, lui vedrà il tuo piano e il tuo andamento.</li>` : `
           <li>Il piano, i pasti che segni, le tue note, le misure e gli appuntamenti sono trattati dal <strong>tuo nutrizionista</strong>, che ne è il titolare. <strong>Bulli e Pupe S.r.l.</strong> gestisce l'app per suo conto. Il tuo nutrizionista ti fornisce anche la sua informativa.</li>
           <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic): per esempio il riscontro sui pasti non come da piano. In quei casi vengono inviati solo i testi dei pasti e le tue note, senza nome né altri dati identificativi. Il tuo nutrizionista può disattivarle.</li>`}
-          <li>I dati sono conservati su server nell'Unione Europea e protetti da accesso personale. Puoi esercitare i tuoi diritti (accesso, correzione, cancellazione) ${familiare ? "scrivendo a info@ilmiopiano.it" : "tramite il tuo nutrizionista o scrivendo a info@ilmiopiano.it"}.</li>
+          <li>I dati sono conservati su server nell'Unione Europea e protetti da accesso personale. Puoi esercitare i tuoi diritti (accesso, correzione, cancellazione) ${familiare || autonomo ? "scrivendo a info@ilmiopiano.it" : "tramite il tuo nutrizionista o scrivendo a info@ilmiopiano.it"}.</li>
         </ul>
         <p><a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Leggi l'informativa completa ↗</a></p>
         <button type="button" class="btn" id="informativa-ok">Ho letto, continua</button>
@@ -559,7 +613,24 @@
   // ---------------------------------------------------------------------
   // Vista "Oggi"
   // ---------------------------------------------------------------------
+  /** Piano del paziente autonomo ancora da caricare. */
+  function pianoAutonomoVuoto() {
+    if (!PIANO_ATTIVO || PIANO_ATTIVO.gestore !== "paziente") return false;
+    const sett = PIANO_ATTIVO.settimane || {};
+    return !Object.values(sett).some((giorni) => Array.isArray(giorni) && giorni.some((g) =>
+      g && ["colazione", "spuntinoMattina", "pranzo", "spuntinoPomeriggio", "cena"].some((k) => typeof g[k] === "string" && g[k].trim().length > 1)));
+  }
+
+  function benvenutoAutonomoHTML() {
+    return `<section class="benvenuto-autonomo">
+      <h2>Benvenuto in Il mio Piano</h2>
+      <p>Per iniziare carica il piano alimentare che ti ha dato il tuo nutrizionista: poi l'app ti mostra il menù del giorno e ti ricorda i pasti.</p>
+      <p class="hint">Il caricamento del piano sarà disponibile a breve.</p>
+    </section>`;
+  }
+
   function renderOggi() {
+    if (pianoAutonomoVuoto()) { root.innerHTML = benvenutoAutonomoHTML(); return; }
     if (!PIANO_ATTIVO) {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account. Controlla di nuovo più tardi.</div>`;
       return;
@@ -934,6 +1005,7 @@
   // Vista "Settimana"
   // ---------------------------------------------------------------------
   function renderSettimana() {
+    if (pianoAutonomoVuoto()) { root.innerHTML = benvenutoAutonomoHTML(); return; }
     if (!PIANO_ATTIVO) {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
       return;
@@ -1287,6 +1359,7 @@
   }
 
   function renderSpesa() {
+    if (pianoAutonomoVuoto()) { root.innerHTML = benvenutoAutonomoHTML(); return; }
     if (!PIANO_ATTIVO && RUOLO !== "familiare") {
       root.innerHTML = `<div class="empty">Il tuo professionista non ha ancora assegnato un piano a questo account.</div>`;
       return;
