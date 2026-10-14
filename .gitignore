@@ -1,3 +1,14 @@
 node_modules/
 .firebase/
 *.log
+
+# Documenti personali e download: mai su GitHub
+Download/
+Downloads/
+Riservato/
+*.pdf
+*.zip
+*.xlsx
+*.xls
+*.docx
+Backup-codes*.txt

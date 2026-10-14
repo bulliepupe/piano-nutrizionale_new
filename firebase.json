@@ -32,7 +32,17 @@
       ".firebase",
       ".firebase/**",
       ".gitignore",
-      ".firebaserc"
+      ".firebaserc",
+      "Download/**",
+      "Downloads/**",
+      "Riservato/**",
+      "**/*.pdf",
+      "**/*.txt",
+      "**/*.zip",
+      "**/*.xlsx",
+      "**/*.xls",
+      "**/*.docx",
+      "**/*.csv"
     ],
     "headers": [
       {
