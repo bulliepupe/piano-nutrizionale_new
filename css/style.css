@@ -2083,3 +2083,8 @@ body.con-informativa { overflow: hidden; }
 .premium-elenco small { display: block; color: var(--ink-soft); font-size: 13px; }
 .premium-elenco--semplice li { font-size: 14px; }
 .premium-prezzo { margin: 6px 0 10px; font-size: 15px; }
+
+/* Codice studio, collegamento al nutrizionista, eliminazione account */
+.codice-studio { font-size: 30px; font-weight: 700; letter-spacing: 6px; margin: 10px 0 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.link-btn.link-btn--inline { display: inline; width: auto; padding: 0; font-size: inherit; text-decoration: underline; }
+.btn.btn--ghost.btn--pericolo { background: transparent; color: #B3432F; border-color: rgba(179, 67, 47, 0.4); }

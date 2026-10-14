@@ -308,7 +308,7 @@ async function cancellaRegistroNotifiche(uid) {
 async function scollegaPazienteDalProfessionista(pazienteUid, pianoRef) {
   await db.runTransaction(async (t) => {
     t.update(db.collection("users").doc(pazienteUid), { professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp() });
-    t.update(pianoRef, { professionistaUid: null, gestore: "paziente", aggiornato: FieldValue.serverTimestamp() });
+    t.update(pianoRef, { professionistaUid: null, gestore: "paziente", contattiNutrizionista: FieldValue.delete(), aggiornato: FieldValue.serverTimestamp() });
   });
 }
 
@@ -641,8 +641,11 @@ exports.collegaNutrizionista = onCall(async (request) => {
     const pianoSnap = await t.get(db.collection("piani").where("pazienteUid", "==", uid).limit(1));
     if (pianoSnap.empty) throw new HttpsError("failed-precondition", "nessun-piano");
     t.update(utenteRef, { professionistaUid: profUid, collegato: FieldValue.serverTimestamp() });
-    t.update(pianoSnap.docs[0].ref, { professionistaUid: profUid, gestore: "professionista", aggiornato: FieldValue.serverTimestamp() });
-    return prof.nome || prof.studio || "";
+    const aggiornamento = { professionistaUid: profUid, gestore: "professionista", aggiornato: FieldValue.serverTimestamp() };
+    // i contatti del nutrizionista (pulsante Contatta nell'app del paziente)
+    if (prof.contatti && typeof prof.contatti === "object") aggiornamento.contattiNutrizionista = prof.contatti;
+    t.update(pianoSnap.docs[0].ref, aggiornamento);
+    return (prof.contatti && prof.contatti.nome) || prof.nome || "";
   });
   return { ok: true, nutrizionista: nomeStudio };
 });

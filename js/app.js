@@ -723,6 +723,116 @@
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Continua con la versione gratuita</button>`);
   }
 
+  // ---- Collegamento al nutrizionista con il codice studio ----
+  function nutrizionistaSezioneHTML() {
+    const collegato = PIANO_ATTIVO && PIANO_ATTIVO.professionistaUid;
+    if (collegato) {
+      const c = contattiNutrizionistaCorrenti().nome || "il tuo nutrizionista";
+      return `
+      <section class="settings-section" id="sezione-nutrizionista">
+        <h2>Il tuo nutrizionista</h2>
+        <p class="hint">Sei collegato a <strong>${escapeHTML(c)}</strong>: vede il tuo piano e il tuo andamento e aggiorna lui il piano. Premium è incluso finché ha la licenza attiva.</p>
+        <button type="button" class="btn btn--ghost" id="btn-scollega-nutrizionista">Scollegati</button>
+      </section>`;
+    }
+    return `
+      <section class="settings-section" id="sezione-nutrizionista">
+        <h2>Il tuo nutrizionista</h2>
+        <p class="hint">Il tuo nutrizionista usa Il mio Piano? Inserisci il suo codice studio: vedrà il tuo piano e il tuo andamento, potrà aggiornarti il piano e Premium sarà incluso.</p>
+        <label class="editor-campo"><span>Codice studio</span><input type="text" id="codice-nutrizionista" maxlength="6" autocapitalize="characters" autocomplete="off" placeholder="Es. K7M2QX" style="text-transform:uppercase; letter-spacing:2px;"></label>
+        <p class="auth-error" id="errore-collegamento" hidden></p>
+        <button type="button" class="btn" id="btn-collega-nutrizionista" style="margin-top:8px;">Collegati</button>
+      </section>`;
+  }
+
+  function erroreCollegamento(e) {
+    const m = String((e && e.message) || "");
+    if (/codice-non-valido/.test(m)) return "Il codice è di 6 caratteri, lettere e numeri: controllalo.";
+    if (/codice-non-trovato/.test(m)) return "Nessun nutrizionista con questo codice: controllalo con lui.";
+    if (/licenza-nutrizionista-non-attiva/.test(m)) return "Il nutrizionista non ha in questo momento un abbonamento attivo: avvisalo.";
+    if (/limite-nutrizionista/.test(m)) return "Il nutrizionista ha raggiunto il numero massimo di pazienti del suo abbonamento: avvisalo.";
+    if (/gia-collegato/.test(m)) return "Sei già collegato a un nutrizionista.";
+    return "Collegamento non riuscito: controlla la connessione e riprova.";
+  }
+
+  function collegaSezioneNutrizionista() {
+    const collega = document.getElementById("btn-collega-nutrizionista");
+    if (collega) collega.addEventListener("click", async () => {
+      const codice = document.getElementById("codice-nutrizionista").value.trim().toUpperCase();
+      const err = document.getElementById("errore-collegamento");
+      err.hidden = true;
+      if (!/^[A-Z0-9]{6}$/.test(codice)) { err.textContent = erroreCollegamento({ message: "codice-non-valido" }); err.hidden = false; return; }
+      if (!window.confirm("Collegarti a questo nutrizionista? Vedrà il tuo piano, i pasti segnati e le misure, e da quel momento sarà lui ad aggiornare il piano.")) return;
+      collega.disabled = true; collega.textContent = "Collegamento…";
+      try {
+        const r = await window.cloud.chiamaFunzione("collegaNutrizionista", { codice });
+        mostraToast(r && r.nutrizionista ? `Collegato a ${r.nutrizionista}` : "Collegato al tuo nutrizionista", 3500);
+        setTimeout(() => location.reload(), 1200);
+      } catch (e) {
+        err.textContent = erroreCollegamento(e); err.hidden = false;
+        collega.disabled = false; collega.textContent = "Collegati";
+      }
+    });
+    const scollega = document.getElementById("btn-scollega-nutrizionista");
+    if (scollega) scollega.addEventListener("click", async () => {
+      if (!window.confirm("Scollegarti dal tuo nutrizionista? Il piano resta nell'app e torni a gestirlo tu; lui non vedrà più i tuoi dati e Premium non sarà più incluso.")) return;
+      scollega.disabled = true;
+      try {
+        await window.cloud.chiamaFunzione("scollegaNutrizionista");
+        mostraToast("Scollegato: ora gestisci tu il tuo piano", 3500);
+        setTimeout(() => location.reload(), 1200);
+      } catch (e) {
+        scollega.disabled = false;
+        mostraToast("Non riuscito: controlla la connessione e riprova", 4000);
+      }
+    });
+  }
+
+  // ---- Eliminazione dell'account (paziente e familiare) ----
+  function eliminaAccountSezioneHTML() {
+    if (RUOLO !== "paziente" && RUOLO !== "familiare") return "";
+    return `
+      <section class="settings-section">
+        <h2>Il tuo account</h2>
+        <p class="hint">Puoi eliminare il tuo account in qualsiasi momento: vengono cancellati${RUOLO === "paziente" ? " il piano, i pasti segnati, le note, le misure" : ""} e i dati di accesso. L'operazione non si può annullare.</p>
+        <button type="button" class="btn btn--ghost btn--pericolo" id="btn-elimina-account">Elimina il mio account</button>
+      </section>`;
+  }
+
+  function collegaEliminaAccount() {
+    const btn = document.getElementById("btn-elimina-account");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      apriSheet(`
+        <h2 class="sheet__titolo">Eliminare l'account?</h2>
+        <p class="sheet__nota">Vengono cancellati definitivamente tutti i tuoi dati${PIANO_ATTIVO && PIANO_ATTIVO.professionistaUid && !AUTONOMO ? ", anche quelli che vede il tuo nutrizionista" : ""}. Per confermare scrivi <strong>ELIMINA</strong>.</p>
+        <label class="editor-campo"><input type="text" id="conferma-elimina-account" autocomplete="off" autocapitalize="characters"></label>
+        <p class="auth-error" id="errore-elimina-account" hidden></p>
+        <button type="button" class="btn btn--pericolo" id="btn-conferma-elimina-account" disabled>Elimina definitivamente</button>
+        <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+      const input = document.getElementById("conferma-elimina-account");
+      const conferma = document.getElementById("btn-conferma-elimina-account");
+      input.addEventListener("input", () => { conferma.disabled = input.value.trim().toUpperCase() !== "ELIMINA"; });
+      conferma.addEventListener("click", async () => {
+        conferma.disabled = true; conferma.textContent = "Eliminazione in corso…";
+        document.querySelectorAll("#sheet-overlay [data-chiudi-sheet]").forEach((b) => (b.disabled = true));
+        try {
+          await window.cloud.chiamaFunzione("eliminaAccount");
+          chiudiSheet();
+          await window.cloud.logout().catch(() => {});
+          mostraToast("Account eliminato. Grazie per aver usato Il mio Piano.", 5000);
+        } catch (e) {
+          const err = document.getElementById("errore-elimina-account");
+          err.textContent = /professionista/.test(String(e && e.message)) ? "Per eliminare un account professionista scrivi a info@ilmiopiano.it." : "Eliminazione non riuscita: controlla la connessione e riprova.";
+          err.hidden = false;
+          conferma.disabled = false; conferma.textContent = "Elimina definitivamente";
+          document.querySelectorAll("#sheet-overlay [data-chiudi-sheet]").forEach((b) => (b.disabled = false));
+        }
+      });
+      input.focus();
+    });
+  }
+
   /** Il paziente gestisce da solo il proprio piano (registrato dall'app, non collegato). */
   function gestisceIlPiano() {
     return RUOLO === "paziente" && !!PIANO_ATTIVO && PIANO_ATTIVO.gestore === "paziente";
@@ -2281,6 +2391,7 @@
         <p class="hint">Correggi un pasto, copia una settimana o carica il nuovo piano quando il nutrizionista te lo cambia.</p>
         <button type="button" class="btn" data-mio-piano="modifica">Gestisci il mio piano</button>
       </section>` : ""}
+      ${AUTONOMO ? nutrizionistaSezioneHTML() : ""}
       <section class="settings-section">
         <h2>Promemoria pasti</h2>
         <p class="hint">Un avviso sul telefono prima di ogni pasto, con il menu del momento — anche ad app chiusa.</p>
@@ -2352,8 +2463,11 @@
         ` : `<p class="hint">Nessun piano assegnato ancora.</p>`}
         <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
       </section>`}
+      ${eliminaAccountSezioneHTML()}
     `;
     collegaPulsantiMioPiano(root, "impostazioni");
+    collegaSezioneNutrizionista();
+    collegaEliminaAccount();
     const verificaPremium = document.getElementById("btn-verifica-premium");
     if (verificaPremium) verificaPremium.addEventListener("click", () => { TENTATIVI_PREMIUM = 0; aggiornaPremium(true); });
 
@@ -2895,7 +3009,13 @@
         <h2>Le ricette del tuo nutrizionista</h2>
         <p>Qui compaiono le ricette che il tuo nutrizionista prepara per te, con ingredienti e procedimento.</p>
         <p class="hint">Se il tuo nutrizionista usa Il mio Piano, chiedigli il suo codice studio: quando ti colleghi, le sue ricette arrivano qui.</p>
+        ${AUTONOMO ? `<button type="button" class="btn btn--ghost" id="btn-ricette-codice">Inserisci il codice studio</button>` : ""}
       </section>`;
+      const vai = document.getElementById("btn-ricette-codice");
+      if (vai) vai.addEventListener("click", () => {
+        attivaTab("impostazioni"); render();
+        setTimeout(() => { const el = document.getElementById("sezione-nutrizionista"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 50);
+      });
       return;
     }
     if (!RIC.pronte) {
@@ -6530,9 +6650,50 @@
         </div>
         <button type="button" class="btn" id="btn-salva-profilo" style="margin-top:16px;">Salva dati di contatto</button>
       </section>
+      ${codiceStudioSezioneHTML()}
     `;
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-salva-profilo").addEventListener("click", salvaProfiloProfessionista);
+    caricaCodiceStudio();
+  }
+
+  // ---- Codice studio: i pazienti che usano già l'app si collegano con questo ----
+  function codiceStudioSezioneHTML() {
+    return `
+      <section class="settings-section" id="sezione-codice-studio">
+        <h2>Il tuo codice studio</h2>
+        <p class="hint">Se un paziente usa già Il mio Piano per conto suo, dagli questo codice: lo inserisce nelle sue Impostazioni e compare tra i tuoi pazienti con il piano e l'andamento che ha già. Da quel momento il piano lo gestisci tu e il paziente ha Premium incluso.</p>
+        <p class="codice-studio" id="codice-studio-valore">…</p>
+        <div class="import-azioni">
+          <button type="button" class="btn btn--ghost" id="btn-copia-codice" disabled>Copia il codice</button>
+          <button type="button" class="btn btn--ghost" id="btn-condividi-codice" disabled>Invia al paziente</button>
+        </div>
+      </section>`;
+  }
+
+  async function caricaCodiceStudio() {
+    const box = document.getElementById("codice-studio-valore");
+    if (!box || !window.cloud.chiamaFunzione) return;
+    try {
+      const r = await window.cloud.chiamaFunzione("codiceStudio");
+      if (!document.getElementById("codice-studio-valore")) return;
+      box.textContent = r.codice;
+      const testo = `Per collegare la tua app Il mio Piano al mio studio apri Impostazioni → Il tuo nutrizionista e inserisci il codice ${r.codice}`;
+      const copia = document.getElementById("btn-copia-codice");
+      const condividi = document.getElementById("btn-condividi-codice");
+      copia.disabled = false; condividi.disabled = false;
+      copia.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(r.codice); mostraToast("Codice copiato"); }
+        catch (e) { mostraToast(`Il codice è ${r.codice}`); }
+      });
+      condividi.addEventListener("click", async () => {
+        if (navigator.share) { try { await navigator.share({ text: testo }); } catch (e) { /* annullato */ } return; }
+        try { await navigator.clipboard.writeText(testo); mostraToast("Messaggio copiato: incollalo dove vuoi"); }
+        catch (e) { mostraToast(testo, 6000); }
+      });
+    } catch (e) {
+      box.textContent = "Non disponibile in questo momento: riprova più tardi.";
+    }
   }
 
   async function salvaProfiloProfessionista() {
@@ -6616,9 +6777,11 @@
     try {
       // Prima le eventuali richieste di appuntamento del paziente, poi il resto.
       if (piano.pazienteUid) await window.cloud.eliminaRichiesteDelPaziente(UID, piano.pazienteUid).catch(() => {});
-      await window.cloud.eliminaPaziente(piano.id);
+      const esito = await window.cloud.eliminaPaziente(piano.id);
       chiudiSheet();
-      mostraToast(`${piano.pazienteNome || "Paziente"} eliminato`);
+      mostraToast(esito && esito.scollegato
+        ? `${piano.pazienteNome || "Paziente"} scollegato: si era iscritto da solo, quindi mantiene il suo account e il suo piano`
+        : `${piano.pazienteNome || "Paziente"} eliminato`, esito && esito.scollegato ? 5000 : 2500);
       renderListaPazienti();
     } catch (e) {
       errEl.textContent = traduciErroreEliminazione(e);
@@ -6652,6 +6815,7 @@
       <section class="settings-section">
         <h2>Crea un nuovo paziente</h2>
         <p class="hint">Viene creato subito l'accesso del paziente e un piano di partenza (schema di esempio a 5 settimane) che potrai modificare pasto per pasto qui dentro. Comunica tu stesso email e password provvisoria al paziente.</p>
+        <p class="stat-nota">Il paziente usa già l'app per conto suo? Non crearlo di nuovo: dagli il tuo <button type="button" class="link-btn link-btn--inline" id="btn-vai-codice-studio">codice studio</button>.</p>
         <label class="editor-campo"><span>Nome e cognome paziente</span><input type="text" id="np-nome" required></label>
         <label class="editor-campo"><span>Email di accesso</span><input type="email" id="np-email" required></label>
         <label class="editor-campo"><span>Password provvisoria</span><input type="text" id="np-password" value="${passwordGenerata}"></label>
@@ -6667,6 +6831,10 @@
     `;
 
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    document.getElementById("btn-vai-codice-studio").addEventListener("click", () => {
+      renderProfiloProfessionista();
+      setTimeout(() => { const el = document.getElementById("sezione-codice-studio"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 50);
+    });
     document.getElementById("btn-crea-paziente").addEventListener("click", onCreaPaziente);
   }
 
