@@ -2088,3 +2088,12 @@ body.con-informativa { overflow: hidden; }
 .codice-studio { font-size: 30px; font-weight: 700; letter-spacing: 6px; margin: 10px 0 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .link-btn.link-btn--inline { display: inline; width: auto; padding: 0; font-size: inherit; text-decoration: underline; }
 .btn.btn--ghost.btn--pericolo { background: transparent; color: #B3432F; border-color: rgba(179, 67, 47, 0.4); }
+
+/* Peso da crudo a cotto */
+.meal__cotto { margin-top: 8px; border: 1px solid var(--border-soft); background: transparent; color: var(--ink-soft); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.cotto-elenco { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 12px; }
+.cotto-voce > strong { display: block; font-size: 14.5px; }
+.cotto-voce > small { display: block; color: var(--ink-soft); font-size: 12.5px; }
+.cotto-voce ul { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 4px; }
+.cotto-voce ul li { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--ink-soft); border-bottom: 1px dashed var(--border-soft); padding-bottom: 3px; }
+.cotto-voce ul li b { color: var(--ink); font-weight: 600; }

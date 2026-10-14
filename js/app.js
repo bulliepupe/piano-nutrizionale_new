@@ -443,7 +443,11 @@
     aggiornaPremium();
     if (!avviaPaziente.collegato) {
       avviaPaziente.collegato = true;
-      document.addEventListener("click", (e) => { if (e.target.closest("[data-premium]")) apriPremium(); });
+      document.addEventListener("click", (e) => {
+        if (e.target.closest("[data-premium]")) { apriPremium(); return; }
+        const cotto = e.target.closest("[data-cotto]");
+        if (cotto) apriPesoCotto(cotto.dataset.cotto, cotto.dataset.cottoPasto);
+      });
       document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") aggiornaPremium(); });
     }
     mostraInformativaPrimoAccesso(utenteDati, "paziente");
@@ -674,6 +678,7 @@
     ["🛒", "Lista della spesa della settimana", "tutta la settimana, divisa in una o due spese, condivisibile in famiglia"],
     ["🥡", "Meal prep", "cosa preparare in anticipo per i pasti della settimana"],
     ["📈", "Andamento completo", "grafico del peso e storico delle misure"],
+    ["⚖️", "Peso da crudo a cotto", "quanto deve pesare il cibo già cotto quando non puoi pesarlo prima di cucinarlo"],
     ["📅", "Piano successivo programmato", "carichi il nuovo piano in anticipo: parte da solo nel giorno giusto, il vecchio resta in archivio"],
     ["📄", "Riepilogo per la visita", "un PDF con pasti, cambiamenti, peso e note da portare o inviare al nutrizionista"],
   ];
@@ -838,6 +843,78 @@
     });
   }
 
+  // ---- Peso da crudo a cotto (Premium) ----
+  const fmtG = (g) => `${g} g`;
+
+  function rigaConversioneHTML(r) {
+    const C = window.conversioni;
+    return r.voci.map((v) => {
+      const metodi = Object.keys(v.metodi);
+      return `<li class="cotto-voce">
+        <strong>${escapeHTML(r.testo)}</strong>${r.ambiguo ? `<small>${escapeHTML(v.nome)}</small>` : ""}
+        <ul>${metodi.map((m) => `<li><span>${metodi.length > 1 || v.id === "pesce" ? escapeHTML(m) : "da cotto"}</span><b>circa ${fmtG(C.daCrudoACotto(r.grammi, v.metodi[m]))}</b></li>`).join("")}</ul>
+      </li>`;
+    }).join("");
+  }
+
+  function notaFonteCottoHTML() {
+    return `<p class="hint" style="margin-top:12px;">Valori medi di riferimento (${window.conversioni.FONTE}), per alimenti al netto degli scarti: la resa reale cambia con tempo di cottura, taglio e condimento. Se il tuo nutrizionista ti ha dato indicazioni diverse, segui le sue.</p>`;
+  }
+
+  function apriPesoCotto(testo, pasto) {
+    if (premiumLimitato()) { apriPremium(); return; }
+    const righe = window.conversioni.riconosci(testo);
+    apriSheet(`
+      <h2 class="sheet__titolo">⚖️ ${escapeHTML(MEAL_META[pasto] ? MEAL_META[pasto].label : "Peso da cotto")}</h2>
+      <p class="sheet__nota">I pesi del piano sono a crudo. Se pesi l'alimento già cotto, punta a questi valori:</p>
+      <ul class="cotto-elenco">${righe.map(rigaConversioneHTML).join("")}</ul>
+      ${notaFonteCottoHTML()}
+      <button type="button" class="btn btn--ghost" id="btn-apri-calcolatore">Apri il calcolatore</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    document.getElementById("btn-apri-calcolatore").addEventListener("click", apriCalcolatoreCotto);
+  }
+
+  function apriCalcolatoreCotto() {
+    if (premiumLimitato()) { apriPremium(); return; }
+    const C = window.conversioni;
+    apriSheet(`
+      <h2 class="sheet__titolo">⚖️ Crudo e cotto</h2>
+      <label class="editor-campo"><span>Alimento</span>
+        <select id="calc-voce">${C.TABELLA.map((v) => `<option value="${v.id}">${escapeHTML(v.nome)}</option>`).join("")}</select></label>
+      <label class="editor-campo" id="calc-metodo-campo"><span>Cottura</span><select id="calc-metodo"></select></label>
+      <div class="ric-griglia">
+        <label class="editor-campo"><span>Peso a crudo (g)</span><input type="number" inputmode="numeric" id="calc-crudo" min="0" step="1"></label>
+        <label class="editor-campo"><span>Peso a cotto (g)</span><input type="number" inputmode="numeric" id="calc-cotto" min="0" step="1"></label>
+      </div>
+      ${notaFonteCottoHTML()}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    const selVoce = document.getElementById("calc-voce"), selMetodo = document.getElementById("calc-metodo");
+    const crudo = document.getElementById("calc-crudo"), cotto = document.getElementById("calc-cotto");
+    const fattore = () => C.voce(selVoce.value).metodi[selMetodo.value];
+    const aggiornaMetodi = () => {
+      const metodi = Object.keys(C.voce(selVoce.value).metodi);
+      selMetodo.innerHTML = metodi.map((m) => `<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join("");
+      document.getElementById("calc-metodo-campo").hidden = metodi.length < 2;
+    };
+    const daCrudo = () => { const g = Number(crudo.value); cotto.value = g > 0 ? C.daCrudoACotto(g, fattore()) : ""; };
+    const daCotto = () => { const g = Number(cotto.value); crudo.value = g > 0 ? C.daCottoACrudo(g, fattore()) : ""; };
+    selVoce.addEventListener("change", () => { aggiornaMetodi(); daCrudo(); });
+    selMetodo.addEventListener("change", daCrudo);
+    crudo.addEventListener("input", daCrudo);
+    cotto.addEventListener("input", daCotto);
+    aggiornaMetodi();
+  }
+
+  function calcolatoreSezioneHTML() {
+    if (RUOLO !== "paziente") return "";
+    return `
+      <section class="settings-section">
+        <h2>Crudo e cotto</h2>
+        <p class="hint">Converti il peso di pasta, riso, legumi, carne e pesce tra crudo e cotto, quando non puoi pesarli prima di cucinarli.</p>
+        <button type="button" class="btn btn--ghost" id="btn-calcolatore-cotto">${premiumLimitato() ? "🔒 " : "⚖️ "}Apri il calcolatore</button>
+      </section>`;
+  }
+
   // ---- Riepilogo per la visita (PDF) ----
   let jsPdfPromessa = null;
   function caricaJsPdf() {
@@ -902,6 +979,11 @@
       .replace(/→/g, "->").replace(/[^\x20-\x7E\xA0-\xFF\n]/g, "");
   }
 
+  function immagineDataUrl(url) {
+    return fetch(url).then((r) => { if (!r.ok) throw new Error("logo"); return r.blob(); })
+      .then((b) => new Promise((ok, ko) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = ko; fr.readAsDataURL(b); }));
+  }
+
   async function creaRiepilogoVisitaPdf() {
     const S = window.statistiche;
     const JsPDF = await caricaJsPdf();
@@ -930,8 +1012,18 @@
       doc.text(righe, M + ((opz && opz.rientro) || 0), y); y += righe.length * 5 + ((opz && opz.dopo) || 1.2);
     };
 
-    // Intestazione
-    doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(...verde);
+    // Carta intestata: logo, nome dell'app e sito
+    const logo = await immagineDataUrl("icons/icon-192.png").catch(() => null);
+    if (logo) doc.addImage(logo, "PNG", M, 10, 13, 13);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...verde);
+    doc.text("Il mio Piano", M + (logo ? 16 : 0), 17.5);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...grigio);
+    doc.text("Il tuo piano nutrizionale, ogni giorno", M + (logo ? 16 : 0), 22);
+    doc.text("ilmiopiano.it", M + L, 17.5, { align: "right" });
+    doc.setDrawColor(...verde); doc.setLineWidth(0.7); doc.line(M, 27, M + L, 27); doc.setLineWidth(0.2);
+    y = 38;
+    // Titolo
+    doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.setTextColor(...verde);
     doc.text("Riepilogo per la visita", M, y); y += 7;
     riga(`${nome ? nome + " - " : ""}dal ${data(dalGiorno)} al ${data(oggi)}`, { colore: grigio, dopo: 2 });
     doc.setDrawColor(200, 210, 195); doc.line(M, y, M + L, y); y += 3;
@@ -1022,7 +1114,9 @@
     const pagine = doc.getNumberOfPages();
     for (let i = 1; i <= pagine; i++) {
       doc.setPage(i); doc.setFontSize(8); doc.setTextColor(...grigio);
-      doc.text(testoPdf(`Preparato con Il mio Piano il ${data(oggi)} - pagina ${i} di ${pagine}`), M, 290);
+      doc.setDrawColor(200, 210, 195); doc.line(M, 285, M + L, 285);
+      doc.text(testoPdf(`Preparato con Il mio Piano il ${data(oggi)} - ilmiopiano.it`), M, 290);
+      doc.text(`Pagina ${i} di ${pagine}`, M + L, 290, { align: "right" });
     }
     const blob = doc.output("blob");
     const chiaveOggi = S.chiave(oggi);
@@ -1417,6 +1511,8 @@
             </div>
             ${riscontroPastoHTML(key, stato)}
           ` : ""}
+          ${RUOLO === "paziente" && window.conversioni && window.conversioni.riconosci(giorno[key]).length ? `
+            <button type="button" class="meal__cotto" data-cotto="${escapeHTML(giorno[key])}" data-cotto-pasto="${key}">${premiumLimitato() ? "🔒" : "⚖️"} Peso da cotto</button>` : ""}
           ${sost ? `
             <details class="meal__sostituzioni">
               <summary>Sostituisci (${escapeHTML(sost.nome)})</summary>
@@ -2628,6 +2724,7 @@
         <button type="button" class="btn" data-mio-piano="modifica">Gestisci il mio piano</button>
       </section>` : ""}
       ${riepilogoVisitaSezioneHTML()}
+      ${calcolatoreSezioneHTML()}
       ${AUTONOMO ? nutrizionistaSezioneHTML() : ""}
       <section class="settings-section">
         <h2>Promemoria pasti</h2>
@@ -2706,6 +2803,8 @@
     collegaSezioneNutrizionista();
     collegaEliminaAccount();
     collegaRiepilogoVisita();
+    const calc = document.getElementById("btn-calcolatore-cotto");
+    if (calc) calc.addEventListener("click", apriCalcolatoreCotto);
     const verificaPremium = document.getElementById("btn-verifica-premium");
     if (verificaPremium) verificaPremium.addEventListener("click", () => { TENTATIVI_PREMIUM = 0; aggiornaPremium(true); });
 
