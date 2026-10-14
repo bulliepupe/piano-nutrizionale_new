@@ -29,7 +29,7 @@
     { id: "orzo", nome: "Orzo perlato", metodi: { [BOLLITURA]: 2.67 }, parole: /\borzo\b/ },
     { id: "farro", nome: "Farro perlato", metodi: { [BOLLITURA]: 2.28 }, parole: /\bfarro\b/ },
     { id: "quinoa", nome: "Quinoa", metodi: { [BOLLITURA]: 3.12 }, parole: /\bquinoa\b/ },
-    { id: "couscous", nome: "Cous cous", metodi: { [BOLLITURA]: 2.25 }, parole: /\b(cous ?cous|cuscus)\b/ },
+    { id: "couscous", nome: "Cous cous", metodi: { [BOLLITURA]: 2.25 }, parole: /\b(cous[ -]?cous|cuscus)\b/ },
     { id: "polenta", nome: "Farina di mais (polenta)", metodi: { [BOLLITURA]: 4.85 }, parole: /\b(polenta|farina di mais)\b/ },
     { id: "patate", nome: "Patate", metodi: { [BOLLITURA]: 0.94 }, parole: /\bpatat[ae]\b/ },
     { id: "legumiSecchi", nome: "Legumi secchi", metodi: { [BOLLITURA]: 2.70 }, parole: null },
@@ -43,14 +43,14 @@
     { id: "verdure", nome: "Verdure (zucchine, carote, peperoni…)", metodi: { [BOLLITURA]: 0.87, "in padella con olio": 0.53, "al forno o grigliate": 0.65 },
       parole: /\b(verdur\w*|ortagg\w*|zucchin\w*|carot\w*|melanzan\w*|peperon\w*|fagiolin\w*|zucca|cipoll\w*|carciof\w*|porr\w*|funghi|champignon|sedano|pomodor\w*|cornett\w*|minestrone|misto di verdure)\b/ },
     { id: "pesce", nome: "Pesce", metodi: { [BOLLITURA]: 0.84, "al vapore": 0.84, "in padella con olio": 0.64, "arrosto o al forno": 0.72 },
-      parole: /\b(pesce|merluzz\w*|nasell\w*|orat\w*|branzin\w*|spigol\w*|salmone|sogliol\w*|platess\w*|trot\w*|pesce spada|palombo|baccal[aà]|sgombr\w*|alici|acciugh\w*|dentice|cernia|halibut|rombo|tonno fresco)\b/ },
+      parole: /\b(pesce|merluzz\w*|nasell\w*|orat\w*|branzin\w*|spigol\w*|salmone|sogliol\w*|platess\w*|trot\w*|pesce spada|palombo|baccal[aà]|sgombr\w*|alici|acciugh\w*|dentice|cernia|halibut|rombo|tonno fresco|trancio di tonno|tonno)\b/ },
     { id: "carneBianca", nome: "Carne bianca (pollo, tacchino…)", metodi: { [BOLLITURA]: 0.83, "al vapore": 0.62, "in padella con olio": 0.84, "arrosto o al forno": 0.78 },
       parole: /\b(pollo|tacchino|coniglio|petto di pollo|fesa di tacchino|sovracosci\w*|carne bianca)\b/ },
     { id: "carneRossa", nome: "Carne rossa (manzo, vitello…)", metodi: { [BOLLITURA]: 0.64, "al vapore": 0.63, "in padella con olio": 0.79, "arrosto o al forno": 0.80 },
       parole: /\b(manzo|vitell\w*|maiale|bovin\w*|carne rossa|hamburger|bistecc\w*|lonza|filetto|cavallo|agnello|macinat\w*|fesa di vitello|tagliata)\b/ },
   ];
 
-  const LEGUMI = /\b(legumi|lenticchi\w*|ceci|fagiol\w*|piselli|fave|cicerch\w*|edamame|soia)\b/;
+  const LEGUMI = /\b(legumi|lenticchi\w*|ceci|fagiol\w*|cannellini|borlotti|piselli|fave|cicerch\w*|edamame|soia|azuki)\b/;
   // testi che non sono alimenti da cuocere (es. "prosciutto cotto", "tonno al naturale")
   const ESCLUSI = /\b(prosciutto|tonno al naturale|tonno sott'olio|in scatola gi[aà] cott\w*|crackers?|gallette|grissini|pane|farina integrale)\b/;
 
@@ -75,14 +75,21 @@
   }
 
   // Alimenti che non si cuociono o non cambiano peso: non si chiede nemmeno la stima all'AI
-  const NON_DA_STIMARE = /\b(olio|evo|miele|zucchero|marmellata|confettura|parmigiano|grana|formagg\w*|yogurt|latte|kefir|pane|crackers?|gallett\w*|grissini|fette biscottate|biscott\w*|frutta|mel[ae]|banan\w*|arance?|kiwi|fragol\w*|noci|mandorl\w*|nocciol\w*|cioccolat\w*|cacao|caff[eè]|t[eè]|tisana|acqua|succo|bresaola|prosciutto|speck|affettat\w*|salmone affumicato|insalata|rucola|lattuga|valeriana|songino|cetriol\w*|ravanell\w*|olive|aceto|sale|spezie|limone|pomodorini)\b/;
+  const NON_DA_STIMARE = /\b(olio|evo|miele|zucchero|marmellata|confettura|parmigiano|grana|pecorino|formagg\w*|mozzarell\w*|ricott\w*|robiola|stracchino|crescenza|fiocchi di latte|feta|quark|skyr|philadelphia|spalmabile|burrata|scamorza|provola|emmental|yogurt|latte|kefir|panna|burro|pane|crackers?|gallett\w*|grissini|fette biscottate|biscott\w*|cereali|muesli|granola|frutta|frutti di bosco|mel[ae]|per[ae]|banan\w*|arance?|mandarin\w*|clementin\w*|kiwi|fragol\w*|albicocc\w*|pesc[ae]|prugn\w*|susin\w*|cilieg\w*|uva|ananas|mango|melone|anguria|fich[io]|cachi|mirtill\w*|lamponi|more|datteri|noci|mandorl\w*|nocciol\w*|pistacch\w*|anacardi|semi|cioccolat\w*|cacao|caff[eè]|t[eè]|tisana|acqua|succo|bresaola|prosciutto|speck|affettat\w*|salmone affumicato|insalata|rucola|lattuga|valeriana|songino|cetriol\w*|ravanell\w*|olive|aceto|sale|spezie|limone|pomodorini|pesto|hummus|salsa|sugo|maionese|ketchup|senape|proteine in polvere|whey)\b/;
+
+  // Parole da togliere dal nome (cotture, aggettivi): "albume strapazzato" e "albumi" diventano "albume"
+  const QUALIFICHE = /\b(cott[oiae]|crud[oiae]|lessat[oiae]|bollit[oiae]|strapazzat[oiae]|grigliat[oiae]|arrost[oi]|al forno|alla piastra|alla griglia|in padella|al vapore|in umido|magr[oiae]|light|fresc[oiae]|freschi|surgelat[oiae]|scongelat[oiae]|integral[ei]|biologic[oiae]|bio|naturale|sgocciolat[oiae]|tritat[oiae]|a cubetti|a fette|trancio di|filett[oi] di|fett[ae] di|petto di|porzione di|tipo|circa)\b/g;
+  const SINGOLARE = { albumi: "albume", uova: "uovo", tuorli: "tuorlo", gamberi: "gambero", calamari: "calamaro", funghi: "fungo", polpette: "polpetta", burger: "burger", hamburger: "hamburger" };
 
   /** Nome dell'alimento in un tratto, per l'archivio delle stime (minuscolo, senza pesi né parentesi). */
   function nomeAlimento(tratto) {
     let t = String(tratto || "");
     if (t.includes("(")) t = t.slice(t.lastIndexOf("(") + 1);
     t = normalizza(t).replace(/\d+(?:[.,]\d+)?\s*(?:g|gr|grammi|ml)\b/g, " ")
-      .replace(/[()\[\]{}"“”.:;!?*]/g, " ").replace(/\b\d+\b/g, " ").replace(/\s+/g, " ").trim();
+      .replace(/[()\[\]{}"“”.:;!?*]/g, " ").replace(/\b\d+\b/g, " ")
+      .replace(QUALIFICHE, " ").replace(/\b(di|da|del|della|dei|delle|al|alla|allo|in|con)\s*$/g, " ")
+      .replace(/\s+/g, " ").trim();
+    t = t.split(" ").map((w) => SINGOLARE[w] || w).join(" ");
     return t.slice(0, 40);
   }
 
@@ -96,7 +103,7 @@
    * Si considerano solo i tratti con un peso in grammi.
    */
   function trattiConPeso(testoPasto) {
-    const tratti = String(testoPasto || "").split(/\s*(?:\+|,|;|\be\b|\bcon\b|\boppure\b|\/|\n)\s*/i).filter(Boolean);
+    const tratti = String(testoPasto || "").split(/\s*(?:\+|,|;|\be\b|\bo\b|\bcon\b|\boppure\b|\/|\n)\s*/i).filter(Boolean);
     const out = [];
     tratti.forEach((tratto) => {
       const m = normalizza(tratto).match(/(\d+(?:[.,]\d+)?)\s*(?:g|gr|grammi)\b/);
@@ -137,7 +144,7 @@
       const t = normalizza(tratto);
       if (ESCLUSI.test(t) || NON_DA_STIMARE.test(t)) return;
       const nome = nomeAlimento(tratto);
-      if (nome.length < 3 || (reseAI && reseAI[chiaveAlimento(nome)])) return;
+      if (nome.length < 3 || /^(cott|crud|pasto|piatto|porzion|contorno|secondo|primo)/.test(nome) || (reseAI && reseAI[chiaveAlimento(nome)])) return;
       nomi.push(nome);
     });
     return nomi;
