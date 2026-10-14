@@ -107,6 +107,47 @@ function pastoDaNotificareOra(oraCorrente, orarioPastoStr, anticipoMinuti, fines
   return diffMinuti >= 0 && diffMinuti < finestraMinuti;
 }
 
+/**
+ * Ogni notte rende definitivi i piani successivi programmati arrivati alla
+ * loro data: il piano in uso finisce in piani/{id}/archivio, quello
+ * programmato diventa il piano attuale. (Nel frattempo app e promemoria
+ * usano già il piano giusto grazie a weekLogic.pianoEffettivo.)
+ */
+exports.applicaPianiProgrammati = onSchedule(
+  { schedule: "5 0 * * *", timeZone: "Europe/Rome" },
+  async () => {
+    const oggi = chiaveData(oraItaliana(new Date()));
+    const snap = await db.collection("piani").where("prossimo.dataInizio", "<=", oggi).get();
+    for (const doc of snap.docs) {
+      const p = doc.data();
+      const pr = p.prossimo;
+      if (!pr || !pr.settimane || typeof pr.dataInizio !== "string") continue;
+      const fine = new Date(`${pr.dataInizio}T12:00:00`);
+      fine.setDate(fine.getDate() - 1);
+      const batch = db.batch();
+      batch.set(doc.ref.collection("archivio").doc(), {
+        settimane: p.settimane || {},
+        normeGenerali: p.normeGenerali || [],
+        sostituzioni: p.sostituzioni || [],
+        dataInizio: p.dataInizio || null,
+        settimanaIniziale: p.settimanaIniziale || 1,
+        fino: chiaveData(fine),
+        archiviato: FieldValue.serverTimestamp(),
+      });
+      batch.update(doc.ref, {
+        settimane: pr.settimane,
+        normeGenerali: pr.normeGenerali || p.normeGenerali || [],
+        sostituzioni: pr.sostituzioni || p.sostituzioni || [],
+        dataInizio: pr.dataInizio,
+        settimanaIniziale: pr.settimanaIniziale || 1,
+        prossimo: FieldValue.delete(),
+        aggiornato: FieldValue.serverTimestamp(),
+      });
+      await batch.commit();
+    }
+  }
+);
+
 exports.controllaPromemoria = onSchedule(
   { schedule: "every 5 minutes", timeZone: "Europe/Rome" },
   async () => {

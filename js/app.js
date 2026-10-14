@@ -66,6 +66,7 @@
 
   // ---- stato lato paziente ----
   let PIANO_ATTIVO = null; // piano corrente letto da Firestore in tempo reale
+  let PIANO_GREZZO = null; // come salvato (con l'eventuale piano programmato in "prossimo")
   let ATTESA_REGISTRAZIONE = null; // registrazione del paziente autonomo in corso
   let REGISTRAZIONE_PAZIENTE_APERTA = false; // pulsante pubblico (config.json → registrazionePaziente)
   let PASTI_FATTI_OGGI = {};
@@ -456,7 +457,9 @@
     // Piano in tempo reale: si aggiorna da solo se il professionista lo modifica,
     // anche da un altro dispositivo — questo è il "cloud sync" richiesto.
     unsubPiano = window.cloud.ascoltaPianoPaziente(UID, (piano) => {
-      PIANO_ATTIVO = piano;
+      // se il piano programmato è già partito vale quello (il server lo rende definitivo di notte)
+      PIANO_GREZZO = piano;
+      PIANO_ATTIVO = piano ? window.weekLogic.pianoEffettivo(piano, new Date()) : piano;
       if (piano) collegaRicettePaziente();
       if (piano) pubblicaPianoInLista();
       collegaMisurePaziente();
@@ -671,6 +674,8 @@
     ["🛒", "Lista della spesa della settimana", "tutta la settimana, divisa in una o due spese, condivisibile in famiglia"],
     ["🥡", "Meal prep", "cosa preparare in anticipo per i pasti della settimana"],
     ["📈", "Andamento completo", "grafico del peso e storico delle misure"],
+    ["📅", "Piano successivo programmato", "carichi il nuovo piano in anticipo: parte da solo nel giorno giusto, il vecchio resta in archivio"],
+    ["📄", "Riepilogo per la visita", "un PDF con pasti, cambiamenti, peso e note da portare o inviare al nutrizionista"],
   ];
 
   function bannerPremiumHTML() {
@@ -833,6 +838,197 @@
     });
   }
 
+  // ---- Riepilogo per la visita (PDF) ----
+  let jsPdfPromessa = null;
+  function caricaJsPdf() {
+    if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+    if (!jsPdfPromessa) {
+      jsPdfPromessa = new Promise((ok, ko) => {
+        const s = document.createElement("script");
+        s.src = "js/vendor/jspdf/jspdf.umd.min.js";
+        s.onload = () => (window.jspdf && window.jspdf.jsPDF ? ok(window.jspdf.jsPDF) : ko(new Error("jspdf")));
+        s.onerror = () => { jsPdfPromessa = null; ko(new Error("jspdf-non-trovato")); };
+        document.head.appendChild(s);
+      });
+    }
+    return jsPdfPromessa;
+  }
+
+  function riepilogoVisitaSezioneHTML() {
+    if (RUOLO !== "paziente" || !PIANO_ATTIVO) return "";
+    return `
+      <section class="settings-section">
+        <h2>Visita dal nutrizionista</h2>
+        <p class="hint">Prepara un riepilogo in PDF degli ultimi 30 giorni da portare alla visita o da inviare al nutrizionista: pasti rispettati, cosa è cambiato e perché, peso e misure, le tue note.</p>
+        <button type="button" class="btn ${premiumLimitato() ? "btn--ghost" : ""}" id="btn-riepilogo-visita">${premiumLimitato() ? "🔒 " : ""}Prepara il riepilogo (PDF)</button>
+      </section>`;
+  }
+
+  function collegaRiepilogoVisita() {
+    const btn = document.getElementById("btn-riepilogo-visita");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      if (premiumLimitato()) { apriPremium(); return; }
+      btn.disabled = true; btn.textContent = "Preparo il riepilogo…";
+      try {
+        const file = await creaRiepilogoVisitaPdf();
+        await condividiOScaricaFile(file);
+      } catch (e) {
+        console.warn(e);
+        mostraToast("Non sono riuscito a preparare il riepilogo: controlla la connessione e riprova", 4500);
+      } finally {
+        btn.disabled = false; btn.textContent = "Prepara il riepilogo (PDF)";
+      }
+    });
+  }
+
+  async function condividiOScaricaFile(file) {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: file.name }); return; }
+      catch (e) { if (e && e.name === "AbortError") return; }
+    }
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url; a.download = file.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    mostraToast("Riepilogo scaricato", 3000);
+  }
+
+  /** Testo sicuro per i caratteri del PDF (niente emoji né simboli fuori dall'alfabeto latino). */
+  function testoPdf(t) {
+    return String(t == null ? "" : t)
+      .replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...")
+      .replace(/→/g, "->").replace(/[^\x20-\x7E\xA0-\xFF\n]/g, "");
+  }
+
+  async function creaRiepilogoVisitaPdf() {
+    const S = window.statistiche;
+    const JsPDF = await caricaJsPdf();
+    const oggi = new Date();
+    const { utente, spunte } = await window.cloud.leggiDatiStatistiche(UID, S.primoGiornoStorico(oggi));
+    const piano = PIANO_ATTIVO;
+    const creato = utente && utente.creato && typeof utente.creato.toDate === "function" ? S.chiave(utente.creato.toDate()) : null;
+    const inizio = [piano.dataInizio || null, creato].filter(Boolean).sort().pop() || null;
+    const r = S.calcola({ spunte, inizio });
+    const nome = (utente && utente.nome) || piano.pazienteNome || "";
+    const dalGiorno = new Date(oggi); dalGiorno.setDate(dalGiorno.getDate() - 30);
+    const data = (d) => `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+    const pct = (v) => (v == null ? "-" : `${Math.round(v * 100)}%`);
+
+    const doc = new JsPDF({ unit: "mm", format: "a4" });
+    const M = 16, L = 210 - 2 * M;
+    let y = 18;
+    const verde = [30, 54, 42], grigio = [100, 110, 100];
+    const nuovaPaginaSeServe = (h) => { if (y + h > 280) { doc.addPage(); y = 18; } };
+    const titolo = (t) => { nuovaPaginaSeServe(14); y += 4; doc.setFont("helvetica", "bold"); doc.setFontSize(12.5); doc.setTextColor(...verde); doc.text(testoPdf(t), M, y); y += 6.5; };
+    const riga = (t, opz) => {
+      doc.setFont("helvetica", (opz && opz.bold) ? "bold" : "normal"); doc.setFontSize((opz && opz.size) || 10.5);
+      doc.setTextColor(...((opz && opz.colore) || [30, 30, 30]));
+      const righe = doc.splitTextToSize(testoPdf(t), L - ((opz && opz.rientro) || 0));
+      nuovaPaginaSeServe(righe.length * 5);
+      doc.text(righe, M + ((opz && opz.rientro) || 0), y); y += righe.length * 5 + ((opz && opz.dopo) || 1.2);
+    };
+
+    // Intestazione
+    doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(...verde);
+    doc.text("Riepilogo per la visita", M, y); y += 7;
+    riga(`${nome ? nome + " - " : ""}dal ${data(dalGiorno)} al ${data(oggi)}`, { colore: grigio, dopo: 2 });
+    doc.setDrawColor(200, 210, 195); doc.line(M, y, M + L, y); y += 3;
+
+    // Aderenza
+    titolo("Quanto ho seguito il piano");
+    if (!r.pianoIniziato || !r.giorniValutati30) {
+      riga("Il piano è iniziato da poco: non ci sono ancora giorni completi da valutare.");
+    } else {
+      riga(`Aderenza negli ultimi 30 giorni: ${pct(r.aderenza30)} (ultimi 7 giorni: ${pct(r.aderenza7)})`, { bold: true });
+      riga(`Giorni feriali ${pct(r.feriali)} - fine settimana ${pct(r.weekend)}. Giornate rispettate di fila: ${r.serie} (record ${r.record}).`);
+      riga("Un pasto fatto come previsto conta 1, fatto diversamente o in parte 0,5, saltato o non segnato 0.", { colore: grigio, size: 9 });
+      // tabella per pasto
+      y += 1;
+      const col = [M, M + 52, M + 82, M + 112, M + 137, M + 160];
+      const intest = ["Pasto", "Come previsto", "Diversamente", "In parte", "Saltato", "Non segnato"];
+      nuovaPaginaSeServe(8 + r.perPasto.length * 6);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...grigio);
+      intest.forEach((t, i) => doc.text(t, col[i], y)); y += 5.5;
+      doc.setFont("helvetica", "normal"); doc.setTextColor(30, 30, 30);
+      r.perPasto.forEach((p) => {
+        const c = p.conta;
+        [MEAL_META[p.pasto].label, c.fatto, c.diverso, c.parziale, c.saltato, c.nonSegnato]
+          .forEach((t, i) => doc.text(testoPdf(String(t)), col[i], y));
+        y += 5.5;
+      });
+    }
+
+    // Cosa è cambiato e perché
+    const im = r.imprevisti;
+    const totaleImprevisti = im.diverso.totale + im.parziale.totale + im.saltato.totale;
+    titolo("Cosa è cambiato e perché");
+    if (!totaleImprevisti) riga("Nessun pasto segnato come fatto diversamente, in parte o saltato.");
+    else {
+      const desc = (g, nomeGruppo) => {
+        if (!g.totale) return;
+        const pasti = Object.keys(g.perPasto).sort((a, b) => g.perPasto[b] - g.perPasto[a]).map((k) => `${MEAL_META[k].label.toLowerCase()} ${g.perPasto[k]}`).join(", ");
+        const motivi = Object.keys(g.motivi).sort((a, b) => g.motivi[b] - g.motivi[a]).map((k) => `${S.MOTIVI[k].toLowerCase()} (${g.motivi[k]})`).join(", ");
+        riga(`${nomeGruppo}: ${g.totale} - ${pasti}${motivi ? `. Motivi: ${motivi}` : ""}`);
+      };
+      desc(im.diverso, "Fatti diversamente");
+      desc(im.parziale, "Fatti in parte");
+      desc(im.saltato, "Saltati");
+    }
+
+    // Peso e misure
+    const misure = (MISURE.lista || []).slice().sort((a, b) => (a.data < b.data ? -1 : 1));
+    titolo("Peso e misure");
+    if (!misure.length) riga("Nessuna misura registrata.");
+    else {
+      const prima = misure[0], ultima = misure[misure.length - 1];
+      const kg = (n) => `${String(Math.round(n * 10) / 10).replace(".", ",")} kg`;
+      const dataIt = (k) => { const d = S.daChiave(k); return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`; };
+      riga(`Ultimo peso: ${kg(ultima.peso)} il ${dataIt(ultima.data)}${misure.length > 1 ? ` - variazione dal ${dataIt(prima.data)}: ${(ultima.peso - prima.peso >= 0 ? "+" : "") + String(Math.round((ultima.peso - prima.peso) * 10) / 10).replace(".", ",")} kg` : ""}`, { bold: true });
+      const altre = [["vita", "Vita"], ["fianchi", "Fianchi"]].filter(([k]) => ultima[k] != null).map(([k, n]) => `${n} ${String(ultima[k]).replace(".", ",")} cm`);
+      if (altre.length) riga(`Ultime circonferenze: ${altre.join(", ")}`);
+      // grafico del peso
+      if (misure.length >= 2) {
+        nuovaPaginaSeServe(48);
+        const gx = M, gy = y + 2, gw = L, gh = 38;
+        const pesi = misure.map((m) => m.peso);
+        const min = Math.min(...pesi) - 0.5, max = Math.max(...pesi) + 0.5;
+        const t0 = S.daChiave(prima.data).getTime(), t1 = Math.max(S.daChiave(ultima.data).getTime(), t0 + 86400000);
+        const px = (k) => gx + 12 + ((S.daChiave(k).getTime() - t0) / (t1 - t0)) * (gw - 16);
+        const py = (v) => gy + gh - ((v - min) / (max - min)) * gh;
+        doc.setDrawColor(215, 222, 210); doc.setLineWidth(0.2);
+        [min + 0.5, (min + max) / 2, max - 0.5].forEach((v) => { doc.line(gx + 10, py(v), gx + gw, py(v)); doc.setFontSize(7.5); doc.setTextColor(...grigio); doc.text(String(Math.round(v * 10) / 10).replace(".", ","), gx, py(v) + 1); });
+        doc.setDrawColor(...verde); doc.setLineWidth(0.6);
+        for (let i = 1; i < misure.length; i++) doc.line(px(misure[i - 1].data), py(misure[i - 1].peso), px(misure[i].data), py(misure[i].peso));
+        doc.setFillColor(...verde);
+        misure.forEach((m) => doc.circle(px(m.data), py(m.peso), 0.9, "F"));
+        doc.setFontSize(7.5); doc.setTextColor(...grigio);
+        doc.text(dataIt(prima.data), gx + 12, gy + gh + 5); doc.text(dataIt(ultima.data), gx + gw - 14, gy + gh + 5);
+        y = gy + gh + 9;
+        doc.setLineWidth(0.2);
+      }
+    }
+
+    // Note
+    titolo("Le mie note");
+    if (!im.note.length) riga("Nessuna nota scritta.");
+    else im.note.forEach((n) => {
+      const d = S.daChiave(n.giorno);
+      riga(`${d.getDate()}/${d.getMonth() + 1} - ${MEAL_META[n.pasto].label}: "${n.nota}"`, { size: 10 });
+    });
+
+    // Piè di pagina
+    const pagine = doc.getNumberOfPages();
+    for (let i = 1; i <= pagine; i++) {
+      doc.setPage(i); doc.setFontSize(8); doc.setTextColor(...grigio);
+      doc.text(testoPdf(`Preparato con Il mio Piano il ${data(oggi)} - pagina ${i} di ${pagine}`), M, 290);
+    }
+    const blob = doc.output("blob");
+    const chiaveOggi = S.chiave(oggi);
+    return new File([blob], `riepilogo-visita-${chiaveOggi}.pdf`, { type: "application/pdf" });
+  }
+
   /** Il paziente gestisce da solo il proprio piano (registrato dall'app, non collegato). */
   function gestisceIlPiano() {
     return RUOLO === "paziente" && !!PIANO_ATTIVO && PIANO_ATTIVO.gestore === "paziente";
@@ -950,6 +1146,43 @@
     window.scrollTo(0, 0);
   }
 
+  /** Il piano ha già dei pasti scritti (per proporre la programmazione del successivo). */
+  function pianoHaPasti(piano) {
+    return Object.values((piano && piano.settimane) || {}).some((g) => Array.isArray(g) && g.some((d) => d && MEAL_KEYS.some((k) => typeof d[k] === "string" && d[k].trim().length > 1 && d[k] !== DA_COMPILARE)));
+  }
+
+  /** Piano successivo programmato ancora da partire (o null). */
+  function pianoProgrammato(piano) {
+    const pr = piano && piano.prossimo;
+    return pr && typeof pr.dataInizio === "string" && pr.settimane && pr.dataInizio > oggiISO() ? pr : null;
+  }
+
+  function dataLunga(chiave) {
+    const d = window.statistiche.daChiave(chiave);
+    return d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+  }
+
+  function avvisoProgrammatoHTML(piano, conAnnulla) {
+    const pr = pianoProgrammato(piano);
+    if (!pr) return "";
+    return `<div class="nota-versione">📅 Dal <strong>${escapeHTML(dataLunga(pr.dataInizio))}</strong> parte il nuovo piano (dalla Settimana ${pr.settimanaIniziale || 1}). Fino ad allora resta quello attuale.
+      ${conAnnulla ? `<button type="button" class="link-btn link-btn--inline" id="btn-annulla-programmato">Annulla il piano programmato</button>` : ""}</div>`;
+  }
+
+  function collegaAnnullaProgrammato(piano, dopo) {
+    const b = document.getElementById("btn-annulla-programmato");
+    if (!b) return;
+    b.addEventListener("click", async () => {
+      if (!window.confirm("Annullare il piano programmato? Il piano attuale resterà in uso.")) return;
+      try {
+        await window.cloud.salvaPiano(piano.id, { prossimo: null });
+        piano.prossimo = null;
+        mostraToast("Piano programmato annullato");
+        if (dopo) dopo();
+      } catch (err) { mostraToast(msgErroreScrittura(err, "Non riuscito: controlla la connessione"), 4000); }
+    });
+  }
+
   /** Data di inizio e settimana del piano da cui partire (per paziente e professionista). */
   function sceltaInizioHTML(dataInizio, settimanaIniziale, numeri) {
     const sel = numeri.includes(Number(settimanaIniziale)) ? Number(settimanaIniziale) : numeri[0];
@@ -981,6 +1214,7 @@
         ${!disponibili.length ? `<p class="hint">Il piano è ancora vuoto.</p>` : mancano
           ? `<p class="hint">Scegli un giorno, scrivi i pasti e salva: si passa da solo al giorno dopo. ${mancano === 1 ? "Manca 1 pasto" : `Mancano ${mancano} pasti`}. Se le settimane si ripetono, compilane una e copiala nelle altre qui sotto.</p>`
           : `<p class="hint">Qui puoi correggere un pasto, copiare una settimana o caricare un nuovo piano quando il nutrizionista te lo cambia.</p>`}
+        ${avvisoProgrammatoHTML(PIANO_GREZZO || piano, true)}
         <button type="button" class="btn" id="btn-mio-piano-importa">${premiumLimitato() && PREMIUM.provaUsata ? "🔒" : "✨"} ${disponibili.length ? "Carica un nuovo piano (PDF o foto)" : "Carica il PDF o le foto del piano"}</button>
         ${premiumLimitato() && PREMIUM.provaUsata ? `<p class="stat-nota" style="margin-top:6px;">La lettura con l'AI fa parte di Premium. Puoi sempre modificare il piano a mano qui sotto.</p>` : ""}
         ${disponibili.length ? "" : `<button type="button" class="btn btn--ghost" id="btn-mio-piano-manuale" style="margin-top:8px;">Compila a mano</button>`}
@@ -1007,6 +1241,7 @@
       </section>` : ""}`;
     document.getElementById("btn-mio-piano-indietro").addEventListener("click", () => { attivaTab(EDITOR_PAZ.ritorno === "impostazioni" ? "impostazioni" : "oggi"); render(); });
     document.getElementById("btn-mio-piano-importa").addEventListener("click", avviaImportazionePaziente);
+    collegaAnnullaProgrammato(PIANO_GREZZO || piano, renderMioPiano);
     const manuale = document.getElementById("btn-mio-piano-manuale");
     if (manuale) manuale.addEventListener("click", creaBozzaManuale);
     if (!disponibili.length) return;
@@ -1110,6 +1345,7 @@
 
     root.innerHTML = `
       ${bannerPremiumHTML()}
+      ${avvisoProgrammatoHTML(PIANO_GREZZO, false)}
       ${renderBannerRiattivaHTML()}
       ${renderAvvisoAppuntamentoHTML()}
       ${avvisoPesataHTML()}
@@ -2391,6 +2627,7 @@
         <p class="hint">Correggi un pasto, copia una settimana o carica il nuovo piano quando il nutrizionista te lo cambia.</p>
         <button type="button" class="btn" data-mio-piano="modifica">Gestisci il mio piano</button>
       </section>` : ""}
+      ${riepilogoVisitaSezioneHTML()}
       ${AUTONOMO ? nutrizionistaSezioneHTML() : ""}
       <section class="settings-section">
         <h2>Promemoria pasti</h2>
@@ -2468,6 +2705,7 @@
     collegaPulsantiMioPiano(root, "impostazioni");
     collegaSezioneNutrizionista();
     collegaEliminaAccount();
+    collegaRiepilogoVisita();
     const verificaPremium = document.getElementById("btn-verifica-premium");
     if (verificaPremium) verificaPremium.addEventListener("click", () => { TENTATIVI_PREMIUM = 0; aggiornaPremium(true); });
 
@@ -4622,6 +4860,8 @@
       <section class="settings-section">
         <h2>Quando inizia</h2>
         ${sceltaInizioHTML(IMPORTA.piano.dataInizio || lunediCorrenteISO(), IMPORTA.piano.settimanaIniziale, r.settimane.map((_, i) => i + 1))}
+        ${pianoHaPasti(IMPORTA.ctx.pianoCorrente()) ? `
+        <label class="check-riga" style="margin-top:10px;"><input type="checkbox" id="inizio-programma" checked> <span>Se la data è futura, tieni il piano attuale fino ad allora e passa a questo da quel giorno</span></label>` : ""}
       </section>
       <section class="settings-section">
         <h2>Regole generali</h2>
@@ -4689,15 +4929,25 @@
     if (!esito.ok) { mostraToast("Non salvato — " + esito.errori[0], 5000); return; }
     const inizio = leggiSceltaInizio();
     if (!inizio.dataInizio) { mostraToast("Indica la data di inizio del piano", 4000); return; }
-    const domanda = IMPORTA.ctx.conferma(piano);
+    const programma = !!(document.getElementById("inizio-programma") || {}).checked && inizio.dataInizio > oggiISO();
+    const domanda = programma ? null : IMPORTA.ctx.conferma(piano);
     if (domanda && !window.confirm(domanda)) return;
     const btn = document.getElementById("import-salva");
     btn.disabled = true;
     try {
-      const campi = Object.assign({}, esito.piano, inizio, IMPORTA.ctx.extra ? IMPORTA.ctx.extra(piano) : {});
-      await window.cloud.salvaPiano(piano.id, campi);
-      if (IMPORTA.ctx.paziente) Object.assign(PIANO_ATTIVO, campi);
-      mostraToast(IMPORTA.ctx.toastOk, 3500);
+      if (programma) {
+        // piano successivo programmato: quello attuale resta in uso fino alla data
+        const prossimo = { settimane: esito.piano.settimane, normeGenerali: esito.piano.normeGenerali, sostituzioni: esito.piano.sostituzioni,
+          dataInizio: inizio.dataInizio, settimanaIniziale: inizio.settimanaIniziale, caricato: Date.now() };
+        await window.cloud.salvaPiano(piano.id, { prossimo });
+        if (IMPORTA.ctx.paziente) PIANO_ATTIVO.prossimo = prossimo;
+        mostraToast(`Nuovo piano programmato: parte ${dataLunga(inizio.dataInizio)}`, 4000);
+      } else {
+        const campi = Object.assign({}, esito.piano, inizio, IMPORTA.ctx.extra ? IMPORTA.ctx.extra(piano) : {}, { prossimo: null });
+        await window.cloud.salvaPiano(piano.id, campi);
+        if (IMPORTA.ctx.paziente) Object.assign(PIANO_ATTIVO, campi);
+        mostraToast(IMPORTA.ctx.toastOk, 3500);
+      }
       if (IMPORTA.pdf) { try { IMPORTA.pdf.destroy(); } catch (e) { /* già chiuso */ } }
       IMPORTA.pdf = null; IMPORTA.inviate = null; IMPORTA.pagine = [];
       IMPORTA.ctx.dopoSalvataggio();
@@ -6251,6 +6501,7 @@
       <section class="settings-section">
         <h2>Importa / sostituisci l'intero piano</h2>
         <p class="hint">Hai già il piano in PDF? Caricalo: l'intelligenza artificiale lo legge e lo converte, tu lo rivedi e confermi. Niente da riscrivere a mano.</p>
+        ${avvisoProgrammatoHTML(piano, true)}
         <button type="button" class="btn" id="btn-importa-ai" style="margin-bottom:12px;">✨ Importa da un PDF</button>
         <p class="hint">Oppure carica un file .json, nello stesso formato scaricabile qui come modello.</p>
         <div class="import-actions">
@@ -6304,6 +6555,7 @@
     document.getElementById("btn-esporta-piano-prof").addEventListener("click", () => esportaPiano(piano));
     document.getElementById("input-importa-piano-prof").addEventListener("change", onFileImportPianoProf);
     document.getElementById("btn-importa-ai").addEventListener("click", () => avviaImportazioneAI(piano));
+    collegaAnnullaProgrammato(piano, () => apriEditorPaziente(piano.id));
     document.getElementById("btn-elimina-paziente").addEventListener("click", apriConfermaEliminazione);
   }
 

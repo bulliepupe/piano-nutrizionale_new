@@ -152,6 +152,11 @@ service cloud.firestore {
         allow delete: if eIlProfessionista() || (eIlPaziente() && resource.data.fonte == "casa");
       }
       // Note del controllo: solo il professionista
+      // Piani precedenti, archiviati dal server al cambio del piano programmato
+      match /archivio/{archivioId} {
+        allow read: if eIlProfessionista() || eIlPaziente();
+        allow write: if false;
+      }
       match /noteMisure/{misuraId} {
         allow read, write: if eIlProfessionista();
       }

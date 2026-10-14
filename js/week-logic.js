@@ -112,7 +112,33 @@ function calcolaSettimanaGiorno(date, config, piano) {
  * `giorno: null` invece di lanciare un errore, così la UI può mostrare
  * un messaggio invece di rompersi.
  */
+/**
+ * Piano valido in una data. Se nel piano c'è un "piano successivo
+ * programmato" (piano.prossimo, con la sua dataInizio) e quella data è
+ * arrivata, valgono le sue settimane, regole e sostituzioni; prima resta il
+ * piano attuale. Il server, ogni notte, rende definitivo il passaggio e
+ * archivia il piano precedente.
+ */
+function chiaveDataLocale(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function pianoEffettivo(piano, date) {
+  const pr = piano && piano.prossimo;
+  if (!pr || typeof pr.dataInizio !== "string" || !pr.settimane) return piano;
+  if (chiaveDataLocale(new Date(date)) < pr.dataInizio) return piano;
+  return Object.assign({}, piano, {
+    settimane: pr.settimane,
+    normeGenerali: pr.normeGenerali || piano.normeGenerali || [],
+    sostituzioni: pr.sostituzioni || piano.sostituzioni || [],
+    dataInizio: pr.dataInizio,
+    settimanaIniziale: pr.settimanaIniziale || 1,
+    prossimo: null,
+  });
+}
+
 function menuDelGiorno(date, config, piano) {
+  piano = pianoEffettivo(piano, date);
   const { settimana, giornoIndex, giornoNome, pianoIniziato } = calcolaSettimanaGiorno(date, config, piano);
   const settimane = (piano && piano.settimane) || {};
   let settimanaDati = settimane[settimana] || settimane[((settimana - 1) % 4) + 1];
@@ -124,6 +150,6 @@ function menuDelGiorno(date, config, piano) {
   return { settimana, giornoNome, giorno, pianoIniziato };
 }
 
-const api = { GIORNI, calcolaSettimanaGiorno, menuDelGiorno, lunediDellaSettimana, settimaneDisponibili };
+const api = { GIORNI, calcolaSettimanaGiorno, menuDelGiorno, lunediDellaSettimana, settimaneDisponibili, pianoEffettivo };
 if (typeof window !== "undefined") window.weekLogic = api;
 if (typeof module !== "undefined") module.exports = api;
