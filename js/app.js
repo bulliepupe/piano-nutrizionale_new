@@ -440,7 +440,7 @@
   async function avviaPaziente(utenteDati) {
     AUTONOMO = !!utenteDati.autonomo;
     mostraSchermata("paziente");
-    aggiornaPremium();
+    aggiornaPremium().then(() => caricaReseAI());
     if (!avviaPaziente.collegato) {
       avviaPaziente.collegato = true;
       document.addEventListener("click", (e) => {
@@ -465,6 +465,7 @@
       PIANO_GREZZO = piano;
       PIANO_ATTIVO = piano ? window.weekLogic.pianoEffettivo(piano, new Date()) : piano;
       if (piano) collegaRicettePaziente();
+      if (piano) richiediStimeRese();
       if (piano) pubblicaPianoInLista();
       collegaMisurePaziente();
       if (currentView === "oggi" || currentView === "settimana" || currentView === "impostazioni") render();
@@ -670,6 +671,7 @@
       try { render(); } catch (e) { console.warn(e); }
     }
     if (PREMIUM.noto) controllaFineProva();
+    if (PREMIUM.noto && PREMIUM.attivo) richiediStimeRese();
   }
 
   const FUNZIONI_PREMIUM = [
@@ -845,30 +847,62 @@
 
   // ---- Peso da crudo a cotto (Premium) ----
   const fmtG = (g) => `${g} g`;
+  // Archivio comune delle stime AI per gli alimenti fuori tabella LARN
+  let RESE_AI = {};
+  let RESE_CARICATE = false;
+  const RESE_RICHIESTE = new Set();
+
+  async function caricaReseAI() {
+    if (RESE_CARICATE || !window.cloud.leggiRese) return;
+    try { RESE_AI = (await window.cloud.leggiRese()) || {}; RESE_CARICATE = true; } catch (e) { return; }
+    if (currentView === "oggi" || currentView === "settimana") render();
+    richiediStimeRese();
+  }
+
+  /** In sottofondo: chiede all'AI le rese degli alimenti del piano non ancora stimati (solo Premium). */
+  async function richiediStimeRese() {
+    if (!RESE_CARICATE || !PREMIUM.noto || !PREMIUM.attivo || !PIANO_ATTIVO || !window.conversioni || !window.cloud.chiamaFunzione) return;
+    const nomi = new Set();
+    Object.values(PIANO_ATTIVO.settimane || {}).forEach((giorni) => (giorni || []).forEach((g) => g && MEAL_KEYS.forEach((k) => {
+      window.conversioni.daStimare(g[k], RESE_AI).forEach((n) => { if (!RESE_RICHIESTE.has(n)) nomi.add(n); });
+    })));
+    const elenco = Array.from(nomi).slice(0, 30);
+    if (!elenco.length) return;
+    elenco.forEach((n) => RESE_RICHIESTE.add(n));
+    let cambiato = false;
+    for (let i = 0; i < elenco.length; i += 10) {
+      try {
+        const r = await window.cloud.chiamaFunzione("stimaRese", { nomi: elenco.slice(i, i + 10) });
+        if (r && r.rese) { Object.assign(RESE_AI, r.rese); cambiato = true; }
+        if (r && r.limite) break;
+      } catch (e) { break; }
+    }
+    if (cambiato && (currentView === "oggi" || currentView === "settimana")) render();
+  }
 
   function rigaConversioneHTML(r) {
     const C = window.conversioni;
     return r.voci.map((v) => {
       const metodi = Object.keys(v.metodi);
       return `<li class="cotto-voce">
-        <strong>${escapeHTML(r.testo)}</strong>${r.ambiguo ? `<small>${escapeHTML(v.nome)}</small>` : ""}
-        <ul>${metodi.map((m) => `<li><span>${metodi.length > 1 || v.id === "pesce" ? escapeHTML(m) : "da cotto"}</span><b>circa ${fmtG(C.daCrudoACotto(r.grammi, v.metodi[m]))}</b></li>`).join("")}</ul>
+        <strong>${escapeHTML(r.testo)}${v.stima ? ` <span class="badge-stima">stima</span>` : ""}</strong>${r.ambiguo ? `<small>${escapeHTML(v.nome)}</small>` : ""}${v.stima && RESE_AI[window.conversioni.chiaveAlimento(window.conversioni.nomeAlimento(r.testo))] && RESE_AI[window.conversioni.chiaveAlimento(window.conversioni.nomeAlimento(r.testo))].nota ? `<small>${escapeHTML(RESE_AI[window.conversioni.chiaveAlimento(window.conversioni.nomeAlimento(r.testo))].nota)}</small>` : ""}
+        <ul>${metodi.map((m) => `<li><span>${metodi.length > 1 || v.id === "pesce" || v.stima ? escapeHTML(m) : "da cotto"}</span><b>circa ${fmtG(C.daCrudoACotto(r.grammi, v.metodi[m]))}</b></li>`).join("")}</ul>
       </li>`;
     }).join("");
   }
 
-  function notaFonteCottoHTML() {
-    return `<p class="hint" style="margin-top:12px;">Valori medi di riferimento (${window.conversioni.FONTE}), per alimenti al netto degli scarti: la resa reale cambia con tempo di cottura, taglio e condimento. Se il tuo nutrizionista ti ha dato indicazioni diverse, segui le sue.</p>`;
+  function notaFonteCottoHTML(conStime) {
+    return `<p class="hint" style="margin-top:12px;">Valori medi di riferimento (${window.conversioni.FONTE}), per alimenti al netto degli scarti: la resa reale cambia con tempo di cottura, taglio e condimento.${conStime ? " Le voci segnate come <strong>stima</strong> non sono nelle tabelle ufficiali: sono calcolate con l'intelligenza artificiale e vanno prese come indicazione." : ""} Se il tuo nutrizionista ti ha dato indicazioni diverse, segui le sue.</p>`;
   }
 
   function apriPesoCotto(testo, pasto) {
     if (premiumLimitato()) { apriPremium(); return; }
-    const righe = window.conversioni.riconosci(testo);
+    const righe = window.conversioni.riconosci(testo, RESE_AI);
     apriSheet(`
       <h2 class="sheet__titolo">⚖️ ${escapeHTML(MEAL_META[pasto] ? MEAL_META[pasto].label : "Peso da cotto")}</h2>
       <p class="sheet__nota">I pesi del piano sono a crudo. Se pesi l'alimento già cotto, punta a questi valori:</p>
       <ul class="cotto-elenco">${righe.map(rigaConversioneHTML).join("")}</ul>
-      ${notaFonteCottoHTML()}
+      ${notaFonteCottoHTML(righe.some((r) => r.stima))}
       <button type="button" class="btn btn--ghost" id="btn-apri-calcolatore">Apri il calcolatore</button>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
     document.getElementById("btn-apri-calcolatore").addEventListener("click", apriCalcolatoreCotto);
@@ -877,22 +911,30 @@
   function apriCalcolatoreCotto() {
     if (premiumLimitato()) { apriPremium(); return; }
     const C = window.conversioni;
+    const stime = Object.keys(RESE_AI).filter((k) => RESE_AI[k].siCuoce && RESE_AI[k].metodi && Object.keys(RESE_AI[k].metodi).length)
+      .map((k) => ({ id: "ai:" + k, nome: RESE_AI[k].nome || k, metodi: RESE_AI[k].metodi }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, "it"));
+    const voci = {};
+    C.TABELLA.concat(stime).forEach((v) => { voci[v.id] = v; });
     apriSheet(`
       <h2 class="sheet__titolo">⚖️ Crudo e cotto</h2>
       <label class="editor-campo"><span>Alimento</span>
-        <select id="calc-voce">${C.TABELLA.map((v) => `<option value="${v.id}">${escapeHTML(v.nome)}</option>`).join("")}</select></label>
+        <select id="calc-voce">
+          <optgroup label="Tabelle LARN 2024">${C.TABELLA.map((v) => `<option value="${v.id}">${escapeHTML(v.nome)}</option>`).join("")}</optgroup>
+          ${stime.length ? `<optgroup label="Stime AI">${stime.map((v) => `<option value="${escapeHTML(v.id)}">${escapeHTML(v.nome)}</option>`).join("")}</optgroup>` : ""}
+        </select></label>
       <label class="editor-campo" id="calc-metodo-campo"><span>Cottura</span><select id="calc-metodo"></select></label>
       <div class="ric-griglia">
         <label class="editor-campo"><span>Peso a crudo (g)</span><input type="number" inputmode="numeric" id="calc-crudo" min="0" step="1"></label>
         <label class="editor-campo"><span>Peso a cotto (g)</span><input type="number" inputmode="numeric" id="calc-cotto" min="0" step="1"></label>
       </div>
-      ${notaFonteCottoHTML()}
+      ${notaFonteCottoHTML(stime.length > 0)}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
     const selVoce = document.getElementById("calc-voce"), selMetodo = document.getElementById("calc-metodo");
     const crudo = document.getElementById("calc-crudo"), cotto = document.getElementById("calc-cotto");
-    const fattore = () => C.voce(selVoce.value).metodi[selMetodo.value];
+    const fattore = () => voci[selVoce.value].metodi[selMetodo.value];
     const aggiornaMetodi = () => {
-      const metodi = Object.keys(C.voce(selVoce.value).metodi);
+      const metodi = Object.keys(voci[selVoce.value].metodi);
       selMetodo.innerHTML = metodi.map((m) => `<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join("");
       document.getElementById("calc-metodo-campo").hidden = metodi.length < 2;
     };
@@ -1511,7 +1553,7 @@
             </div>
             ${riscontroPastoHTML(key, stato)}
           ` : ""}
-          ${RUOLO === "paziente" && window.conversioni && window.conversioni.riconosci(giorno[key]).length ? `
+          ${RUOLO === "paziente" && window.conversioni && window.conversioni.riconosci(giorno[key], RESE_AI).length ? `
             <button type="button" class="meal__cotto" data-cotto="${escapeHTML(giorno[key])}" data-cotto-pasto="${key}">${premiumLimitato() ? "🔒" : "⚖️"} Peso da cotto</button>` : ""}
           ${sost ? `
             <details class="meal__sostituzioni">

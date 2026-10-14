@@ -1263,6 +1263,118 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
 });
 
 // =========================================================================
+// RESA IN COTTURA STIMATA CON L'AI (archivio comune "rese")
+// =========================================================================
+// Per gli alimenti che l'app non trova nella tabella LARN 2024 (js/conversioni.js)
+// si chiede una stima a Claude Haiku, una volta sola per alimento: il
+// risultato va in /rese/{chiave} e da lì vale per tutti gli utenti.
+const LIMITE_STIME_RESE_GIORNO = 30;
+const ISTRUZIONI_RESE = `Sei un esperto di scienza degli alimenti e dietetica. Per ogni alimento indicato (in italiano, così come scritto in un piano alimentare con il peso da cuocere) stabilisci se di solito si pesa a crudo e si cuoce prima di mangiarlo, e in quel caso stima il fattore di resa in cottura (peso cotto / peso crudo, al netto degli scarti) per i metodi di cottura più comuni per quell'alimento (da 1 a 4 metodi, con nomi brevi come "bollito", "al vapore", "in padella con olio", "al forno o grigliato", "in frittata o omelette").
+Regole:
+- siCuoce = false per alimenti che si mangiano così come sono o già cotti (affettati e salumi, roastbeef da gastronomia, pane, formaggi, latticini, frutta, frutta secca, condimenti, cereali da colazione, fiocchi d'avena mangiati crudi nello yogurt, ecc.). In caso di dubbio reale scegli il caso più comune e spiegalo in "nota".
+- Fattori realistici e prudenti, tra 0,3 e 5, con due decimali, coerenti con le tabelle italiane (LARN/CREA) quando esistono valori per alimenti simili.
+- "nome" è il nome pulito dell'alimento con la maiuscola iniziale.
+- "nota" è una frase breve e utile per il paziente (massimo 120 caratteri), o vuota.`;
+const STRUMENTO_RESE = {
+  name: "rese_in_cottura",
+  description: "Restituisce la resa in cottura stimata per ogni alimento.",
+  input_schema: {
+    type: "object",
+    properties: {
+      alimenti: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            richiesta: { type: "string", description: "Il testo dell'alimento così come ricevuto" },
+            nome: { type: "string" },
+            siCuoce: { type: "boolean" },
+            metodi: { type: "array", items: { type: "object", properties: { metodo: { type: "string" }, fattore: { type: "number" } }, required: ["metodo", "fattore"] } },
+            nota: { type: "string" },
+          },
+          required: ["richiesta", "nome", "siCuoce", "metodi"],
+        },
+      },
+    },
+    required: ["alimenti"],
+  },
+};
+
+function chiaveResa(nome) {
+  return String(nome || "").toLowerCase().trim().replace(/[\/#?\[\]]/g, " ").replace(/\s+/g, "_").slice(0, 60);
+}
+
+exports.stimaRese = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const nomi = Array.from(new Set(((request.data && request.data.nomi) || [])
+    .map((n) => String(n || "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 40))
+    .filter((n) => n.length >= 3))).slice(0, 10);
+  if (!nomi.length) return { rese: {} };
+
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (!(await statoPremiumPaziente(utente, Date.now())).attivo) throw new HttpsError("failed-precondition", "premium-richiesto");
+
+  // quelli già in archivio non si richiedono
+  const esistenti = await Promise.all(nomi.map((n) => db.collection("rese").doc(chiaveResa(n)).get()));
+  const rese = {};
+  const mancanti = [];
+  esistenti.forEach((d, i) => { if (d.exists) rese[chiaveResa(nomi[i])] = d.data(); else mancanti.push(nomi[i]); });
+  if (!mancanti.length) return { rese };
+
+  const oggi = chiaveData(oraItaliana(new Date()));
+  const usate = utente.stimeRese && utente.stimeRese.giorno === oggi ? Number(utente.stimeRese.n) || 0 : 0;
+  if (usate >= LIMITE_STIME_RESE_GIORNO) return { rese, limite: true };
+
+  let risposta;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: MODELLO_RISCONTRO, max_tokens: 1500, system: ISTRUZIONI_RESE,
+        tools: [STRUMENTO_RESE], tool_choice: { type: "tool", name: "rese_in_cottura" },
+        messages: [{ role: "user", content: "Alimenti:\n" + mancanti.map((n) => "- " + n).join("\n") }],
+      }),
+    });
+    risposta = await r.json();
+    if (!r.ok) { console.error("Rese AI: errore API", r.status); throw new HttpsError("unavailable", "servizio-ai-non-disponibile"); }
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+  }
+  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "rese_in_cottura");
+  const voci = (blocco && blocco.input && Array.isArray(blocco.input.alimenti)) ? blocco.input.alimenti : [];
+  const batch = db.batch();
+  mancanti.forEach((richiesta) => {
+    const v = voci.find((x) => String(x.richiesta || "").toLowerCase().trim() === richiesta) || null;
+    if (!v) return;
+    const metodi = {};
+    (Array.isArray(v.metodi) ? v.metodi : []).slice(0, 4).forEach((m) => {
+      const f = Math.round(Number(m.fattore) * 100) / 100;
+      const nomeMetodo = String(m.metodo || "").toLowerCase().trim().slice(0, 30);
+      if (nomeMetodo && f >= 0.3 && f <= 5) metodi[nomeMetodo] = f;
+    });
+    const doc = {
+      nome: String(v.nome || richiesta).slice(0, 50),
+      siCuoce: !!v.siCuoce && Object.keys(metodi).length > 0,
+      metodi: v.siCuoce ? metodi : {},
+      nota: String(v.nota || "").slice(0, 140),
+      fonte: "stima AI",
+      modello: MODELLO_RISCONTRO,
+      creato: FieldValue.serverTimestamp(),
+    };
+    batch.set(db.collection("rese").doc(chiaveResa(richiesta)), doc);
+    rese[chiaveResa(richiesta)] = Object.assign({}, doc, { creato: null });
+  });
+  batch.set(utenteRef, { stimeRese: { giorno: oggi, n: usate + 1 } }, { merge: true });
+  await batch.commit();
+  return { rese };
+});
+
+// =========================================================================
 // ANALISI AI DELL'ANDAMENTO DEL PAZIENTE (per il professionista)
 // =========================================================================
 // All'apertura della scheda Andamento l'app invia un riassunto dei dati del

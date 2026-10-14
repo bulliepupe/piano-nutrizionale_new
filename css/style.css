@@ -2097,3 +2097,4 @@ body.con-informativa { overflow: hidden; }
 .cotto-voce ul { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 4px; }
 .cotto-voce ul li { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--ink-soft); border-bottom: 1px dashed var(--border-soft); padding-bottom: 3px; }
 .cotto-voce ul li b { color: var(--ink); font-weight: 600; }
+.badge-stima { display: inline-block; font-size: 11px; font-weight: 600; color: var(--ink-soft); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; margin-left: 4px; vertical-align: 1px; }

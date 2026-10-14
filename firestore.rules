@@ -75,7 +75,7 @@ service cloud.firestore {
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato", "stimeRese"]);
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
@@ -215,6 +215,12 @@ service cloud.firestore {
         allow read, write: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/liste/$(listaId)).data.membri;
       }
+    }
+
+    // Archivio comune delle rese in cottura stimate con l'AI: le scrive solo il server
+    match /rese/{alimento} {
+      allow read: if isSignedIn();
+      allow write: if false;
     }
 
     // Tutto il resto (licenze in attesa, registro notifiche) è solo per il server.

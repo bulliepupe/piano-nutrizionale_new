@@ -544,6 +544,14 @@
       return cred.user;
     },
 
+    /** Archivio comune delle rese in cottura stimate con l'AI: { chiave: { nome, siCuoce, metodi, nota } }. */
+    async leggiRese() {
+      const snap = await db.collection("rese").get();
+      const rese = {};
+      snap.forEach((d) => { rese[d.id] = d.data(); });
+      return rese;
+    },
+
     /** Utente collegato (per mostrare con quale account si è entrati). */
     utenteCorrente() { return auth.currentUser; },
 
