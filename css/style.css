@@ -1663,6 +1663,8 @@ body.ruolo-familiare #btn-notifiche { display: none; }
 .codice-invito { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; letter-spacing: 0.12em; color: var(--ink); }
 .consenso-lista { align-items: flex-start; font-size: 13.5px; line-height: 1.45; background: var(--bg); border-radius: var(--radius-s); padding: 10px 12px; margin: 4px 0 12px; }
 .consenso-lista input { margin-top: 2px; }
+.consenso-ai { align-items: flex-start; font-size: 13.5px; line-height: 1.45; background: var(--bg); border-radius: var(--radius-s); padding: 10px 12px; margin: 12px 0 8px; }
+.consenso-ai input { margin-top: 2px; flex-shrink: 0; }
 .avviso-invito { font-size: 13.5px; line-height: 1.45; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border: 1px solid var(--border); border-radius: var(--radius-s); padding: 10px 12px; margin: 0 0 12px; }
 #blocco-signup-familiare { margin-top: 12px; }
 
@@ -2016,6 +2018,7 @@ select option { font-weight: 400; color: var(--ink); background: var(--surface);
 .riscontro__suggerimenti li { margin-bottom: 3px; }
 .riscontro__messaggio { margin: 6px 0 2px; font-weight: 600; color: var(--ink); }
 .riscontro__nota { margin: 4px 0 0; font-size: 11.5px; color: var(--ink-faint); }
+.riscontro__avvertenza { margin: 10px 0 0; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; color: var(--ink); background: var(--bg); border-left: 3px solid var(--ink-faint); border-radius: var(--radius-s); }
 .spiegazione-ai { margin: 8px 0 4px; padding-left: 18px; font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); }
 .spiegazione-ai li { margin-bottom: 6px; }
 .riscontro--irrilevante { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }

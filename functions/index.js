@@ -1007,6 +1007,8 @@ function normalizzaPianoAI(r) {
   };
 }
 
+const VERSIONE_CONSENSO_AI = "2026-10-14";
+
 exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 300, memory: "512MiB" }, async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
@@ -1034,6 +1036,11 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
   const mese = new Date().toISOString().slice(0, 7);
   const usate = (utente.importazioniAI && utente.importazioniAI.mese === mese) ? Number(utente.importazioniAI.n) || 0 : 0;
   if (usate >= limiteMese) throw new HttpsError("resource-exhausted", "limite-mensile");
+
+  // Consenso esplicito all'invio ad Anthropic (USA), dato nella schermata
+  // "Ecco cosa viene inviato": senza, non si invia nulla.
+  if (!(request.data && request.data.consenso === true)) throw new HttpsError("failed-precondition", "consenso-mancante");
+  await utenteRef.set({ consensoInvioAI: { versione: VERSIONE_CONSENSO_AI, ultimoIl: FieldValue.serverTimestamp() } }, { merge: true });
 
   const pagine = Array.isArray(request.data && request.data.pagine) ? request.data.pagine : [];
   if (!pagine.length) throw new HttpsError("invalid-argument", "Nessuna pagina da leggere.");

@@ -1706,7 +1706,7 @@
         </div>
         ${r.stima ? `<p class="riscontro__testo">${escapeHTML(r.stima)}</p>` : ""}
         <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "Va benissimo così: continua con il piano.")}</p>
-        <p class="riscontro__nota">✨ Generato con intelligenza artificiale</p>
+        ${AVVERTENZA_AI_PASTI}
       </div>`;
     }
     return `
@@ -1720,10 +1720,14 @@
         ${(r.suggerimenti || []).length ? `<ul class="riscontro__suggerimenti">${r.suggerimenti.map((x) => `<li><strong>${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}:</strong> ${escapeHTML(x.testo)}</li>`).join("")}</ul>` : ""}
         <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "")}</p>
         ${r.frequente ? `<p class="riscontro__frequente">Negli ultimi giorni i pasti non come da piano sono stati diversi: può essere utile parlarne con il tuo nutrizionista.</p>` : ""}
-        <p class="riscontro__nota">✨ Generato con intelligenza artificiale · Stime indicative, basate sul tuo piano. Per dubbi, scrivi al tuo nutrizionista.</p>
+        ${AVVERTENZA_AI_PASTI}
       </div>`;
   }
 
+
+  // Avvertenza sotto ogni riscontro AI: ben visibile, come indicato dalla
+  // consulenza legale. Testo provvisorio, da far validare.
+  const AVVERTENZA_AI_PASTI = `<p class="riscontro__avvertenza"><strong>✨ Generato con intelligenza artificiale</strong> sulla base del tuo piano e di quello che hai segnato. È un'indicazione di massima e approssimata: non è una prescrizione né un parere professionale. Per ogni verifica rivolgiti al tuo nutrizionista o a un professionista abilitato.</p>`;
 
   function onToggleMealCheck(key) {
     const giaFatto = window.statistiche.statoPasto(PASTI_FATTI_OGGI, key) === "fatto";
@@ -4844,16 +4848,26 @@
               <button type="button" class="btn btn--ghost import-copri" data-copri="${i}">▭ Copri una zona</button></figure>`;
           }).join("")}
         </div>
-        <p class="stat-nota">Le pagine vengono lette dall'intelligenza artificiale di Anthropic tramite i nostri server e non vengono usate per addestrare modelli. La lettura richiede di solito uno o due minuti.</p>
+        <label class="ric-scelta consenso-ai">
+          <input type="checkbox" id="import-consenso">
+          <span>${IMPORTA.ctx.paziente
+            ? `Acconsento all'invio di queste pagine ad <strong>Anthropic PBC (Stati Uniti)</strong>, il fornitore di intelligenza artificiale che usiamo, al solo scopo di leggere il piano e convertirlo per l'app. Ho controllato che siano coperti il mio nome e gli altri miei dati personali (per esempio codice fiscale, indirizzo, telefono, data di nascita, peso e misure). Le pagine non vengono usate per addestrare modelli e noi non le conserviamo dopo la lettura.`
+            : `Confermo di aver coperto i dati identificativi del paziente e di averlo informato, come titolare del trattamento, che il suo piano viene letto dall'intelligenza artificiale di <strong>Anthropic PBC (Stati Uniti)</strong>, fornitore di Bulli e Pupe S.r.l. Le pagine non vengono usate per addestrare modelli e non vengono conservate dopo la lettura.`}
+          <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa ↗</a></span>
+        </label>
+        <p class="stat-nota">La lettura richiede di solito uno o due minuti.</p>
         <div class="import-azioni">
           <button type="button" class="btn btn--ghost" id="import-torna">Torna alle pagine</button>
-          <button type="button" class="btn" id="import-invia">✨ Leggi il piano</button>
+          <button type="button" class="btn" id="import-invia" disabled>✨ Leggi il piano</button>
         </div>
       </section>`;
     collegaIndietroImportazione();
     document.getElementById("import-torna").addEventListener("click", renderImportazioneAI);
     radiceImport().querySelectorAll("[data-copri]").forEach((b) => b.addEventListener("click", () => apriCopriZona(Number(b.dataset.copri))));
-    document.getElementById("import-invia").addEventListener("click", inviaImportazione);
+    const consenso = document.getElementById("import-consenso");
+    const invia = document.getElementById("import-invia");
+    consenso.addEventListener("change", () => { invia.disabled = !consenso.checked; });
+    invia.addEventListener("click", inviaImportazione);
   }
 
   /** Il professionista traccia rettangoli sulla pagina: quelle zone non vengono inviate. */
@@ -4919,6 +4933,7 @@
     if (m === "licenza-non-attiva") return "La tua licenza non è attiva: rinnovala per usare l'importazione.";
     if (m === "premium-richiesto") return "La lettura del piano con l'AI fa parte di Premium: la prova gratuita è terminata.";
     if (m === "piano-del-nutrizionista") return "Il tuo piano lo gestisce il tuo nutrizionista: è lui a poterlo aggiornare.";
+    if (m === "consenso-mancante") return "Per leggere il piano serve la conferma qui sopra.";
     if (m === "troppe-pagine") return "Troppe pagine: scegline al massimo 12.";
     if (m === "nessun-pasto-trovato") return "Non ho trovato pasti in queste pagine: controlla di aver scelto quelle con il piano.";
     if (/deadline|timeout/i.test(c + m)) return "La lettura ha richiesto troppo tempo: prova con meno pagine.";
@@ -4945,6 +4960,7 @@
       const r = await window.cloud.importaPianoAI({
         pagine: IMPORTA.inviate.map((p) => ({ testo: p.testo, immagine: p.immagine.split(",")[1] })),
         note: IMPORTA.note || "",
+        consenso: !!(document.getElementById("import-consenso") || {}).checked,
       });
       IMPORTA.risultato = r.piano;
       IMPORTA.rimaste = r.rimaste;
