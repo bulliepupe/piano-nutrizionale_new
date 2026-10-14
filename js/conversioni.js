@@ -47,7 +47,7 @@
     { id: "carneBianca", nome: "Carne bianca (pollo, tacchino…)", metodi: { [BOLLITURA]: 0.83, "al vapore": 0.62, "in padella con olio": 0.84, "arrosto o al forno": 0.78 },
       parole: /\b(pollo|tacchino|coniglio|petto di pollo|fesa di tacchino|sovracosci\w*|carne bianca)\b/ },
     { id: "carneRossa", nome: "Carne rossa (manzo, vitello…)", metodi: { [BOLLITURA]: 0.64, "al vapore": 0.63, "in padella con olio": 0.79, "arrosto o al forno": 0.80 },
-      parole: /\b(manzo|vitell\w*|maiale|bovin\w*|carne rossa|hamburger|bistecc\w*|lonza|filetto|cavallo|agnello|macinat\w*|fesa di vitello|tagliata)\b/ },
+      parole: /\b(manzo|vitell\w*|maiale|bovin\w*|carne rossa|hamburger|bistecc\w*|roast[ -]?beef|lonza|filetto|cavallo|agnello|macinat\w*|fesa di vitello|tagliata)\b/ },
   ];
 
   const LEGUMI = /\b(legumi|lenticchi\w*|ceci|fagiol\w*|cannellini|borlotti|piselli|fave|cicerch\w*|edamame|soia|azuki)\b/;
@@ -90,6 +90,8 @@
       .replace(QUALIFICHE, " ").replace(/\b(di|da|del|della|dei|delle|al|alla|allo|in|con)\s*$/g, " ")
       .replace(/\s+/g, " ").trim();
     t = t.split(" ").map((w) => SINGOLARE[w] || w).join(" ");
+    // stesso alimento con nomi diversi: una sola voce nell'archivio
+    if (/^(avena|fiocchi avena|fiocchi di avena|fiocchi d'avena)$/.test(t)) t = "fiocchi d'avena";
     return t.slice(0, 40);
   }
 
