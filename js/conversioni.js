@@ -105,7 +105,7 @@
    * Si considerano solo i tratti con un peso in grammi.
    */
   function trattiConPeso(testoPasto) {
-    const tratti = String(testoPasto || "").split(/\s*(?:\+|,|;|\be\b|\bo\b|\bcon\b|\boppure\b|\/|\n)\s*/i).filter(Boolean);
+    const tratti = String(testoPasto || "").split(/\s*(?:\+|,|;|\(|\)|\be\b|\bo\b|\bcon\b|\boppure\b|\/|\n)\s*/i).filter(Boolean);
     const out = [];
     tratti.forEach((tratto) => {
       const m = normalizza(tratto).match(/(\d+(?:[.,]\d+)?)\s*(?:g|gr|grammi)\b/);

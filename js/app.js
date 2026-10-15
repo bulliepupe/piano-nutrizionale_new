@@ -690,7 +690,7 @@
     if (!AUTONOMO || RUOLO !== "paziente") return "";
     const giorni = giorniProvaRimasti();
     if (giorni == null) return "";
-    return `<button type="button" class="banner-prova" data-premium>⭐ Prova Premium: ${giorni === 1 ? "ultimo giorno" : `ancora ${giorni} giorni`} <span>Scopri cosa include</span></button>`;
+    return `<button type="button" class="banner-prova" data-premium><span class="banner-prova__testo">Prova Premium · ${giorni === 1 ? "ultimo giorno" : `ancora ${giorni} giorni`}</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>`;
   }
 
   function bloccoPremiumHTML(testo) {
@@ -893,7 +893,7 @@
   }
 
   function notaFonteCottoHTML(conStime) {
-    return `<p class="hint" style="margin-top:12px;">Valori medi di riferimento (${window.conversioni.FONTE}), per alimenti al netto degli scarti: la resa reale cambia con tempo di cottura, taglio e condimento.${conStime ? " Le voci segnate come <strong>stima</strong> non sono nelle tabelle ufficiali: sono calcolate con l'intelligenza artificiale e vanno prese come indicazione." : ""} Se il tuo nutrizionista ti ha dato indicazioni diverse, segui le sue.</p>`;
+    return `<p class="hint" style="margin-top:12px;">Valori medi di riferimento delle tabelle ${window.conversioni.FONTE}, per alimenti al netto degli scarti: la resa reale cambia con tempo di cottura, taglio e condimento.${conStime ? " Le voci segnate come <strong>stima</strong> non sono nelle tabelle ufficiali: sono calcolate con l'intelligenza artificiale e vanno prese come indicazione." : ""} Se il tuo nutrizionista ti ha dato indicazioni diverse, segui le sue.</p>`;
   }
 
   function apriPesoCotto(testo, pasto) {
@@ -1588,9 +1588,9 @@
                 </button>` : `
                 <button type="button" class="meal__check" data-meal-check="${key}" aria-pressed="${isDone}">
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6"/></svg>
-                  <span>${isDone ? "Fatto" : "Segna come fatto"}</span>
+                  <span>${isDone ? "Fatto" : modo === "meal--attuale" ? "Fatto" : "Segna come fatto"}</span>
                 </button>`}
-              <button type="button" class="meal__altro" data-meal-altro="${key}">${stato ? "Modifica" : "Non come da piano?"}</button>
+              <button type="button" class="meal__altro" data-meal-altro="${key}">${stato ? "Modifica" : modo === "meal--attuale" ? "Non come da piano" : "Non come da piano?"}</button>
             </div>
             ${riscontroPastoHTML(key, stato)}
           ` : ""}
@@ -6795,7 +6795,7 @@
     return `
       <section class="settings-section">
         <h2>Modifica un pasto</h2>
-        <p class="hint">Scegli settimana e giorno, cambia il testo dei pasti e salva: si sincronizza subito con l'app del paziente.</p>
+        <p class="hint">${RUOLO === "paziente" ? "Scegli settimana e giorno, scrivi o correggi i pasti e salva." : "Scegli settimana e giorno, cambia il testo dei pasti e salva: si sincronizza subito con l'app del paziente."}</p>
         <div class="field-row">
           <span class="field-row__label">Settimana</span>
           <select id="sel-edit-settimana">

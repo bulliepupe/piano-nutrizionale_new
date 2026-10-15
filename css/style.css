@@ -2256,3 +2256,32 @@ body.con-informativa { overflow: hidden; }
 .segmento { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 3px; background: var(--border-soft); border-radius: 12px; padding: 3px; }
 .segmento__voce { height: 38px; border: none; border-radius: 10px; background: transparent; color: var(--ink-soft); font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; }
 .segmento__voce[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14); }
+
+
+/* ---- Rifinitura grafica (temi) ---- */
+/* Avviso della prova: una riga sola, colore del tema */
+.banner-prova { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-size: 13.5px; font-weight: 700; padding: 11px 14px; border-radius: 14px; }
+.banner-prova .banner-prova__testo { color: inherit; font-size: inherit; font-weight: inherit; }
+/* Sezioni come schede (Impostazioni, Il mio piano, pannello del professionista) */
+.settings-section { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-l); padding: 16px 16px 18px; margin-bottom: 12px; }
+.settings-section h2 { font-family: var(--font-display); font-size: 18px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+:root[data-stile="vivace"] .settings-section h2 { font-weight: 800; }
+.settings-section .settings-section { border: none; padding: 0; margin: 12px 0 0; background: none; }
+.settings-section p.hint { color: var(--ink-soft); }
+.settings-section .btn { border-radius: 14px; }
+/* Pasto del momento: titolo e orario su una riga che può andare a capo */
+.meal--attuale .meal__head { flex-wrap: wrap; row-gap: 4px; }
+.meal--attuale .meal__label { flex: 1 1 auto; min-width: 0; }
+:root[data-stile="vivace"] .meal--attuale .meal__label { font-size: 22px; line-height: 1.15; }
+/* Essenziale: linea del tempo che unisce i pasti */
+:root[data-stile="essenziale"] .timeline::before { content: ""; position: absolute; left: 10px; top: 18px; bottom: 18px; width: 2px; background: var(--border); border-radius: 1px; }
+:root[data-stile="essenziale"] .timeline > .meal { position: relative; z-index: 1; }
+:root[data-stile="essenziale"] .meal__stato--vuoto { background: var(--bg); }
+:root[data-stile="essenziale"] .meal__stato--diverso, :root[data-stile="essenziale"] .meal__stato--parziale { background: color-mix(in srgb, var(--accent) 55%, var(--bg)); }
+:root[data-stile="essenziale"] .meal--attuale { margin-left: 0; }
+/* Settimana: giorno scelto e schede dei pasti con le forme del tema */
+.day-chip.is-active, .giorno-chip.is-active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.timeline .meal:not(.meal--compatta):not(.meal--chiusa):not(.meal--attuale) .meal__label { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; color: var(--ink-soft); }
+/* Riquadri dentro una sezione già a scheda: senza doppio bordo */
+.settings-section .progressi { border: none; background: none; padding: 0; margin-top: 4px; box-shadow: none; }
+.settings-section .progressi > h3.stat-sottotitolo:first-child { display: none; }
