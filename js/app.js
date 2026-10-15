@@ -5329,7 +5329,8 @@
       ${richiesteAttive().length ? `<button type="button" class="avviso-richieste" id="btn-richieste">📅 ${richiesteAttive().length === 1 ? "1 richiesta di appuntamento" : richiesteAttive().length + " richieste di appuntamento"} <span>Apri ›</span></button>` : ""}
       ${PAZIENTI_PROF.length ? `<button type="button" class="btn btn--ghost" id="btn-statistiche" style="margin-bottom:10px;">Andamento dei pazienti</button>` : ""}
       <button type="button" class="btn btn--ghost" id="btn-ricettario" style="margin-bottom:10px;">Ricettario</button>
-      <button type="button" class="btn btn--ghost" id="btn-profilo-prof" style="margin-bottom:16px;">I miei dati di contatto</button>
+      <button type="button" class="btn btn--ghost" id="btn-profilo-prof" style="margin-bottom:10px;">I miei dati di contatto</button>
+      <button type="button" class="btn btn--ghost" id="btn-aspetto-prof" style="margin-bottom:16px;">Aspetto dell'app</button>
       ${contattiMancanti ? `<p class="hint avviso-profilo">Aggiungi email e telefono in "I miei dati di contatto": i tuoi pazienti vedranno il pulsante Contatta.</p>` : ""}
       ${PAZIENTI_PROF.length === 0 ? `
         <div class="empty">Non hai ancora pazienti. Creane uno con il pulsante qui sopra.</div>
@@ -5353,6 +5354,7 @@
     const btnPortale = document.getElementById("btn-portale-clienti");
     if (btnPortale) btnPortale.addEventListener("click", apriPortaleClienti);
     document.getElementById("btn-profilo-prof").addEventListener("click", renderProfiloProfessionista);
+    document.getElementById("btn-aspetto-prof").addEventListener("click", renderAspettoProfessionista);
     document.getElementById("btn-ricettario").addEventListener("click", renderRicettario);
     const btnRich = document.getElementById("btn-richieste");
     if (btnRich) btnRich.addEventListener("click", renderRichiesteAppuntamento);
@@ -7121,6 +7123,20 @@
   // ---------------------------------------------------------------------
   // Profilo e dati di contatto del professionista
   // ---------------------------------------------------------------------
+  /** Pagina dedicata alla personalizzazione del pannello (stile, colore, chiaro/scuro, testo). */
+  function renderAspettoProfessionista() {
+    vistaProfCorrente = "aspetto"; segnaVistaProf("profilo");
+    pazienteSelezionatoId = null;
+    document.getElementById("prof-header-titolo").textContent = "Aspetto dell'app";
+    profRoot.innerHTML = `
+      <div class="nav-riga">${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}</div>
+      <p class="hint" style="margin: 0 0 12px;">Scegli come vedere il pannello: le scelte valgono su tutti i dispositivi con cui entri. I tuoi pazienti scelgono il loro aspetto nella loro app.</p>
+      ${aspettoSezioneHTML()}
+    `;
+    document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
+    collegaAspetto(renderAspettoProfessionista);
+  }
+
   function renderProfiloProfessionista() {
     vistaProfCorrente = "profilo"; segnaVistaProf("profilo");
     pazienteSelezionatoId = null;
@@ -7146,12 +7162,10 @@
         <button type="button" class="btn" id="btn-salva-profilo" style="margin-top:16px;">Salva dati di contatto</button>
       </section>
       ${codiceStudioSezioneHTML()}
-      ${aspettoSezioneHTML()}
     `;
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-salva-profilo").addEventListener("click", salvaProfiloProfessionista);
     caricaCodiceStudio();
-    collegaAspetto(renderProfiloProfessionista);
   }
 
   // ---- Codice studio: i pazienti che usano già l'app si collegano con questo ----
