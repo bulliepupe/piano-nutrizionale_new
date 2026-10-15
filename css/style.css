@@ -2285,3 +2285,17 @@ body.con-informativa { overflow: hidden; }
 /* Riquadri dentro una sezione già a scheda: senza doppio bordo */
 .settings-section .progressi { border: none; background: none; padding: 0; margin-top: 4px; box-shadow: none; }
 .settings-section .progressi > h3.stat-sottotitolo:first-child { display: none; }
+
+/* Niente bordo colorato sul lato dei riquadri: lo stato si legge già dal pallino
+   e dall'etichetta (e, dove serve, da un leggero fondo colorato) */
+.stat-card, .stat-testata, .licenza, .appuntamento.has-data, .richiesta-card, .prep-nota {
+  border-left-width: 1px;
+  border-left-color: var(--border-soft);
+  border-radius: var(--radius-l);
+}
+.stat-card--rosso, .stat-card--giallo, .stat-card--verde,
+.stat-testata.stat-card--rosso, .stat-testata.stat-card--giallo, .stat-testata.stat-card--verde,
+.licenza--avviso { border-left-color: var(--border-soft); }
+.stat-card--rosso { background: color-mix(in srgb, var(--stato-rosso) 6%, var(--surface)); }
+.richiesta-card { background: color-mix(in srgb, var(--gold) 7%, var(--surface)); }
+.riscontro__avvertenza { border-left: none; }
