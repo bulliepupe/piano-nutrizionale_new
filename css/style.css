@@ -2299,3 +2299,6 @@ body.con-informativa { overflow: hidden; }
 .stat-card--rosso { background: color-mix(in srgb, var(--stato-rosso) 6%, var(--surface)); }
 .richiesta-card { background: color-mix(in srgb, var(--gold) 7%, var(--surface)); }
 .riscontro__avvertenza { border-left: none; }
+
+.stat-card--illeggibile { display: flex; flex-direction: column; gap: 6px; background: color-mix(in srgb, var(--gold) 7%, var(--surface)); }
+.segmento__voce[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--border), 0 1px 3px rgba(0, 0, 0, 0.14); }

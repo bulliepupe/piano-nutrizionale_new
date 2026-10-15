@@ -67,6 +67,7 @@
   // ---- stato lato paziente ----
   let PIANO_ATTIVO = null; // piano corrente letto da Firestore in tempo reale
   let PIANO_GREZZO = null; // come salvato (con l'eventuale piano programmato in "prossimo")
+  const PASTI_APERTI = new Set(); // righe della scheda Oggi aperte dall'utente (restano aperte quando la scheda si ridisegna)
   let ATTESA_REGISTRAZIONE = null; // registrazione del paziente autonomo in corso
   let REGISTRAZIONE_PAZIENTE_APERTA = false; // pulsante pubblico (config.json → registrazionePaziente)
   let PASTI_FATTI_OGGI = {};
@@ -453,7 +454,7 @@
     }
     mostraInformativaPrimoAccesso(utenteDati, "paziente");
     migraDominioSeServe(utenteDati);
-    applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
+    if (!window.temaApp) applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
     aggiornaEyebrowData();
     registraServiceWorker();
@@ -1533,6 +1534,7 @@
         const art = btn.closest(".meal");
         const aperta = art.classList.toggle("is-aperta");
         btn.setAttribute("aria-expanded", String(aperta));
+        if (aperta) PASTI_APERTI.add(btn.dataset.mealApri); else PASTI_APERTI.delete(btn.dataset.mealApri);
       });
     });
     root.querySelectorAll("[data-meal-altro]").forEach((btn) => {
@@ -1567,14 +1569,16 @@
       const sost = trovaSostituzioneMeal(giorno[key]);
       const modo = !opts.checkable ? "" : key === attuale ? "meal--attuale" : stato ? "meal--chiusa" : "meal--compatta";
       const compatto = modo === "meal--chiusa" || modo === "meal--compatta";
+      // resta aperto se l'utente l'ha aperto, o se c'è un consiglio AI in arrivo o da leggere
+      const aperto = compatto && (PASTI_APERTI.has(key) || (stato && riscontroPastoHTML(key, stato) !== ""));
       const testaContenuto = `
             <span class="meal__stato meal__stato--${stato || "vuoto"}" aria-hidden="true">${stato ? ICONA_STATO[stato] || "" : ""}</span>
             <span class="meal__label">${meta.label}</span>
             <span class="meal__time">${orari[key] || ""}</span>`;
       return `
-        <article class="meal ${meta.classe} ${modo} ${isDone ? "is-done" : ""} ${stato === "parziale" ? "is-parziale" : ""} ${stato === "saltato" ? "is-saltato" : ""} ${stato === "diverso" ? "is-diverso" : ""}">
+        <article class="meal ${meta.classe} ${modo} ${aperto ? "is-aperta" : ""} ${isDone ? "is-done" : ""} ${stato === "parziale" ? "is-parziale" : ""} ${stato === "saltato" ? "is-saltato" : ""} ${stato === "diverso" ? "is-diverso" : ""}">
           ${compatto
-            ? `<button type="button" class="meal__head meal__apri" aria-expanded="false" data-meal-apri="${key}">${testaContenuto}</button>`
+            ? `<button type="button" class="meal__head meal__apri" aria-expanded="${aperto}" data-meal-apri="${key}">${testaContenuto}</button>`
             : `<div class="meal__head">${testaContenuto}</div>`}
           <p class="meal__desc">${testoPastoHTML(giorno[key])}</p>
           ${opts.checkable ? `
@@ -4044,7 +4048,7 @@
     mostraSchermata("paziente");
     mostraInformativaPrimoAccesso(utenteDati, "familiare");
     document.body.classList.add("ruolo-familiare");
-    applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
+    if (!window.temaApp) applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
     aggiornaEyebrowData();
     registraServiceWorker();
@@ -4067,19 +4071,13 @@
           : `<p class="hint">Non fai ancora parte di una lista di casa: entra con il codice che hai ricevuto, oppure creane una.</p>`}
         <button type="button" class="btn" id="btn-lista-casa">${d ? "Gestisci la lista di casa" : "Entra o crea una lista"}</button>
       </section>
-      <section class="settings-section">
-        <h2>Aspetto</h2>
-        <div class="field-row"><span class="field-row__label">Tema</span>
-          <select id="sel-tema-fam">
-            <option value="sistema">Segue il sistema</option><option value="chiaro">Chiaro</option><option value="scuro">Scuro</option>
-          </select></div>
-      </section>
+      ${aspettoSezioneHTML()}
+      ${eliminaAccountSezioneHTML()}
       <p class="hint">Account familiare: vedi solo la lista della spesa condivisa. Il piano nutrizionale resta privato di chi lo segue.</p>
     `;
     document.getElementById("btn-lista-casa").addEventListener("click", apriListaCasa);
-    const sel = document.getElementById("sel-tema-fam");
-    sel.value = localStorage.getItem(LS_KEYS.tema) || "sistema";
-    sel.addEventListener("change", () => { localStorage.setItem(LS_KEYS.tema, sel.value); applyTema(sel.value); });
+    collegaAspetto(renderImpostazioniFamiliare);
+    collegaEliminaAccount();
   }
 
   // ---------------------------------------------------------------------
@@ -5192,7 +5190,7 @@
   // =======================================================================
   function avviaProfessionista(utenteDati) {
     mostraSchermata("professionista");
-    applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
+    if (!window.temaApp) applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     registraServiceWorker();
     vistaProfCorrente = "lista"; segnaVistaProf("lista");
     pazienteSelezionatoId = null;
@@ -5409,6 +5407,7 @@
     if (STAT.inCorso) return STAT.inCorso;
     const S = window.statistiche;
     const daGiorno = S.primoGiornoStorico(new Date());
+    STAT.errorePermessi = false;
     STAT.inCorso = Promise.all(PAZIENTI_PROF.filter((p) => p.pazienteUid).map(async (p) => {
       try {
         const { utente, spunte } = await window.cloud.leggiDatiStatistiche(p.pazienteUid, daGiorno);
@@ -5429,8 +5428,9 @@
         };
       } catch (e) {
         console.error("Statistiche paziente", p.id, e);
-        if (e && (e.code === "permission-denied" || e.code === "firestore/permission-denied")) STAT.errorePermessi = true;
-        STAT.risultati[p.id] = { errore: true };
+        const permessi = !!(e && (e.code === "permission-denied" || e.code === "firestore/permission-denied"));
+        if (permessi) STAT.errorePermessi = true;
+        STAT.risultati[p.id] = { errore: true, permessi };
       }
     })).then(() => {
       STAT.caricato = Date.now();
@@ -5488,7 +5488,10 @@
 
     profRoot.innerHTML = `
       <div class="nav-riga">${navLink("btn-torna-lista", "pazienti", "I tuoi pazienti", true)}</div>
-      ${STAT.errorePermessi ? `<p class="hint avviso-profilo">Non riesco a leggere le spunte dei pazienti: probabilmente le nuove regole di Firestore non sono ancora state pubblicate.</p>` : ""}
+      ${(() => {
+        const n = PAZIENTI_PROF.filter((p) => STAT.risultati[p.id] && STAT.risultati[p.id].errore).length;
+        return n ? `<p class="hint avviso-profilo">${n === 1 ? "I dati di un paziente non sono leggibili" : `I dati di ${n} pazienti non sono leggibili`}: trovi i dettagli nella sua scheda qui sotto.</p>` : "";
+      })()}
       ${PAZIENTI_PROF.length === 0 ? `<div class="empty">Quando avrai dei pazienti, qui vedrai come seguono il piano.</div>` : `
         <section class="stat-sintesi">
           <div class="stat-sintesi__num"><strong>${perc(media7)}</strong><span>aderenza media negli ultimi 7 giorni</span></div>
@@ -5507,7 +5510,13 @@
           ${ordinati.map((p) => {
             const x = STAT.risultati[p.id];
             if (!x) return `<div class="stat-card"><span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span><span class="stat-card__piede">Caricamento…</span></div>`;
-            if (x.errore) return `<div class="stat-card"><span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span><span class="stat-card__piede">Dati non disponibili</span></div>`;
+            if (x.errore) return `<div class="stat-card stat-card--illeggibile">
+                <span class="paziente-card__nome">${escapeHTML(p.pazienteNome || "—")}</span>
+                <span class="stat-card__motivo">${x.permessi
+                  ? "Il profilo di questo paziente non risulta più collegato a te: l'account potrebbe essere stato eliminato o scollegato. Se non ti serve più, puoi rimuovere il piano."
+                  : "Dati non disponibili in questo momento: riprova con Aggiorna."}</span>
+                ${x.permessi ? `<button type="button" class="link-btn link-btn--sinistra" data-rimuovi-piano="${escapeHTML(p.id)}">Rimuovi questo piano</button>` : ""}
+              </div>`;
             const r = x.r;
             return `
               <button type="button" class="stat-card stat-card--${r.stato}" data-stat-id="${p.id}">
@@ -5533,6 +5542,10 @@
     const agg = document.getElementById("btn-aggiorna-stat");
     if (agg) agg.addEventListener("click", () => { aggiornaStatisticheInBackground(true); renderStatistiche(); });
     profRoot.querySelectorAll("[data-stat-id]").forEach((b) => b.addEventListener("click", () => renderStatistichePaziente(b.dataset.statId)));
+    profRoot.querySelectorAll("[data-rimuovi-piano]").forEach((b) => b.addEventListener("click", () => {
+      PIANO_ATTIVO_PROF = PAZIENTI_PROF.find((p) => p.id === b.dataset.rimuoviPiano) || null;
+      apriConfermaEliminazione();
+    }));
     if (!STAT.caricato && !STAT.inCorso && PAZIENTI_PROF.length) aggiornaStatisticheInBackground(false);
   }
 
@@ -7133,10 +7146,12 @@
         <button type="button" class="btn" id="btn-salva-profilo" style="margin-top:16px;">Salva dati di contatto</button>
       </section>
       ${codiceStudioSezioneHTML()}
+      ${aspettoSezioneHTML()}
     `;
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-salva-profilo").addEventListener("click", salvaProfiloProfessionista);
     caricaCodiceStudio();
+    collegaAspetto(renderProfiloProfessionista);
   }
 
   // ---- Codice studio: i pazienti che usano già l'app si collegano con questo ----
