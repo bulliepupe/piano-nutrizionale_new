@@ -158,6 +158,7 @@
       return;
     }
     RUOLO = utenteDati.ruolo;
+    if (utenteDati.aspetto && window.temaApp) window.temaApp.daProfilo(utenteDati.aspetto);
     if (RUOLO === "professionista") {
       avviaProfessionista(utenteDati);
     } else if (RUOLO === "familiare") {
@@ -1454,6 +1455,36 @@
     return true;
   }
 
+  /** Riepilogo in cima alla scheda Oggi: avanzamento (anello, segmenti o numero, secondo lo stile) e prossimo pasto. */
+  function riepilogoGiornoHTML({ settimana, giornoNome, giorno, orari, statoDi, numFatti, numDiversi, numParziali }) {
+    const tot = MEAL_KEYS.length;
+    const prossimo = MEAL_KEYS.find((k) => !statoDi(k));
+    const circ = 2 * Math.PI * 27;
+    const quota = (numFatti + 0.5 * (numDiversi + numParziali)) / tot;
+    const dettagli = [numDiversi ? `${numDiversi} ${numDiversi === 1 ? "diverso" : "diversi"}` : "", numParziali ? `${numParziali} in parte` : ""].filter(Boolean).join(", ");
+    return `
+      <section class="oggi-riepilogo" aria-label="Riepilogo della giornata">
+        <div class="oggi-riepilogo__segmenti" aria-hidden="true">${MEAL_KEYS.map((k) => `<span class="seg seg--${statoDi(k) || (k === prossimo ? "prossimo" : "vuoto")}"></span>`).join("")}</div>
+        <div class="oggi-riepilogo__corpo">
+          <svg class="oggi-riepilogo__anello" width="60" height="60" viewBox="0 0 64 64" aria-hidden="true">
+            <circle cx="32" cy="32" r="27" fill="none" stroke-width="7" class="anello__fondo"></circle>
+            <circle cx="32" cy="32" r="27" fill="none" stroke-width="7" stroke-linecap="round" class="anello__valore" stroke-dasharray="${(quota * circ).toFixed(1)} ${circ.toFixed(1)}" transform="rotate(-90 32 32)"></circle>
+            <text x="32" y="37" text-anchor="middle" class="anello__testo">${numFatti}/${tot}</text>
+          </svg>
+          <div class="oggi-riepilogo__testi">
+            <span class="oggi-riepilogo__eyebrow">Settimana ${settimana} · ${escapeHTML(giornoNome)}</span>
+            <span class="oggi-riepilogo__titolo">${numFatti === tot ? "Tutti i pasti fatti" : `${numFatti} ${numFatti === 1 ? "pasto" : "pasti"} su ${tot} fatti`}${dettagli ? `<small>, ${dettagli}</small>` : ""}</span>
+            <span class="oggi-riepilogo__prossimo">${prossimo ? `Prossimo: ${MEAL_META[prossimo].label.toLowerCase()}${orari[prossimo] ? ` alle ${orari[prossimo]}` : ""}` : "Giornata completata"}</span>
+          </div>
+          <span class="oggi-riepilogo__numero" aria-hidden="true"><b>${numFatti}</b>/${tot}</span>
+        </div>
+        ${giorno.kcal != null || (PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.obiettivo) ? `<div class="oggi-riepilogo__pill">
+          ${giorno.kcal != null ? `<span class="pill pill--kcal">${giorno.kcal} kcal circa</span>` : ""}
+          ${PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.obiettivo ? `<span class="pill">${escapeHTML(PIANO_ATTIVO.paziente.obiettivo)}</span>` : ""}
+        </div>` : ""}
+      </section>`;
+  }
+
   function renderOggi() {
     if (pianoAutonomoVuoto() || pianoInCompilazione()) { mostraBenvenutoAutonomo(); return; }
     if (!PIANO_ATTIVO) {
@@ -1487,16 +1518,7 @@
       ${avvisoPesataHTML()}
       ${renderBannerIosHTML()}
       ${avvisoInizio}
-      <section class="hero">
-        <div class="hero__foto" role="img" aria-label="Piatto con verdure fresche, cereali e agrumi"></div>
-        <div class="hero__eyebrow"><span class="dot"></span> Settimana ${settimana} del piano</div>
-        <h2 class="hero__title">${giornoNome}</h2>
-        <div class="hero__meta">
-          ${giorno.kcal != null ? `<span class="pill pill--kcal">${giorno.kcal} kcal circa</span>` : ""}
-          ${PIANO_ATTIVO.paziente.obiettivo ? `<span class="pill">${escapeHTML(PIANO_ATTIVO.paziente.obiettivo)}</span>` : ""}
-          <span class="pill pill--progress ${numFatti === MEAL_KEYS.length ? "is-complete" : ""}">${numFatti}/${MEAL_KEYS.length} pasti fatti${numDiversi ? `, ${numDiversi} ${numDiversi === 1 ? "diverso" : "diversi"}` : ""}${numParziali ? `, ${numParziali} in parte` : ""}</span>
-        </div>
-      </section>
+      ${riepilogoGiornoHTML({ settimana, giornoNome, giorno, orari, statoDi, numFatti, numDiversi, numParziali })}
       <div class="timeline">${renderTimelineHTML(giorno, orari, { checkable: true, fatti })}</div>
       ${renderCoccolaHTML(giorno)}
       ${renderNormeHTML()}
@@ -1505,6 +1527,13 @@
 
     root.querySelectorAll("[data-meal-check]").forEach((btn) => {
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));
+    });
+    root.querySelectorAll("[data-meal-apri]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const art = btn.closest(".meal");
+        const aperta = art.classList.toggle("is-aperta");
+        btn.setAttribute("aria-expanded", String(aperta));
+      });
     });
     root.querySelectorAll("[data-meal-altro]").forEach((btn) => {
       btn.addEventListener("click", () => apriStatoPasto(btn.dataset.mealAltro));
@@ -1524,17 +1553,29 @@
   function renderTimelineHTML(giorno, orari, opts) {
     opts = opts || {};
     const fatti = opts.fatti || {};
+    // Vista Oggi: il primo pasto non ancora segnato è "attuale" (in evidenza),
+    // gli altri sono righe compatte che si aprono con un tocco.
+    const attuale = opts.checkable ? MEAL_KEYS.find((k) => !window.statistiche.statoPasto(fatti, k)) : null;
+    const ICONA_STATO = {
+      fatto: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
+      diverso: '<span aria-hidden="true">↺</span>', parziale: '<span aria-hidden="true">½</span>', saltato: '<span aria-hidden="true">✕</span>',
+    };
     return MEAL_KEYS.map((key) => {
       const meta = MEAL_META[key];
       const stato = window.statistiche.statoPasto(fatti, key);
       const isDone = stato === "fatto";
       const sost = trovaSostituzioneMeal(giorno[key]);
-      return `
-        <article class="meal ${meta.classe} ${isDone ? "is-done" : ""} ${stato === "parziale" ? "is-parziale" : ""} ${stato === "saltato" ? "is-saltato" : ""} ${stato === "diverso" ? "is-diverso" : ""}">
-          <div class="meal__head">
+      const modo = !opts.checkable ? "" : key === attuale ? "meal--attuale" : stato ? "meal--chiusa" : "meal--compatta";
+      const compatto = modo === "meal--chiusa" || modo === "meal--compatta";
+      const testaContenuto = `
+            <span class="meal__stato meal__stato--${stato || "vuoto"}" aria-hidden="true">${stato ? ICONA_STATO[stato] || "" : ""}</span>
             <span class="meal__label">${meta.label}</span>
-            <span class="meal__time">${orari[key] || ""}</span>
-          </div>
+            <span class="meal__time">${orari[key] || ""}</span>`;
+      return `
+        <article class="meal ${meta.classe} ${modo} ${isDone ? "is-done" : ""} ${stato === "parziale" ? "is-parziale" : ""} ${stato === "saltato" ? "is-saltato" : ""} ${stato === "diverso" ? "is-diverso" : ""}">
+          ${compatto
+            ? `<button type="button" class="meal__head meal__apri" aria-expanded="false" data-meal-apri="${key}">${testaContenuto}</button>`
+            : `<div class="meal__head">${testaContenuto}</div>`}
           <p class="meal__desc">${testoPastoHTML(giorno[key])}</p>
           ${opts.checkable ? `
             <div class="meal__azioni">
@@ -2810,17 +2851,7 @@
         <button type="button" class="btn btn--ghost" id="btn-lista-casa-imp">${LISTA.dati ? "Gestisci la lista di casa" : "Condividi la lista della spesa"}</button>
       </section>
 
-      <section class="settings-section">
-        <h2>Aspetto</h2>
-        <div class="field-row">
-          <span class="field-row__label">Tema</span>
-          <select id="sel-tema">
-            <option value="sistema">Segue il sistema</option>
-            <option value="chiaro">Chiaro</option>
-            <option value="scuro">Scuro</option>
-          </select>
-        </div>
-      </section>
+      ${aspettoSezioneHTML()}
 
       ${gestisceIlPiano() ? (progressiPazienteHTML() ? `
       <section class="settings-section">
@@ -2868,11 +2899,7 @@
     });
     document.getElementById("btn-lista-casa-imp").addEventListener("click", apriListaCasa);
     collegaProgressiPaziente();
-    document.getElementById("sel-tema").value = localStorage.getItem(LS_KEYS.tema) || "sistema";
-    document.getElementById("sel-tema").addEventListener("change", (e) => {
-      localStorage.setItem(LS_KEYS.tema, e.target.value);
-      applyTema(e.target.value);
-    });
+    collegaAspetto(renderImpostazioni);
     document.querySelectorAll(".input-orario").forEach((inp) => {
       inp.addEventListener("change", () => {
         const override = JSON.parse(localStorage.getItem(LS_KEYS.orari) || "{}");
@@ -2908,9 +2935,55 @@
    * (data-theme="light"/"dark") — questa mappa li fa incontrare.
    */
   function applyTema(v) {
+    if (window.temaApp) { window.temaApp.imposta({ aspetto: ["chiaro", "scuro"].includes(v) ? v : "sistema" }); return; }
     const mappa = { chiaro: "light", scuro: "dark" };
     if (v === "sistema" || !mappa[v]) document.documentElement.removeAttribute("data-theme");
     else document.documentElement.setAttribute("data-theme", mappa[v]);
+  }
+
+  /** Cambia l'aspetto dell'app e lo salva nel profilo (vale su tutti i dispositivi). */
+  function cambiaAspetto(parziale) {
+    if (!window.temaApp) return;
+    const a = window.temaApp.imposta(parziale);
+    if (UID && window.cloud.salvaAspetto) window.cloud.salvaAspetto(UID, a).catch(() => {});
+  }
+
+  function aspettoSezioneHTML() {
+    if (!window.temaApp) return "";
+    const T = window.temaApp, a = T.get();
+    const seg = (chiave, voci) => voci.map(([id, nome]) =>
+      `<button type="button" class="segmento__voce" data-aspetto="${chiave}" data-valore="${id}" aria-pressed="${a[chiave] === id}">${nome}</button>`).join("");
+    return `
+      <section class="settings-section" id="sezione-aspetto">
+        <h2>Aspetto dell'app</h2>
+        <p class="impost-etichetta">Stile</p>
+        <div class="scelta-stili">
+          ${T.STILI.map((st) => `<button type="button" class="scelta-stile scelta-stile--${st.id}" data-aspetto="stile" data-valore="${st.id}" aria-pressed="${a.stile === st.id}"><span class="scelta-stile__aa" aria-hidden="true">Aa</span><span>${st.nome}</span></button>`).join("")}
+        </div>
+        <p class="impost-etichetta">Colore <span class="impost-etichetta__valore">${escapeHTML((T.COLORI.find((c) => c.id === a.colore) || T.COLORI[0]).nome)}</span></p>
+        <div class="scelta-colori">
+          ${T.COLORI.map((c) => `<button type="button" class="scelta-colore" data-aspetto="colore" data-valore="${c.id}" aria-pressed="${a.colore === c.id}" aria-label="${c.nome}" style="--campione-chiaro: ${c.chiaro}; --campione-scuro: ${c.scuro};"></button>`).join("")}
+        </div>
+        <div class="scelta-doppia">
+          <div>
+            <p class="impost-etichetta">Aspetto</p>
+            <div class="segmento">${seg("aspetto", [["chiaro", "Chiaro"], ["scuro", "Scuro"], ["sistema", "Auto"]])}</div>
+          </div>
+          <div>
+            <p class="impost-etichetta">Testo</p>
+            <div class="segmento">${seg("testo", [["normale", "Normale"], ["grande", "Grande"]])}</div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function collegaAspetto(ridisegna) {
+    document.querySelectorAll("#sezione-aspetto [data-aspetto]").forEach((b) => b.addEventListener("click", () => {
+      cambiaAspetto({ [b.dataset.aspetto]: b.dataset.valore });
+      const y = window.scrollY;
+      ridisegna();
+      window.scrollTo(0, y);
+    }));
   }
 
   // ---------------------------------------------------------------------

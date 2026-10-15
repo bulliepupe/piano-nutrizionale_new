@@ -4,3 +4,7 @@
 @font-face{font-family:"Inter";font-style:normal;font-display:swap;font-weight:500;src:url("../fonts/inter-latin-500-normal.woff2") format("woff2");}
 @font-face{font-family:"Inter";font-style:normal;font-display:swap;font-weight:600;src:url("../fonts/inter-latin-600-normal.woff2") format("woff2");}
 @font-face{font-family:"Inter";font-style:normal;font-display:swap;font-weight:700;src:url("../fonts/inter-latin-700-normal.woff2") format("woff2");}
+/* Caratteri degli stili dell'app (variabili, solo alfabeto latino, licenza SIL OFL 1.1) */
+@font-face{font-family:"Manrope";font-style:normal;font-display:swap;font-weight:200 800;src:url("../fonts/manrope-latin-wght-normal.woff2") format("woff2-variations"),url("../fonts/manrope-latin-wght-normal.woff2") format("woff2");}
+@font-face{font-family:"Plus Jakarta Sans";font-style:normal;font-display:swap;font-weight:200 800;src:url("../fonts/plus-jakarta-sans-latin-wght-normal.woff2") format("woff2-variations"),url("../fonts/plus-jakarta-sans-latin-wght-normal.woff2") format("woff2");}
+@font-face{font-family:"Sora";font-style:normal;font-display:swap;font-weight:100 800;src:url("../fonts/sora-latin-wght-normal.woff2") format("woff2-variations"),url("../fonts/sora-latin-wght-normal.woff2") format("woff2");}

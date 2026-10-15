@@ -660,6 +660,11 @@
       await db.collection("users").doc(uid).update({ fcmTokens: [], notificheAttive: false, dominioNotifiche: dominio });
     },
 
+    /** Aspetto dell'app scelto dall'utente (stile, colore, chiaro/scuro, testo). */
+    async salvaAspetto(uid, aspetto) {
+      await db.collection("users").doc(uid).update({ aspetto });
+    },
+
     async salvaPreferenzeNotifiche(uid, { orariOverride, anticipoMinuti, notificheAttive }) {
       const campi = { notificheAttive: !!notificheAttive };
       if (orariOverride !== undefined) campi.orariOverride = orariOverride;
