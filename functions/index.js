@@ -1067,7 +1067,7 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: MODELLO_IMPORTAZIONE,
+        inference_geo: AREA_INFERENZA, model: MODELLO_IMPORTAZIONE,
         max_tokens: 16000,
         system: ISTRUZIONI_IMPORTAZIONE,
         tools: [STRUMENTO_IMPORTAZIONE],
@@ -1109,7 +1109,11 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
 // motivo, nota e piano si leggono qui. Al modello non arrivano dati
 // identificativi. Limiti fissi: mai digiuni, pasti saltati, tagli drastici o
 // attività fisica come compensazione.
-const MODELLO_RISCONTRO = "claude-haiku-4-5-20251001";
+const MODELLO_RISCONTRO = "claude-haiku-5-5";
+
+// Elaborazione AI solo su infrastruttura negli Stati Uniti, come dichiarato
+// nel consenso e nell'informativa (vale per i modelli dalla 4.6 in poi).
+const AREA_INFERENZA = "us";
 const LIMITE_RISCONTRI_GIORNO = 8;
 const STATI_NON_COME_PIANO = { diverso: "fatto diversamente dal piano", parziale: "fatto solo in parte", saltato: "saltato" };
 const MOTIVI_RISCONTRO = {
@@ -1255,7 +1259,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: MODELLO_RISCONTRO, max_tokens: 1200, system: ISTRUZIONI_RISCONTRO,
+        inference_geo: AREA_INFERENZA, model: MODELLO_RISCONTRO, max_tokens: 1200, system: ISTRUZIONI_RISCONTRO,
         tools: [STRUMENTO_RISCONTRO], tool_choice: { type: "tool", name: "riscontro_pasto" },
         messages: [{ role: "user", content: testo }],
       }),
@@ -1348,7 +1352,7 @@ exports.stimaRese = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 },
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: MODELLO_RISCONTRO, max_tokens: 1500, system: ISTRUZIONI_RESE,
+        inference_geo: AREA_INFERENZA, model: MODELLO_RISCONTRO, max_tokens: 1500, system: ISTRUZIONI_RESE,
         tools: [STRUMENTO_RESE], tool_choice: { type: "tool", name: "rese_in_cottura" },
         messages: [{ role: "user", content: "Alimenti:\n" + mancanti.map((n) => "- " + n).join("\n") }],
       }),
@@ -1499,7 +1503,7 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: MODELLO_ANALISI, max_tokens: 1500, system: ISTRUZIONI_ANALISI,
+        inference_geo: AREA_INFERENZA, model: MODELLO_ANALISI, max_tokens: 1500, system: ISTRUZIONI_ANALISI,
         tools: [STRUMENTO_ANALISI], tool_choice: { type: "tool", name: "analisi_andamento" },
         messages: [{ role: "user", content: `Dati di andamento del paziente (JSON):\n${testo}` }],
       }),
