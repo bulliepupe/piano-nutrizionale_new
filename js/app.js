@@ -1715,7 +1715,10 @@
             ${escapeHTML(descriviAllenamento(a))}
             <button type="button" class="allenamento-chip__via" data-togli-allenamento="${escapeHTML(a.id)}" aria-label="Togli ${escapeHTML(a.tipo || "allenamento")}">✕</button>
           </span>`).join("")}
-        <button type="button" class="allenamento-aggiungi" id="btn-aggiungi-allenamento">+ ${lista.length ? "Altro allenamento" : "Oggi mi alleno"}</button>
+        <button type="button" class="allenamento-aggiungi" id="btn-aggiungi-allenamento">
+          <span class="allenamento-aggiungi__icona" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          ${lista.length ? "Altro allenamento" : "Oggi mi alleno"}
+        </button>
       </div>`;
   }
 

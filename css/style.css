@@ -2308,3 +2308,11 @@ body.con-informativa { overflow: hidden; }
 .allenamento-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 6px 6px 6px 12px; font-size: 13px; font-weight: 600; }
 .allenamento-chip__via { border: none; background: transparent; color: inherit; width: 24px; height: 24px; border-radius: 12px; cursor: pointer; font-size: 12px; }
 .allenamento-aggiungi { border: 1px dashed var(--border); background: transparent; color: var(--ink-soft); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+/* "Oggi mi alleno": pulsante ovale ben visibile, nel colore del tema */
+.allenamento-aggiungi { display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 20px 6px 8px; border: none; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent); }
+.allenamento-aggiungi:hover { filter: brightness(1.06); }
+.allenamento-aggiungi:active { transform: scale(0.98); }
+.allenamento-aggiungi__icona { width: 34px; height: 34px; border-radius: 17px; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent-ink) 22%, transparent); }
+.allenamenti-oggi { align-items: center; margin-top: 14px; }
+.allenamento-chip { min-height: 36px; box-sizing: border-box; }
