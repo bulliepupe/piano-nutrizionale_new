@@ -1179,6 +1179,8 @@ function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
     .slice(0, 2).map((x) => ({ pasto: x.pasto, testo: breve(x.testo, 300) }));
   let messaggio = breve(r.messaggio, 240);
   if (!messaggio || RE_SUGGERIMENTO_VIETATO.test(messaggio)) messaggio = impatto === "irrilevante" ? "Va benissimo così: continua con il piano." : MESSAGGIO_BASE;
+  // scambio equivalente: il paziente non è mai uscito dal piano, niente "riprendi" o "torna"
+  if (impatto === "irrilevante" && /\b(ripren|riparti|torna|rientr)/i.test(messaggio)) messaggio = "Va benissimo così: continua con il piano.";
   let spiegazione = breve(r.spiegazione, 420);
   if (RE_SUGGERIMENTO_VIETATO.test(spiegazione)) spiegazione = "";
   return { impatto, stima: breve(r.stima, 200), spiegazione, suggerimenti, messaggio };
@@ -1403,6 +1405,7 @@ COME VALUTARE
 - valutazione: "verde" se il paziente segue il piano con regolarità e gli scostamenti sono pochi o di scarso impatto; "giallo" se ci sono segnali da tenere d'occhio (aderenza in calo, scostamenti moderati ricorrenti su un pasto, uso dell'app discontinuo); "rosso" se conviene contattarlo (aderenza bassa, scostamenti rilevanti frequenti, pasti saltati ricorrenti, app non usata da giorni).
 - Valuta il peso degli scostamenti: gli scambi equivalenti o irrilevanti non sono un problema; conta la frequenza di quelli moderati e rilevanti e i pasti su cui si concentrano.
 - Se i dati sono pochi (piano iniziato da pochi giorni, poche segnalazioni), dillo e sii prudente.
+- PIANO APPENA INIZIATO: giorniValutati30 indica da quanti giorni il piano è attivo nella finestra degli ultimi 30 (non quanti giorni il paziente ha usato l'app). Valuta aderenza, tracciamento e uso dell'app solo su quei giorni, mai sui 30: non scrivere "1 giorno su 30" o simili. Se giorniValutati30 è inferiore a 7, scrivi che il piano è appena iniziato e i dati sono ancora pochi per una valutazione; non indicare come problema il basso utilizzo, lo scarso tracciamento o i pochi giorni registrati; valutazione "verde", oppure "giallo" solo per scostamenti rilevanti già evidenti; contattare false; azione del tipo "Nessuna azione per ora: rivaluta tra qualche giorno". Unica eccezione: se il paziente non ha mai usato l'app da più di 3 giorni (usoApp.giorniInattivo maggiore di 3), puoi suggerire di contattarlo per aiutarlo a partire.
 - Basati solo sui dati ricevuti: non inventare, non fare diagnosi, non dare indicazioni cliniche al posto del professionista.
 
 COSA SCRIVERE (in italiano, rivolto al professionista, tono professionale e concreto)
@@ -1433,6 +1436,18 @@ const STRUMENTO_ANALISI = {
     required: ["valutazione", "titolo", "sintesi", "impattoScostamenti", "puntiAttenzione", "puntiForza", "azione", "contattare", "messaggio"],
   },
 };
+
+// Piano attivo da meno di 7 giorni: niente allarmi né inviti a contattare il
+// paziente, salvo che non abbia mai usato l'app da più di 3 giorni.
+function correggiPianoAppenaIniziato(a, dati) {
+  const giorni = Number(dati && dati.giorniValutati30);
+  const inattivo = Number(dati && dati.usoApp && dati.usoApp.giorniInattivo);
+  if (!(giorni >= 0 && giorni < 7) || inattivo > 3) return a;
+  const out = Object.assign({}, a, { contattare: false, messaggio: "" });
+  if (out.valutazione === "rosso") out.valutazione = "giallo";
+  if (a.contattare) out.azione = "Nessuna azione per ora: il piano è appena iniziato, rivaluta tra qualche giorno.";
+  return out;
+}
 
 function normalizzaAnalisi(r) {
   const breve = (t, max) => {
@@ -1500,7 +1515,7 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
   }
   const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "analisi_andamento");
   if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
-  const analisi = Object.assign(normalizzaAnalisi(blocco.input), { impronta, creata: Date.now() });
+  const analisi = Object.assign(correggiPianoAppenaIniziato(normalizzaAnalisi(blocco.input), dati), { impronta, creata: Date.now() });
   await pianoRef.collection("analisi").doc("ultima").set(Object.assign({}, analisi, { aggiornata: FieldValue.serverTimestamp() }));
   await utenteRef.set({ analisiAI: { data: oggi, n: usate + 1 } }, { merge: true });
   return analisi;
@@ -1693,5 +1708,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
