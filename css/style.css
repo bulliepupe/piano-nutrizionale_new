@@ -2302,3 +2302,9 @@ body.con-informativa { overflow: hidden; }
 
 .stat-card--illeggibile { display: flex; flex-direction: column; gap: 6px; background: color-mix(in srgb, var(--gold) 7%, var(--surface)); }
 .segmento__voce[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--border), 0 1px 3px rgba(0, 0, 0, 0.14); }
+
+/* Allenamenti di oggi */
+.allenamenti-oggi { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.allenamento-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 6px 6px 6px 12px; font-size: 13px; font-weight: 600; }
+.allenamento-chip__via { border: none; background: transparent; color: inherit; width: 24px; height: 24px; border-radius: 12px; cursor: pointer; font-size: 12px; }
+.allenamento-aggiungi { border: 1px dashed var(--border); background: transparent; color: var(--ink-soft); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }

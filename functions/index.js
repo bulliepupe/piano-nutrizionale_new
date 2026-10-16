@@ -1130,6 +1130,7 @@ COSA FARE
 - suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Non ridurre mai le porzioni di proteine (carne, pesce, uova, legumi, latticini) né di verdura: saziano e sostengono il piano. Se serve alleggerire, agisci su carboidrati aggiunti e condimenti (pane, cracker, olio oltre il previsto, opzione più ricca) o scegli l'alternativa più leggera prevista dal piano. Usa solo alimenti già presenti nel piano del giorno, nelle sostituzioni o nelle indicazioni del nutrizionista. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
 - messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
+- Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista.
 
 LIMITI INVIOLABILI
 - Mai suggerire digiuni, pasti saltati, riduzioni oltre circa un quarto di un pasto, eliminazione di gruppi alimentari, attività fisica per "compensare", lassativi o qualsiasi comportamento compensatorio.
@@ -1225,6 +1226,9 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   }
   const frequente = scostamenti > 5;
 
+  const attivitaOggi = ((await utenteRef.collection("attivita").doc(dateKey).get()).data()) || {};
+  const allenamenti = (Array.isArray(attivitaOggi.allenamenti) ? attivitaOggi.allenamenti : []).slice(0, 4)
+    .map((a) => `${String(a.tipo || "allenamento").slice(0, 40)}${a.durata ? ` ${Math.round(Number(a.durata))} min` : ""}${a.intensita ? `, intensità ${String(a.intensita).slice(0, 20)}` : ""}${a.ora ? `, alle ${String(a.ora).slice(0, 5)}` : ""}`);
   const motivo = fatti.motivi && MOTIVI_RISCONTRO[fatti.motivi[pasto]];
   const nota = fatti.note && fatti.note[pasto] ? String(fatti.note[pasto]).slice(0, 200) : "";
   const sostituzioni = (Array.isArray(piano.sostituzioni) ? piano.sostituzioni : []).slice(0, 12)
@@ -1236,6 +1240,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
     "",
     rimanenti.length ? "Pasti rimasti di oggi:\n" + rimanenti.map((k) => `- ${MEAL_LABELS[k]} [${k}]: ${String(giorno[k]).slice(0, 600)}`).join("\n") : "Non ci sono altri pasti oggi: niente suggerimenti per oggi, solo il riscontro e il ritorno al piano da domani.",
     giorno.kcal ? `Calorie previste per la giornata: circa ${giorno.kcal} kcal.` : "",
+    allenamenti.length ? `Allenamenti di oggi segnati dal paziente: ${allenamenti.join("; ")}.` : "",
     sostituzioni ? `\nSostituzioni approvate dal nutrizionista:\n${sostituzioni}` : "",
     impostazioni.indicazioni ? `\nIndicazioni del nutrizionista per questi casi: ${String(impostazioni.indicazioni).slice(0, 600)}` : "",
     "",

@@ -88,6 +88,14 @@ service cloud.firestore {
           get(/databases/$(database)/documents/users/$(userId)).data.get("professionistaUid", "") == request.auth.uid
         );
       }
+      // Allenamenti e attività del giorno (fase 0: inseriti a mano; poi anche da Apple Health / Health Connect)
+      match /attivita/{giorno} {
+        allow write: if isSignedIn() && request.auth.uid == userId;
+        allow read: if isSignedIn() && (
+          request.auth.uid == userId ||
+          get(/databases/$(database)/documents/users/$(userId)).data.get("professionistaUid", "") == request.auth.uid
+        );
+      }
       match /pastiFatti/{giorno} {
         allow write: if isSignedIn() && request.auth.uid == userId;
         allow read: if isSignedIn() && (

@@ -305,6 +305,32 @@
     },
 
     // ---------------------------------------------------------------
+    // Allenamenti e attività — per paziente, per giorno
+    // { allenamenti: [{ id, tipo, durata, intensita, ora, fonte }] }
+    // ---------------------------------------------------------------
+    async salvaAttivita(pazienteUid, dateKey, dati) {
+      await db.collection("users").doc(pazienteUid).collection("attivita").doc(dateKey)
+        .set(Object.assign({}, dati, { aggiornato: firebase.firestore.FieldValue.serverTimestamp() }), { merge: true });
+    },
+
+    ascoltaAttivita(pazienteUid, dateKey, cb) {
+      return db.collection("users").doc(pazienteUid).collection("attivita").doc(dateKey)
+        .onSnapshot(
+          (doc) => cb(doc.exists ? doc.data() : {}),
+          (err) => { console.error("Errore ascolto attività:", err); cb({}); }
+        );
+    },
+
+    /** Attività dei giorni da daGiorno (AAAA-MM-GG) a oggi: { giorno: { allenamenti } } */
+    async leggiAttivitaPeriodo(pazienteUid, daGiorno) {
+      const snap = await db.collection("users").doc(pazienteUid).collection("attivita")
+        .where(firebase.firestore.FieldPath.documentId(), ">=", daGiorno).get();
+      const out = {};
+      snap.forEach((d) => { out[d.id] = d.data(); });
+      return out;
+    },
+
+    // ---------------------------------------------------------------
     // Notifiche push (Firebase Cloud Messaging)
     // ---------------------------------------------------------------
     /**

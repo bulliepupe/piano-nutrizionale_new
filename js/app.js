@@ -67,6 +67,8 @@
   // ---- stato lato paziente ----
   let PIANO_ATTIVO = null; // piano corrente letto da Firestore in tempo reale
   let PIANO_GREZZO = null; // come salvato (con l'eventuale piano programmato in "prossimo")
+  let ATTIVITA_OGGI = {}; // allenamenti di oggi { allenamenti: [...] }
+  let unsubAttivitaOggi = null;
   const PASTI_APERTI = new Set(); // righe della scheda Oggi aperte dall'utente (restano aperte quando la scheda si ridisegna)
   let ATTESA_REGISTRAZIONE = null; // registrazione del paziente autonomo in corso
   let REGISTRAZIONE_PAZIENTE_APERTA = false; // pulsante pubblico (config.json → registrazionePaziente)
@@ -1113,6 +1115,13 @@
       desc(im.saltato, "Saltati");
     }
 
+    // Allenamenti
+    try {
+      const da = S.chiave(dalGiorno);
+      const t = testoSintesiAllenamenti(sintesiAllenamenti(await window.cloud.leggiAttivitaPeriodo(UID, da), da));
+      if (t) { titolo("Allenamenti"); riga(t.riga, { bold: true }); if (t.dettaglio) riga(t.dettaglio); }
+    } catch (e) { /* sezione facoltativa */ }
+
     // Peso e misure
     const misure = (MISURE.lista || []).slice().sort((a, b) => (a.data < b.data ? -1 : 1));
     titolo("Peso e misure");
@@ -1479,6 +1488,7 @@
           </div>
           <span class="oggi-riepilogo__numero" aria-hidden="true"><b>${numFatti}</b>/${tot}</span>
         </div>
+        ${allenamentiOggiHTML()}
         ${giorno.kcal != null || (PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.obiettivo) ? `<div class="oggi-riepilogo__pill">
           ${giorno.kcal != null ? `<span class="pill pill--kcal">${giorno.kcal} kcal circa</span>` : ""}
           ${PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.obiettivo ? `<span class="pill">${escapeHTML(PIANO_ATTIVO.paziente.obiettivo)}</span>` : ""}
@@ -1529,6 +1539,7 @@
     root.querySelectorAll("[data-meal-check]").forEach((btn) => {
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));
     });
+    collegaAllenamentiOggi();
     root.querySelectorAll("[data-meal-apri]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const art = btn.closest(".meal");
@@ -1650,6 +1661,109 @@
     unsubPastiOggi = window.cloud.ascoltaPastiFattiCloud(UID, dateKey, (stato) => {
       PASTI_FATTI_OGGI = stato || {};
       if (currentView === "oggi") renderOggi();
+    });
+    if (unsubAttivitaOggi) unsubAttivitaOggi();
+    unsubAttivitaOggi = window.cloud.ascoltaAttivita ? window.cloud.ascoltaAttivita(UID, dateKey, (dati) => {
+      ATTIVITA_OGGI = dati || {};
+      if (currentView === "oggi") renderOggi();
+    }) : null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Allenamenti del giorno (fase 0: inseriti a mano)
+  // ---------------------------------------------------------------------
+  const TIPI_ALLENAMENTO = ["Corsa", "Camminata veloce", "Bici", "Palestra / pesi", "Nuoto", "Sport di squadra", "Yoga / pilates", "Altro"];
+  const INTENSITA = [["leggera", "Leggera"], ["moderata", "Moderata"], ["intensa", "Intensa"]];
+
+  /** Sintesi degli allenamenti di un periodo: { n, minuti, giorni, perTipo, perIntensita } */
+  function sintesiAllenamenti(perGiorno, daGiorno) {
+    const out = { n: 0, minuti: 0, giorni: 0, perTipo: {}, perIntensita: {} };
+    Object.keys(perGiorno || {}).filter((g) => !daGiorno || g >= daGiorno).forEach((g) => {
+      const lista = Array.isArray(perGiorno[g].allenamenti) ? perGiorno[g].allenamenti : [];
+      if (lista.length) out.giorni++;
+      lista.forEach((a) => {
+        out.n++; out.minuti += Number(a.durata) || 0;
+        out.perTipo[a.tipo || "Altro"] = (out.perTipo[a.tipo || "Altro"] || 0) + 1;
+        if (a.intensita) out.perIntensita[a.intensita] = (out.perIntensita[a.intensita] || 0) + 1;
+      });
+    });
+    return out;
+  }
+
+  function testoSintesiAllenamenti(x) {
+    if (!x.n) return null;
+    const ore = Math.round((x.minuti / 60) * 10) / 10;
+    const tipi = Object.keys(x.perTipo).sort((a, b) => x.perTipo[b] - x.perTipo[a]).slice(0, 3).map((t) => `${t.toLowerCase()} ${x.perTipo[t]}`).join(", ");
+    const intens = ["intensa", "moderata", "leggera"].filter((k) => x.perIntensita[k]).map((k) => `${x.perIntensita[k]} ${k === "intensa" ? "intensi" : k === "moderata" ? "moderati" : "leggeri"}`).join(", ");
+    return {
+      riga: `${x.n} ${x.n === 1 ? "allenamento" : "allenamenti"} in ${x.giorni} ${x.giorni === 1 ? "giorno" : "giorni"}, circa ${String(ore).replace(".", ",")} ore`,
+      dettaglio: [tipi, intens].filter(Boolean).join(" · "),
+    };
+  }
+
+  function descriviAllenamento(a) {
+    return [a.tipo || "Allenamento", a.durata ? `${a.durata} min` : "", a.intensita || "", a.ora ? `alle ${a.ora}` : ""].filter(Boolean).join(" · ");
+  }
+
+  function allenamentiOggiHTML() {
+    if (RUOLO !== "paziente") return "";
+    const lista = Array.isArray(ATTIVITA_OGGI.allenamenti) ? ATTIVITA_OGGI.allenamenti : [];
+    return `
+      <div class="allenamenti-oggi">
+        ${lista.map((a) => `<span class="allenamento-chip">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 4a1.5 1.5 0 1 0 0-.01"/><path d="m7 21 3-6 3 2v5"/><path d="m5 12 3-3 4 1 3 3 3 1"/></svg>
+            ${escapeHTML(descriviAllenamento(a))}
+            <button type="button" class="allenamento-chip__via" data-togli-allenamento="${escapeHTML(a.id)}" aria-label="Togli ${escapeHTML(a.tipo || "allenamento")}">✕</button>
+          </span>`).join("")}
+        <button type="button" class="allenamento-aggiungi" id="btn-aggiungi-allenamento">+ ${lista.length ? "Altro allenamento" : "Oggi mi alleno"}</button>
+      </div>`;
+  }
+
+  function collegaAllenamentiOggi() {
+    const agg = document.getElementById("btn-aggiungi-allenamento");
+    if (agg) agg.addEventListener("click", apriNuovoAllenamento);
+    document.querySelectorAll("[data-togli-allenamento]").forEach((b) => b.addEventListener("click", async () => {
+      const lista = (ATTIVITA_OGGI.allenamenti || []).filter((a) => a.id !== b.dataset.togliAllenamento);
+      try { await window.cloud.salvaAttivita(UID, chiaveData(new Date()), { allenamenti: lista }); }
+      catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
+    }));
+  }
+
+  function apriNuovoAllenamento() {
+    apriSheet(`
+      <h2 class="sheet__titolo">Allenamento di oggi</h2>
+      <p class="sheet__nota">Serve a te e al tuo nutrizionista per leggere il piano insieme all'attività. Non cambia le quantità del piano.</p>
+      <label class="editor-campo"><span>Attività</span>
+        <select id="all-tipo">${TIPI_ALLENAMENTO.map((t) => `<option>${t}</option>`).join("")}</select></label>
+      <div class="ric-griglia">
+        <label class="editor-campo"><span>Durata (minuti)</span><input type="number" id="all-durata" inputmode="numeric" min="5" max="600" step="5" value="45"></label>
+        <label class="editor-campo"><span>Orario (facoltativo)</span><input type="time" id="all-ora"></label>
+      </div>
+      <p class="impost-etichetta">Intensità</p>
+      <div class="segmento" id="all-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === "moderata"}">${nome}</button>`).join("")}</div>
+      <button type="button" class="btn" id="btn-salva-allenamento" style="margin-top:16px;">Salva</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    let intensita = "moderata";
+    document.querySelectorAll("#all-intensita [data-intensita]").forEach((b) => b.addEventListener("click", () => {
+      intensita = b.dataset.intensita;
+      document.querySelectorAll("#all-intensita [data-intensita]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    }));
+    document.getElementById("btn-salva-allenamento").addEventListener("click", async () => {
+      const durata = Math.round(Number(document.getElementById("all-durata").value));
+      if (!durata || durata < 5 || durata > 600) { mostraToast("Indica una durata tra 5 e 600 minuti"); return; }
+      const nuovo = {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        tipo: document.getElementById("all-tipo").value,
+        durata, intensita,
+        ora: document.getElementById("all-ora").value || "",
+        fonte: "manuale",
+      };
+      const lista = (Array.isArray(ATTIVITA_OGGI.allenamenti) ? ATTIVITA_OGGI.allenamenti : []).concat(nuovo).slice(-6);
+      try {
+        await window.cloud.salvaAttivita(UID, chiaveData(new Date()), { allenamenti: lista });
+        chiudiSheet();
+        mostraToast("Allenamento salvato");
+      } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
     });
   }
 
@@ -4317,6 +4431,20 @@
     document.getElementById("analisi-rigenera").addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
   }
 
+  async function caricaAttivitaProf(piano) {
+    const box = document.getElementById("sezione-attivita");
+    if (!box || !piano.pazienteUid || !window.cloud.leggiAttivitaPeriodo) return;
+    try {
+      const da = chiaveData(new Date(Date.now() - 29 * 86400000));
+      const t = testoSintesiAllenamenti(sintesiAllenamenti(await window.cloud.leggiAttivitaPeriodo(piano.pazienteUid, da), da));
+      if (!t || pazienteSelezionatoId !== piano.id) return;
+      box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente.</p>
+        <p class="stat-riga"><span>Totale</span><strong>${escapeHTML(t.riga)}</strong></p>
+        ${t.dettaglio ? `<p class="stat-nota">${escapeHTML(t.dettaglio)}</p>` : ""}`;
+      box.hidden = false;
+    } catch (e) { /* sezione facoltativa */ }
+  }
+
   // ---- Professionista: consigli AI dati al paziente ----
   // Nella scheda Andamento solo i numeri; l'elenco completo è nel registro.
   async function leggiRiscontri30(piano) {
@@ -5698,6 +5826,7 @@
       </section>
 
       ${imprevistiHTML(r)}
+      <section class="settings-section" id="sezione-attivita" hidden></section>
 
       <section class="settings-section">
         <h2>Uso dell'app</h2>
@@ -5734,6 +5863,7 @@
     document.getElementById("btn-torna-stat").addEventListener("click", renderStatistiche);
     document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
     document.getElementById("btn-registro-dettagliato").addEventListener("click", () => renderRegistroPaziente(id));
+    caricaAttivitaProf(piano);
     document.getElementById("btn-piano-da-stat-su").addEventListener("click", () => apriEditorPaziente(id));
     collegaSezionePesoProf(piano);
     caricaRiscontriProf(piano);
