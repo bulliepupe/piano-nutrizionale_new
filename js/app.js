@@ -971,7 +971,14 @@
     // la coccola non si segna: segue la cena
     const stati = {};
     M.CAMPI_PASTO.forEach((k) => { stati[k] = window.statistiche.statoPasto(fatti, k === "coccola" ? "cena" : k); });
-    const assunti = M.macroAssunti(g, stati, {});
+    // pasti fatti diversamente o in parte: la stima del riscontro AI, se c'è
+    const effettivi = {};
+    M.CAMPI_PASTO.forEach((k) => {
+      const r = RISCONTRI.perPasto[k];
+      if ((stati[k] === "diverso" || stati[k] === "parziale") && r && r.macroEffettivi) effettivi[k] = M.pulisciStima(r.macroEffettivi);
+    });
+    const assunti = M.macroAssunti(g, stati, effettivi);
+    const pastoLibero = M.CAMPI_PASTO.find((k) => g.pasti[k] && g.pasti[k].libero);
     const righe = [
       { k: "carboidrati", nome: "Carboidrati" },
       { k: "proteine", nome: "Proteine" },
@@ -987,10 +994,11 @@
     }).join("");
     const nota = [
       "Stima indicativa calcolata con l'intelligenza artificiale sui pasti del tuo piano" + (g.fattore !== 1 ? ", proporzionata alle calorie indicate dal nutrizionista." : "."),
-      g.haLibero ? "Il pasto libero non è conteggiato." : "",
+      Object.keys(effettivi).length ? "Per i pasti fatti diversamente o in parte uso la stima del riscontro." : "",
     ].filter(Boolean).join(" ");
+    const escluso = pastoLibero ? `<span class="macro-oggi__escluso">${pastoLibero === "cena" ? "esclusa la cena libera" : pastoLibero === "pranzo" ? "escluso il pranzo libero" : "escluso il pasto libero"}</span>` : "";
     return `<section class="macro-oggi" aria-label="Macronutrienti di oggi">
-        <div class="macro-oggi__testa"><span class="macro-oggi__titolo">Macronutrienti di oggi</span><span class="badge-stima">stima</span></div>
+        <div class="macro-oggi__testa"><span class="macro-oggi__titolo">Macronutrienti di oggi${escluso}</span><span class="badge-stima">stima</span></div>
         ${righe}
         <p class="macro-oggi__nota">${nota}</p>
       </section>`;

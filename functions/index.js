@@ -1135,6 +1135,7 @@ COSA FARE
 - spiegazione: una o due frasi su cosa significa per la giornata, senza allarmismi.
 - suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Non ridurre mai le porzioni di proteine (carne, pesce, uova, legumi, latticini) né di verdura: saziano e sostengono il piano. Se serve alleggerire, agisci su carboidrati aggiunti e condimenti (pane, cracker, olio oltre il previsto, opzione più ricca) o scegli l'alternativa più leggera prevista dal piano. Usa solo alimenti già presenti nel piano del giorno, nelle sostituzioni o nelle indicazioni del nutrizionista. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
 - messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
+- macroEffettivi: stima in grammi di carboidrati, proteine, grassi (e alcol, se c'è) di quello che il paziente ha mangiato davvero in questo pasto. Compilalo solo se la nota del paziente descrive cosa ha mangiato, anche a grandi linee; se ha fatto il pasto "in parte", stima la parte effettivamente mangiata. Se la nota manca o non dice cosa ha mangiato, ometti macroEffettivi. Valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard; "affidabilita" alta, media o bassa secondo quanto è precisa la descrizione.
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
 - Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista.
 
@@ -1162,6 +1163,15 @@ const STRUMENTO_RISCONTRO = {
         },
       },
       messaggio: { type: "string" },
+      macroEffettivi: {
+        type: "object",
+        description: "Macronutrienti stimati di quanto mangiato davvero (solo se la nota lo descrive)",
+        properties: {
+          carboidrati: { type: "number" }, proteine: { type: "number" }, grassi: { type: "number" }, alcol: { type: "number" },
+          affidabilita: { type: "string", enum: ["alta", "media", "bassa"] },
+        },
+        required: ["carboidrati", "proteine", "grassi", "affidabilita"],
+      },
     },
     required: ["impatto", "stima", "spiegazione", "suggerimenti", "messaggio"],
   },
@@ -1189,7 +1199,13 @@ function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
   if (impatto === "irrilevante" && /\b(ripren|riparti|torna|rientr)/i.test(messaggio)) messaggio = "Va benissimo così: continua con il piano.";
   let spiegazione = breve(r.spiegazione, 420);
   if (RE_SUGGERIMENTO_VIETATO.test(spiegazione)) spiegazione = "";
-  return { impatto, stima: breve(r.stima, 200), spiegazione, suggerimenti, messaggio };
+  const out = { impatto, stima: breve(r.stima, 200), spiegazione, suggerimenti, messaggio };
+  // stima dei macronutrienti del pasto effettivo (per il riquadro della scheda Oggi)
+  if (r.macroEffettivi && typeof r.macroEffettivi === "object") {
+    const m = macroLogic.pulisciStima(Object.assign({}, r.macroEffettivi, { libero: false }));
+    if (m.kcal > 0) out.macroEffettivi = m;
+  }
+  return out;
 }
 
 exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 }, async (request) => {
