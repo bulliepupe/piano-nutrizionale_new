@@ -231,6 +231,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Macronutrienti stimati dall'AI per ogni testo di pasto: chiave = impronta
+    // del testo, nessun testo salvato. Si leggono solo per chiave, li scrive il server.
+    match /macroPasti/{chiave} {
+      allow get: if isSignedIn();
+      allow list, write: if false;
+    }
+
     // Tutto il resto (licenze in attesa, registro notifiche) è solo per il server.
     match /{document=**} {
       allow read, write: if false;

@@ -29,6 +29,8 @@ const { getFirestore, FieldValue, FieldPath, Timestamp } = require("firebase-adm
 const { getAuth } = require("firebase-admin/auth");
 const { getMessaging } = require("firebase-admin/messaging");
 const weekLogic = require("./week-logic.js");
+const macroLogic = require("./macro.js");
+const crypto = require("crypto");
 
 initializeApp();
 const db = getFirestore();
@@ -1390,6 +1392,118 @@ exports.stimaRese = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 },
   batch.set(utenteRef, { stimeRese: { giorno: oggi, n: usate + 1 } }, { merge: true });
   await batch.commit();
   return { rese };
+});
+
+// =========================================================================
+// MACRONUTRIENTI DEI PASTI (stima AI, archivio comune)
+// =========================================================================
+// L'app invia i testi dei pasti del piano che non trova ancora in archivio.
+// Claude Haiku stima carboidrati, proteine e grassi di ogni pasto, una volta
+// sola per testo: il risultato va in /macroPasti/{chiave}, dove la chiave è
+// l'impronta SHA-256 del testo normalizzato. Nell'archivio non si salva il
+// testo del pasto, solo i numeri. All'AI arrivano solo i testi dei pasti.
+const LIMITE_STIME_MACRO_GIORNO = 15;
+const PASTI_PER_RICHIESTA_MACRO = 20;
+const ISTRUZIONI_MACRO = `Sei un esperto di dietetica e di composizione degli alimenti. Ricevi dei pasti scritti in italiano così come compaiono in un piano alimentare preparato da un nutrizionista. Per ogni pasto stima i grammi totali di carboidrati, proteine, grassi e alcol del pasto intero.
+Regole:
+- Usa valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard LARN.
+- Le grammature indicate si intendono a crudo per pasta, riso, cereali, legumi secchi, carne e pesce, salvo che il testo dica "cotto".
+- Per gli alimenti senza peso usa una porzione standard ("insalata mista", "verdure grigliate": porzione LARN di verdura; "1 uovo": un uovo medio).
+- Se il pasto propone alternative ("o", "oppure", "/"), restituisci la media delle alternative.
+- Conta i condimenti solo se sono scritti nel pasto (es. "Olio EVO 12g").
+- Caffè, tè o tisane senza zucchero valgono zero. Il vino va in "alcol" (grammi di alcol) più i suoi carboidrati.
+- "Pasto libero", "pizza o cena a scelta" e simili: libero = true e valori a zero.
+- "affidabilita": "alta" se quasi tutto ha la grammatura, "media" se alcune porzioni sono stimate, "bassa" se il pasto è vago.
+- Non aggiungere commenti, consigli o giudizi sul pasto.`;
+const STRUMENTO_MACRO = {
+  name: "macronutrienti_pasti",
+  description: "Restituisce la stima dei macronutrienti di ogni pasto.",
+  input_schema: {
+    type: "object",
+    properties: {
+      pasti: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            numero: { type: "integer", description: "Il numero del pasto nell'elenco ricevuto" },
+            carboidrati: { type: "number" },
+            proteine: { type: "number" },
+            grassi: { type: "number" },
+            alcol: { type: "number" },
+            libero: { type: "boolean" },
+            affidabilita: { type: "string", enum: ["alta", "media", "bassa"] },
+          },
+          required: ["numero", "carboidrati", "proteine", "grassi", "libero", "affidabilita"],
+        },
+      },
+    },
+    required: ["pasti"],
+  },
+};
+
+function chiaveMacro(testo) {
+  return crypto.createHash("sha256").update(macroLogic.normalizzaPasto(testo), "utf8").digest("hex").slice(0, 32);
+}
+
+exports.stimaMacro = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const testi = Array.from(new Set(((request.data && request.data.testi) || [])
+    .filter((t) => macroLogic.daStimare(t)).map((t) => macroLogic.normalizzaPasto(t))))
+    .slice(0, PASTI_PER_RICHIESTA_MACRO);
+  if (!testi.length) return { macro: {} };
+
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (!(await statoPremiumPaziente(utente, Date.now())).attivo) throw new HttpsError("failed-precondition", "premium-richiesto");
+
+  // quelli già in archivio non si richiedono
+  const chiavi = testi.map(chiaveMacro);
+  const esistenti = await db.getAll(...chiavi.map((k) => db.collection("macroPasti").doc(k)));
+  const macro = {};
+  const mancanti = [];
+  esistenti.forEach((d, i) => { if (d.exists) macro[chiavi[i]] = macroLogic.pulisciStima(d.data()); else mancanti.push(i); });
+  if (!mancanti.length) return { macro };
+
+  const oggi = chiaveData(oraItaliana(new Date()));
+  const usate = utente.stimeMacro && utente.stimeMacro.giorno === oggi ? Number(utente.stimeMacro.n) || 0 : 0;
+  if (usate >= LIMITE_STIME_MACRO_GIORNO) return { macro, limite: true };
+
+  const elenco = mancanti.map((i, n) => `${n + 1}. ${testi[i]}`).join("\n");
+  let risposta;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        inference_geo: AREA_INFERENZA, model: MODELLO_RISCONTRO, max_tokens: 3000, system: ISTRUZIONI_MACRO,
+        tools: [STRUMENTO_MACRO], tool_choice: { type: "tool", name: "macronutrienti_pasti" },
+        messages: [{ role: "user", content: "Pasti:\n" + elenco }],
+      }),
+    });
+    risposta = await r.json();
+    if (!r.ok) { console.error("Macro AI: errore API", r.status); throw new HttpsError("unavailable", "servizio-ai-non-disponibile"); }
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+  }
+  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "macronutrienti_pasti");
+  const voci = (blocco && blocco.input && Array.isArray(blocco.input.pasti)) ? blocco.input.pasti : [];
+  const batch = db.batch();
+  mancanti.forEach((i, n) => {
+    const v = voci.find((x) => Number(x.numero) === n + 1);
+    if (!v) return;
+    const stima = macroLogic.pulisciStima(v);
+    batch.set(db.collection("macroPasti").doc(chiavi[i]), Object.assign({}, stima, {
+      fonte: "stima AI", modello: MODELLO_RISCONTRO, creato: FieldValue.serverTimestamp(),
+    }));
+    macro[chiavi[i]] = stima;
+  });
+  batch.set(utenteRef, { stimeMacro: { giorno: oggi, n: usate + 1 } }, { merge: true });
+  await batch.commit();
+  return { macro };
 });
 
 // =========================================================================
