@@ -884,6 +884,118 @@
     if (cambiato && (currentView === "oggi" || currentView === "settimana")) render();
   }
 
+  // ---- Macronutrienti del giorno (Premium) ----
+  // Le stime per pasto stanno nell'archivio comune /macroPasti (chiave = impronta
+  // del testo del pasto). Sul dispositivo se ne tiene una copia: le stime non
+  // cambiano, quindi ogni pasto si legge dal cloud una volta sola.
+  const MACRO_LS = "pnut:macro-pasti";
+  let MACRO = {};
+  try { MACRO = JSON.parse(localStorage.getItem(MACRO_LS) || "{}") || {}; } catch (e) { MACRO = {}; }
+  const MACRO_CHIAVI = new Map();   // testo normalizzato → chiave
+  const MACRO_TENTATI = new Set();  // testi già chiesti in questa sessione (non si richiedono in loop)
+  let MACRO_IN_CORSO = false;
+  let MACRO_LIMITE = false;
+
+  async function chiaveMacro(testo) {
+    const dati = new TextEncoder().encode(window.macro.normalizzaPasto(testo));
+    const h = await crypto.subtle.digest("SHA-256", dati);
+    return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  }
+
+  function macroDisponibile() {
+    return RUOLO === "paziente" && PREMIUM.noto && PREMIUM.attivo && !!PIANO_ATTIVO && !!window.macro
+      && typeof crypto !== "undefined" && !!crypto.subtle;
+  }
+
+  /** In sottofondo: chiavi dei pasti del piano, lettura dall'archivio e stima AI di quelli mancanti (prima quelli di oggi). */
+  async function aggiornaMacro(giornoOggi) {
+    if (MACRO_IN_CORSO || !macroDisponibile()) return;
+    MACRO_IN_CORSO = true;
+    let cambiato = false;
+    try {
+      const M = window.macro;
+      const testi = [];
+      const visti = new Set();
+      const aggiungi = (g) => g && M.CAMPI_PASTO.forEach((k) => {
+        if (!M.daStimare(g[k])) return;
+        const t = M.normalizzaPasto(g[k]);
+        if (!visti.has(t)) { visti.add(t); testi.push(t); }
+      });
+      aggiungi(giornoOggi);
+      Object.values(PIANO_ATTIVO.settimane || {}).forEach((giorni) => (giorni || []).forEach(aggiungi));
+      for (const t of testi) {
+        if (!MACRO_CHIAVI.has(t)) { MACRO_CHIAVI.set(t, await chiaveMacro(t)); cambiato = true; }
+      }
+      let mancanti = testi.filter((t) => !MACRO[MACRO_CHIAVI.get(t)] && !MACRO_TENTATI.has(t));
+      if (!mancanti.length) return;
+      mancanti.forEach((t) => MACRO_TENTATI.add(t));
+      if (window.cloud.leggiMacro) {
+        const letti = await window.cloud.leggiMacro(mancanti.map((t) => MACRO_CHIAVI.get(t))).catch(() => ({}));
+        Object.keys(letti).forEach((k) => { MACRO[k] = M.pulisciStima(letti[k]); cambiato = true; });
+        mancanti = mancanti.filter((t) => !MACRO[MACRO_CHIAVI.get(t)]);
+      }
+      for (let i = 0; i < mancanti.length && !MACRO_LIMITE; i += 20) {
+        try {
+          const r = await window.cloud.chiamaFunzione("stimaMacro", { testi: mancanti.slice(i, i + 20) });
+          if (r && r.macro) Object.keys(r.macro).forEach((k) => { MACRO[k] = M.pulisciStima(r.macro[k]); cambiato = true; });
+          if (r && r.limite) MACRO_LIMITE = true;
+        } catch (e) { break; }
+      }
+    } catch (e) {
+      // le stime sono un di più: in caso di errore la scheda Oggi resta com'è
+    } finally {
+      MACRO_IN_CORSO = false;
+      if (cambiato) {
+        try { localStorage.setItem(MACRO_LS, JSON.stringify(MACRO)); } catch (e) { /* spazio esaurito: si rileggono dal cloud */ }
+        if (currentView === "oggi") render();
+      }
+    }
+  }
+
+  /** Riquadro dei macronutrienti nella scheda Oggi: previsti dal piano e coperti dai pasti segnati. */
+  function macroOggiHTML(giorno, fatti) {
+    if (!macroDisponibile()) return "";
+    const M = window.macro;
+    const stime = {};
+    M.CAMPI_PASTO.forEach((k) => {
+      if (!M.daStimare(giorno[k])) return;
+      const ch = MACRO_CHIAVI.get(M.normalizzaPasto(giorno[k]));
+      if (ch && MACRO[ch]) stime[k] = M.pulisciStima(MACRO[ch]);
+    });
+    const g = M.macroGiorno(giorno, stime);
+    if (!g.completo) {
+      if (MACRO_LIMITE || !MACRO_CHIAVI.size) return "";
+      return `<section class="macro-oggi macro-oggi--attesa" aria-live="polite"><span class="macro-oggi__titolo">Macronutrienti di oggi</span><p class="hint">Sto calcolando i valori del tuo piano…</p></section>`;
+    }
+    if (!g.totale.kcal) return "";
+    // la coccola non si segna: segue la cena
+    const stati = {};
+    M.CAMPI_PASTO.forEach((k) => { stati[k] = window.statistiche.statoPasto(fatti, k === "coccola" ? "cena" : k); });
+    const assunti = M.macroAssunti(g, stati, {});
+    const righe = [
+      { k: "carboidrati", nome: "Carboidrati" },
+      { k: "proteine", nome: "Proteine" },
+      { k: "grassi", nome: "Grassi" },
+    ].map(({ k, nome }) => {
+      const prev = g.totale[k];
+      const ass = assunti[k];
+      const quota = prev > 0 ? Math.min(100, Math.round((ass / prev) * 100)) : 0;
+      return `<div class="macro-riga macro-riga--${k}">
+          <div class="macro-riga__testa"><span class="macro-riga__nome">${nome}</span><span class="macro-riga__valori"><b>${ass}</b> di ${prev} g</span></div>
+          <div class="macro-riga__barra" role="progressbar" aria-label="${nome}" aria-valuemin="0" aria-valuemax="${prev}" aria-valuenow="${ass}"><span style="width:${quota}%"></span></div>
+        </div>`;
+    }).join("");
+    const nota = [
+      "Stima indicativa calcolata con l'intelligenza artificiale sui pasti del tuo piano" + (g.fattore !== 1 ? ", proporzionata alle calorie indicate dal nutrizionista." : "."),
+      g.haLibero ? "Il pasto libero non è conteggiato." : "",
+    ].filter(Boolean).join(" ");
+    return `<section class="macro-oggi" aria-label="Macronutrienti di oggi">
+        <div class="macro-oggi__testa"><span class="macro-oggi__titolo">Macronutrienti di oggi</span><span class="badge-stima">stima</span></div>
+        ${righe}
+        <p class="macro-oggi__nota">${nota}</p>
+      </section>`;
+  }
+
   function rigaConversioneHTML(r) {
     const C = window.conversioni;
     return r.voci.map((v) => {
@@ -1530,11 +1642,14 @@
       ${renderBannerIosHTML()}
       ${avvisoInizio}
       ${riepilogoGiornoHTML({ settimana, giornoNome, giorno, orari, statoDi, numFatti, numDiversi, numParziali })}
+      ${macroOggiHTML(giorno, fatti)}
       <div class="timeline">${renderTimelineHTML(giorno, orari, { checkable: true, fatti })}</div>
       ${renderCoccolaHTML(giorno)}
       ${renderNormeHTML()}
       ${renderContattoNutrizionistaHTML()}
     `;
+
+    aggiornaMacro(giorno);
 
     root.querySelectorAll("[data-meal-check]").forEach((btn) => {
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));

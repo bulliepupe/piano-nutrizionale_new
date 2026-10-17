@@ -2316,3 +2316,28 @@ body.con-informativa { overflow: hidden; }
 .allenamento-aggiungi__icona { width: 34px; height: 34px; border-radius: 17px; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent-ink) 22%, transparent); }
 .allenamenti-oggi { align-items: center; margin-top: 14px; }
 .allenamento-chip { min-height: 36px; box-sizing: border-box; }
+
+/* ---- Macronutrienti del giorno (scheda Oggi, Premium) ---- */
+:root { --macro-carboidrati: #C98A1B; --macro-proteine: #2F6FA8; --macro-grassi: #B0476A; }
+:root[data-theme="dark"] { --macro-carboidrati: #F0B85A; --macro-proteine: #7FB5EA; --macro-grassi: #EE93B0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --macro-carboidrati: #F0B85A; --macro-proteine: #7FB5EA; --macro-grassi: #EE93B0; } }
+.macro-oggi { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-l); padding: 14px 16px; margin: -6px 0 18px; display: flex; flex-direction: column; gap: 10px; }
+.macro-oggi__testa { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.macro-oggi__titolo { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.macro-oggi--attesa .hint { margin: 0; }
+.macro-riga { display: flex; flex-direction: column; gap: 5px; }
+.macro-riga__testa { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 14px; }
+.macro-riga__nome { font-weight: 700; color: var(--ink); }
+.macro-riga__valori { color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.macro-riga__valori b { color: var(--ink); font-weight: 700; }
+.macro-riga__barra { height: 9px; border-radius: 5px; background: var(--border-soft); overflow: hidden; }
+.macro-riga__barra span { display: block; height: 100%; border-radius: 5px; min-width: 0; transition: width 0.4s ease; }
+.macro-riga--carboidrati .macro-riga__barra span { background: var(--macro-carboidrati); }
+.macro-riga--proteine .macro-riga__barra span { background: var(--macro-proteine); }
+.macro-riga--grassi .macro-riga__barra span { background: var(--macro-grassi); }
+.macro-oggi__nota { margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-faint); }
+:root[data-stile="vivace"] .macro-oggi__barra, :root[data-stile="vivace"] .macro-riga__barra { height: 11px; border-radius: 6px; }
+:root[data-stile="vivace"] .macro-riga__barra span { border-radius: 6px; }
+:root[data-stile="essenziale"] .macro-oggi { background: none; border: none; padding: 0; border-top: 1px solid var(--border-soft); padding-top: 14px; border-radius: 0; margin-top: 0; }
+:root[data-stile="essenziale"] .macro-riga__barra { height: 6px; }
+@media (prefers-reduced-motion: reduce) { .macro-riga__barra span { transition: none; } }

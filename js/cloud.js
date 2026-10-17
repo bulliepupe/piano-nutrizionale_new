@@ -578,6 +578,14 @@
       return rese;
     },
 
+    /** Macronutrienti stimati dei pasti, letti per chiave dall'archivio comune: { chiave: stima }. */
+    async leggiMacro(chiavi) {
+      const out = {};
+      const docs = await Promise.all((chiavi || []).map((k) => db.collection("macroPasti").doc(k).get().catch(() => null)));
+      docs.forEach((d, i) => { if (d && d.exists) out[chiavi[i]] = d.data(); });
+      return out;
+    },
+
     /** Utente collegato (per mostrare con quale account si è entrati). */
     utenteCorrente() { return auth.currentUser; },
 
