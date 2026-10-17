@@ -904,6 +904,7 @@
 
   function macroDisponibile() {
     return RUOLO === "paziente" && PREMIUM.noto && PREMIUM.attivo && !!PIANO_ATTIVO && !!window.macro
+      && !(PIANO_ATTIVO.macro && PIANO_ATTIVO.macro.visibile === false)
       && typeof crypto !== "undefined" && !!crypto.subtle;
   }
 
@@ -6990,6 +6991,14 @@
       </section>
 
       <section class="settings-section">
+        <h2>Macronutrienti nella scheda Oggi</h2>
+        <p class="hint">Con Premium il paziente vede nella scheda Oggi carboidrati, proteine e grassi <strong>previsti dal piano</strong> per la giornata, che si riempiono man mano che segna i pasti. Sono stime calcolate con l'AI sui testi dei pasti e proporzionate alle calorie che indichi per il giorno. Per i pasti fatti diversamente usa la stima del riscontro.</p>
+        <p class="hint">Il riferimento resta sempre il tuo piano: l'app non calcola un fabbisogno e non tiene conto delle calorie "bruciate" con gli allenamenti. Nascondi il riquadro ai pazienti per cui vedere i numeri non è indicato.</p>
+        <label class="ric-scelta"><input type="checkbox" id="macro-visibile" ${!(piano.macro && piano.macro.visibile === false) ? "checked" : ""}> Mostra i macronutrienti a questo paziente</label>
+        <button type="button" class="btn" id="btn-salva-macro" style="margin-top:10px;">Salva macronutrienti</button>
+      </section>
+
+      <section class="settings-section">
         <h2>Meal prep</h2>
         <p class="hint">Nella scheda Spesa il paziente trova le sessioni di preparazione anticipata calcolate dal piano. Qui puoi aggiungere indicazioni tue o nascondere la sezione.</p>
         <label class="ric-scelta"><input type="checkbox" id="prep-attivo" ${!(piano.mealPrep && piano.mealPrep.attivo === false) ? "checked" : ""}> Mostra la sezione Meal prep a questo paziente</label>
@@ -7035,6 +7044,18 @@
         await window.cloud.salvaPiano(piano.id, { feedbackAI });
         piano.feedbackAI = feedbackAI;
         mostraToast("Riscontro AI salvato");
+      } catch (err) {
+        mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"));
+      } finally { btn.disabled = false; }
+    });
+    document.getElementById("btn-salva-macro").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const macro = { visibile: document.getElementById("macro-visibile").checked };
+      btn.disabled = true;
+      try {
+        await window.cloud.salvaPiano(piano.id, { macro });
+        piano.macro = macro;
+        mostraToast(macro.visibile ? "Macronutrienti visibili al paziente" : "Macronutrienti nascosti al paziente");
       } catch (err) {
         mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"));
       } finally { btn.disabled = false; }
