@@ -34,4 +34,15 @@ ok(!A.riepilogo(A.daFit({ sessions: [{ sport: "running", start_time: new Date(in
 ok(A.tipoDa("VirtualRide") === "Bici" && A.tipoDa("trail_running") === "Corsa" && A.tipoDa("kayaking") === "Altro", "tipi");
 ok(A.limitiZone({ fcSoglia: 300 }) === null && A.limitiZone({ fcMax: 180 }).limiti[1] === 126, "limiti zone");
 assert.throws(() => A.daGpx("<gpx></gpx>")); n++;
+
+// indici di carico
+const costante = []; for (let i = 0; i < 3600; i++) costante.push({ t: i, w: 200, fc: i < 1800 ? 130 : 143 });
+ok(A.potenzaNormalizzata(costante) === 200, "NP costante");
+const alterna = []; for (let i = 0; i < 3600; i++) alterna.push({ t: i, w: Math.floor(i / 60) % 2 ? 300 : 100, fc: 140 });
+ok(A.potenzaNormalizzata(alterna) > 200, "NP > media con ripetute");
+ok(A.derivaCardiaca(costante) === 9.1, "deriva 9,1% " + A.derivaCardiaca(costante));
+ok(A.derivaCardiaca(costante.slice(0, 600)) === null, "deriva solo oltre 20 minuti");
+const conFtp = A.riepilogo(A.daFit({ sessions: [{ sport: "cycling", start_time: new Date(inizio).toISOString(), total_timer_time: 3600, avg_power: 200, total_calories: 800 }],
+  records: costante.map((c) => ({ timestamp: new Date(inizio + c.t * 1000).toISOString(), heart_rate: c.fc, power: c.w })) }), { ftp: 250 });
+ok(conFtp.potenzaNormalizzata === 200 && conFtp.fattoreIntensita === 0.8 && conFtp.tss === 64 && conFtp.lavoroKJ === 720 && conFtp.kcalOra === 800, "TSS, IF, kJ, kcal/h " + JSON.stringify(conFtp));
 console.log("OK: " + n + " verifiche superate");

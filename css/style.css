@@ -2354,3 +2354,10 @@ body.con-informativa { overflow: hidden; }
 .zone-fc { display: flex; height: 26px; border-radius: 8px; overflow: hidden; margin: 10px 0 4px; gap: 2px; }
 .zone-fc__z { display: flex; align-items: center; justify-content: center; min-width: 4px; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; }
 .zone-fc__z--1 { background: var(--z1); } .zone-fc__z--2 { background: var(--z2); } .zone-fc__z--3 { background: var(--z3); color: #2a2410; } .zone-fc__z--4 { background: var(--z4); } .zone-fc__z--5 { background: var(--z5); }
+.allenamento-indice-nota { margin: -4px 0 8px; font-size: 12px; }
+.allenamento-prof { display: flex; flex-direction: column; align-items: stretch; gap: 2px; width: 100%; text-align: left; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-m, 12px); padding: 10px 12px; cursor: pointer; }
+.allenamento-prof:hover { border-color: var(--accent); }
+.allenamento-prof__apri { align-self: flex-end; font-size: 12.5px; font-weight: 700; color: var(--accent); }
+.segmento--a-capo { flex-wrap: wrap; }
+.segmento--a-capo .segmento__voce { flex: 1 1 40%; }
+.rep-consenso { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); }

@@ -1349,6 +1349,316 @@
     return new File([blob], `riepilogo-visita-${chiaveOggi}.pdf`, { type: "application/pdf" });
   }
 
+  // ---- Report per il preparatore (professionista) ----
+  const SEZIONI_REPORT = [["aderenza", "Aderenza al piano"], ["peso", "Peso e misure"], ["allenamenti", "Allenamenti e carico"], ["note", "Le tue note per il preparatore"]];
+
+  function apriReportPreparatore(piano) {
+    const nome = (piano.pazienteNome || "il paziente").split(" ")[0];
+    const P = window.reportPreparatore.PERIODI;
+    apriSheet(`
+      <h2 class="sheet__titolo">Report per il preparatore</h2>
+      <p class="sheet__nota">Un PDF da inviare al preparatore di ${escapeHTML(nome)}, con la tua intestazione. Note del paziente e consigli AI non sono inclusi.</p>
+      <p class="impost-etichetta">Periodo</p>
+      <div class="segmento segmento--a-capo" id="rep-periodo">${P.map(([id, etichetta], i) => `<button type="button" class="segmento__voce" data-periodo="${id}" aria-pressed="${i === 1}">${etichetta}</button>`).join("")}<button type="button" class="segmento__voce" data-periodo="date" aria-pressed="false">Date a scelta</button></div>
+      <div class="ric-griglia" id="rep-date" hidden>
+        <label class="editor-campo"><span>Dal</span><input type="date" id="rep-da"></label>
+        <label class="editor-campo"><span>Al</span><input type="date" id="rep-a"></label>
+      </div>
+      <p class="impost-etichetta">Sezioni</p>
+      ${SEZIONI_REPORT.map(([k, t]) => `<label class="check-riga"><input type="checkbox" data-sezione="${k}" checked> <span>${t}</span></label>`).join("")}
+      <label class="editor-campo" id="rep-note-campo"><span>Note per il preparatore (facoltative)</span>
+        <textarea id="rep-note" rows="4" maxlength="1500" placeholder="Es. nelle settimane di carico alto aumentiamo i carboidrati a colazione e prima delle uscite lunghe."></textarea></label>
+      <label class="check-riga rep-consenso"><input type="checkbox" id="rep-consenso"> <span>${escapeHTML(nome)} ha acconsentito a condividere questi dati con il preparatore.</span></label>
+      <button type="button" class="btn" id="btn-crea-report" style="margin-top:12px;" disabled>Crea il PDF</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    let periodo = "30";
+    const oggiK = oggiISO();
+    document.querySelectorAll("#rep-periodo [data-periodo]").forEach((b) => b.addEventListener("click", () => {
+      periodo = b.dataset.periodo;
+      document.querySelectorAll("#rep-periodo [data-periodo]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      document.getElementById("rep-date").hidden = periodo !== "date";
+    }));
+    const daI = document.getElementById("rep-da"), aI = document.getElementById("rep-a");
+    aI.value = oggiK; aI.max = oggiK; daI.max = oggiK;
+    const consenso = document.getElementById("rep-consenso"), crea = document.getElementById("btn-crea-report");
+    consenso.addEventListener("change", () => { crea.disabled = !consenso.checked; });
+    const casellaNote = document.querySelector('[data-sezione="note"]');
+    casellaNote.addEventListener("change", () => { document.getElementById("rep-note-campo").hidden = !casellaNote.checked; });
+    crea.addEventListener("click", async () => {
+      const sezioni = {};
+      document.querySelectorAll("[data-sezione]").forEach((c) => { sezioni[c.dataset.sezione] = c.checked; });
+      if (!sezioni.aderenza && !sezioni.peso && !sezioni.allenamenti) { mostraToast("Scegli almeno una sezione tra aderenza, peso e allenamenti"); return; }
+      let da, a = oggiK;
+      if (periodo === "date") {
+        da = daI.value; a = aI.value;
+        if (!da || !a || da > a) { mostraToast("Controlla le date del periodo"); return; }
+        if (window.statistiche.differenzaGiorni(window.statistiche.daChiave(a), window.statistiche.daChiave(da)) > 366) { mostraToast("Il periodo può durare al massimo un anno"); return; }
+      } else {
+        da = window.statistiche.chiave(new Date(Date.now() - (Number(periodo) - 1) * 86400000));
+      }
+      crea.disabled = true; crea.textContent = "Preparo il report…";
+      try {
+        const file = await creaReportPreparatorePdf(piano, { da, a, sezioni, note: sezioni.note ? document.getElementById("rep-note").value.trim() : "" });
+        chiudiSheet();
+        await condividiOScaricaFile(file);
+      } catch (e) {
+        console.warn(e);
+        mostraToast("Non sono riuscito a preparare il report: controlla la connessione e riprova", 4500);
+        crea.disabled = false; crea.textContent = "Crea il PDF";
+      }
+    });
+  }
+
+  async function creaReportPreparatorePdf(piano, opz) {
+    const S = window.statistiche, RP = window.reportPreparatore;
+    const JsPDF = await caricaJsPdf();
+    const uid = piano.pazienteUid;
+    const [{ utente, spunte }, misure, attivita] = await Promise.all([
+      window.cloud.leggiDatiStatistiche(uid, opz.da),
+      opz.sezioni.peso ? window.cloud.leggiMisure(piano.id).catch(() => []) : Promise.resolve([]),
+      opz.sezioni.allenamenti ? window.cloud.leggiAttivitaPeriodo(uid, opz.da).catch(() => ({})) : Promise.resolve({}),
+    ]);
+    const creato = utente && utente.creato && typeof utente.creato.toDate === "function" ? S.chiave(utente.creato.toDate()) : null;
+    const inizioPiano = [piano.dataInizio || null, creato].filter(Boolean).sort().pop() || null;
+    const r = RP.calcola({ da: opz.da, a: opz.a, inizioPiano, spunte, misure, attivita });
+    const sez = opz.sezioni;
+
+    const nomePaziente = piano.pazienteNome || (utente && utente.nome) || "Paziente";
+    const c = PROFILO_PROF.contatti || {};
+    const nomeProf = c.nome || PROFILO_PROF.nome || "";
+    const dataIt = (k) => { const d = S.daChiave(k); return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`; };
+    const breve = (k) => { const d = S.daChiave(k); return `${d.getDate()}/${d.getMonth() + 1}`; };
+    const pct = (v) => (v == null ? "-" : `${Math.round(v * 100)}%`);
+    const num = (n, dec) => (n == null ? "-" : Number(n).toLocaleString("it-IT", { maximumFractionDigits: dec || 0, minimumFractionDigits: 0 }));
+    const ore = (min) => { const h = Math.floor(min / 60), m = Math.round(min % 60); return h ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`; };
+
+    const doc = new JsPDF({ unit: "mm", format: "a4" });
+    const M = 16, L = 210 - 2 * M;
+    const verde = [30, 54, 42], grigio = [100, 110, 100], chiaro = [215, 222, 210], arancio = [200, 110, 40];
+    let y = 18;
+    const nuovaPaginaSeServe = (h) => { if (y + h > 278) { doc.addPage(); y = 18; return true; } return false; };
+    const titolo = (t) => { nuovaPaginaSeServe(16); y += 5; doc.setFont("helvetica", "bold"); doc.setFontSize(12.5); doc.setTextColor(...verde); doc.text(testoPdf(t), M, y); y += 6.5; };
+    const riga = (t, o) => {
+      o = o || {};
+      doc.setFont("helvetica", o.bold ? "bold" : "normal"); doc.setFontSize(o.size || 10.5); doc.setTextColor(...(o.colore || [30, 30, 30]));
+      const righe = doc.splitTextToSize(testoPdf(t), L - (o.rientro || 0));
+      nuovaPaginaSeServe(righe.length * 5);
+      doc.text(righe, M + (o.rientro || 0), y); y += righe.length * (o.size && o.size < 10 ? 4.2 : 5) + (o.dopo == null ? 1.2 : o.dopo);
+    };
+    /** Tabella semplice: colonne { t, w, dx } e righe di testi. */
+    const tabella = (col, righe, o) => {
+      o = o || {};
+      const h = o.altezza || 5.4, fs = o.size || 9;
+      const intestazione = () => {
+        doc.setFont("helvetica", "bold"); doc.setFontSize(fs - 0.5); doc.setTextColor(...grigio);
+        let x = M; col.forEach((cc) => { doc.text(testoPdf(cc.t), cc.dx ? x + cc.w - 1 : x, y, cc.dx ? { align: "right" } : undefined); x += cc.w; });
+        y += 1.6; doc.setDrawColor(...chiaro); doc.line(M, y, M + L, y); y += h - 1.6;
+      };
+      nuovaPaginaSeServe(h * 3); intestazione();
+      doc.setFont("helvetica", "normal"); doc.setFontSize(fs); doc.setTextColor(30, 30, 30);
+      righe.forEach((rr, i) => {
+        if (nuovaPaginaSeServe(h)) { intestazione(); doc.setFont("helvetica", "normal"); doc.setFontSize(fs); doc.setTextColor(30, 30, 30); }
+        if (i % 2 === 1) { doc.setFillColor(244, 246, 241); doc.rect(M, y - h + 1.6, L, h, "F"); }
+        let x = M;
+        rr.forEach((t, j) => { const cc = col[j]; doc.text(testoPdf(String(t)), cc.dx ? x + cc.w - 1 : x, y, cc.dx ? { align: "right" } : undefined); x += cc.w; });
+        y += h;
+      });
+      y += 2;
+    };
+
+    // --- intestazione del professionista
+    const logo = await immagineDataUrl("icons/icon-192.png").catch(() => null);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(...verde);
+    doc.text(testoPdf(nomeProf || "Il tuo nutrizionista"), M, 15);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...grigio);
+    const sx = [c.qualifica, c.studio].filter(Boolean);
+    sx.forEach((t, i) => doc.text(testoPdf(t), M, 20 + i * 4.2));
+    const dx = [c.email, c.telefono].filter(Boolean);
+    dx.forEach((t, i) => doc.text(testoPdf(t), M + L, 15 + i * 4.2, { align: "right" }));
+    const fineTestata = Math.max(20 + sx.length * 4.2, 15 + dx.length * 4.2) + 1;
+    doc.setDrawColor(...verde); doc.setLineWidth(0.7); doc.line(M, fineTestata, M + L, fineTestata); doc.setLineWidth(0.2);
+    y = fineTestata + 10;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.setTextColor(...verde);
+    doc.text("Report per il preparatore", M, y); y += 7;
+    riga(`${nomePaziente} - dal ${dataIt(r.da)} al ${dataIt(r.a)}`, { bold: true, dopo: 0.5 });
+    const obiettivo = piano.obiettivo || (piano.paziente && piano.paziente.obiettivo);
+    if (obiettivo) riga(`Obiettivo del piano: ${obiettivo}`, { colore: grigio, size: 9.5 });
+    y += 1;
+
+    // --- riquadri di sintesi
+    const t = r.allenamenti.totale;
+    const riquadri = [];
+    if (sez.aderenza) riquadri.push([pct(r.aderenza), "aderenza al piano"]);
+    if (sez.allenamenti) riquadri.push([String(t.n), `allenamenti, ${ore(t.minuti)}`]);
+    if (sez.allenamenti && t.tss) riquadri.push([num(t.tss), "carico totale (TSS)"]);
+    else if (sez.allenamenti && t.km) riquadri.push([`${num(t.km)} km`, "distanza totale"]);
+    if (sez.peso && r.peso) riquadri.push([r.peso.variazione == null ? `${num(r.peso.ultimo.peso, 1)} kg` : `${r.peso.variazione > 0 ? "+" : ""}${num(r.peso.variazione, 1)} kg`, r.peso.variazione == null ? "peso" : "variazione di peso"]);
+    if (riquadri.length) {
+      const w = (L - (riquadri.length - 1) * 4) / riquadri.length;
+      riquadri.forEach(([v, e], i) => {
+        const x = M + i * (w + 4);
+        doc.setFillColor(238, 243, 234); doc.roundedRect(x, y, w, 17, 2, 2, "F");
+        doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(...verde); doc.text(testoPdf(v), x + 4, y + 8);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...grigio); doc.text(testoPdf(e), x + 4, y + 13.5);
+      });
+      y += 22;
+    }
+
+    // --- settimana per settimana: grafico e tabella
+    if (sez.aderenza || sez.allenamenti) {
+      titolo("Settimana per settimana");
+      const sett = r.settimane;
+      const usaTss = sez.allenamenti && sett.some((w) => w.allenamenti.tss);
+      const carico = (w) => (usaTss ? w.allenamenti.tss : w.allenamenti.minuti / 60);
+      if (sett.length >= 2 && (sez.allenamenti || sez.aderenza)) {
+        nuovaPaginaSeServe(56);
+        const gx = M + 12, gw = L - 24, gh = 40, gy = y + 3;
+        const grezzo = Math.max(1, ...sett.map(carico)) * 1.1;
+        const ordine = Math.pow(10, Math.floor(Math.log10(grezzo)));
+        const maxC = Math.ceil(grezzo / (ordine / 2)) * (ordine / 2);
+        const passo = gw / sett.length, lb = Math.min(12, passo * 0.55);
+        doc.setDrawColor(...chiaro); doc.setLineWidth(0.2);
+        [0, 0.5, 1].forEach((f) => doc.line(gx, gy + gh - f * gh, gx + gw, gy + gh - f * gh));
+        doc.setFontSize(7.5); doc.setTextColor(...grigio);
+        if (sez.allenamenti) {
+          doc.text(usaTss ? "TSS" : "ore", gx - 2, gy - 2, { align: "right" });
+          [0, 0.5, 1].forEach((f) => doc.text(num(maxC * f, usaTss ? 0 : 1), gx - 2, gy + gh - f * gh + 1, { align: "right" }));
+          doc.setFillColor(94, 158, 110);
+          sett.forEach((w, i) => { const v = carico(w); if (v > 0) { const h = (v / maxC) * gh; doc.rect(gx + i * passo + (passo - lb) / 2, gy + gh - h, lb, h, "F"); } });
+        }
+        if (sez.aderenza) {
+          doc.text("aderenza", gx + gw + 2, gy - 2);
+          [0, 0.5, 1].forEach((f) => doc.text(`${Math.round(f * 100)}%`, gx + gw + 2, gy + gh - f * gh + 1));
+          doc.setDrawColor(...arancio); doc.setLineWidth(0.7);
+          let prec = null;
+          sett.forEach((w, i) => {
+            if (w.aderenza == null) { prec = null; return; }
+            const px = gx + i * passo + passo / 2, py = gy + gh - w.aderenza * gh;
+            if (prec) doc.line(prec[0], prec[1], px, py);
+            doc.setFillColor(...arancio); doc.circle(px, py, 1, "F");
+            prec = [px, py];
+          });
+          doc.setLineWidth(0.2);
+        }
+        doc.setFontSize(7.5); doc.setTextColor(...grigio);
+        const ogni = Math.ceil(sett.length / 14);
+        sett.forEach((w, i) => { if (i % ogni === 0) doc.text(breve(w.lunedi), gx + i * passo + passo / 2, gy + gh + 4.5, { align: "center" }); });
+        y = gy + gh + 8;
+        const leg = [sez.allenamenti ? `barre verdi: ${usaTss ? "carico (TSS)" : "ore di allenamento"}` : "", sez.aderenza ? "linea arancione: aderenza al piano" : ""].filter(Boolean).join(" - ");
+        riga(`Settimane dal lunedì indicato. ${leg}.`, { colore: grigio, size: 8.5 });
+      }
+      const col = [{ t: "Settimana", w: 30 }];
+      if (sez.aderenza) col.push({ t: "Aderenza", w: 20, dx: true });
+      if (sez.allenamenti) col.push({ t: "Allen.", w: 15, dx: true }, { t: "Durata", w: 22, dx: true }, { t: "Km", w: 18, dx: true }, { t: "D+ m", w: 18, dx: true }, { t: "kJ", w: 18, dx: true }, { t: "TSS", w: 16, dx: true });
+      const righe = sett.map((w) => {
+        const fine = new Date(S.daChiave(w.lunedi)); fine.setDate(fine.getDate() + 6);
+        const rr = [`${breve(w.lunedi)}-${fine.getDate()}/${fine.getMonth() + 1}${w.parziale ? "*" : ""}`];
+        if (sez.aderenza) rr.push(pct(w.aderenza));
+        if (sez.allenamenti) { const a = w.allenamenti; rr.push(String(a.n), a.minuti ? ore(a.minuti) : "-", a.km ? num(a.km) : "-", a.dplus ? num(a.dplus) : "-", a.kj ? num(a.kj) : "-", a.tss ? num(a.tss) : "-"); }
+        return rr;
+      });
+      tabella(col, righe);
+      if (sett.some((w) => w.parziale)) riga("* settimana compresa solo in parte nel periodo.", { colore: grigio, size: 8.5 });
+    }
+
+    // --- aderenza
+    if (sez.aderenza) {
+      titolo("Aderenza al piano alimentare");
+      if (!r.giorniValutati) riga("Nel periodo non ci sono giornate concluse da valutare (il piano è iniziato da poco).");
+      else {
+        const k = r.conta, tot = k.fatto + k.diverso + k.parziale + k.saltato + k.nonSegnato;
+        riga(`Aderenza ${pct(r.aderenza)} su ${r.giorniValutati} giornate concluse.`, { bold: true });
+        riga(`Pasti: ${k.fatto} come previsto, ${k.diverso} fatti diversamente, ${k.parziale} in parte, ${k.saltato} saltati, ${k.nonSegnato} non segnati (su ${tot}).`);
+        riga("Un pasto come previsto conta 1, diversamente o in parte 0,5, saltato o non segnato 0.", { colore: grigio, size: 8.5 });
+      }
+    }
+
+    // --- allenamenti
+    if (sez.allenamenti) {
+      titolo("Allenamenti e carico");
+      if (!t.n) riga("Nessun allenamento segnato nel periodo.");
+      else {
+        riga(`${t.n} allenamenti, ${ore(t.minuti)}${t.km ? ` - ${num(t.km)} km` : ""}${t.dplus ? ` - ${num(t.dplus)} m di dislivello` : ""}${t.kj ? ` - ${num(t.kj)} kJ` : ""}${t.tss ? ` - TSS ${num(t.tss)}` : ""}.`, { bold: true });
+        const pi = t.perIntensita;
+        riga(`Intensità: ${pi.leggera} leggeri, ${pi.moderata} moderati, ${pi.intensa} intensi.${t.kcal ? ` Calorie stimate dai dispositivi: ${num(t.kcal)} kcal.` : ""}`);
+        if (t.conZone) {
+          const totZ = t.zone.reduce((a, b) => a + b, 0) || 1;
+          nuovaPaginaSeServe(16);
+          const colori = [[154, 165, 177], [94, 158, 110], [217, 177, 59], [224, 123, 57], [200, 66, 59]];
+          let x = M;
+          t.zone.forEach((m, i) => {
+            const w = (m / totZ) * L; if (w <= 0) return;
+            doc.setFillColor(...colori[i]); doc.rect(x, y, w, 6, "F");
+            if (w > 14) { doc.setFontSize(7.5); doc.setTextColor(255, 255, 255); doc.text(`Z${i + 1} ${Math.round((m / totZ) * 100)}%`, x + w / 2, y + 4.1, { align: "center" }); }
+            x += w;
+          });
+          y += 10;
+          riga(`Tempo nelle zone di frequenza cardiaca, sui ${t.conZone} allenamenti importati con i dati del cardiofrequenzimetro.`, { colore: grigio, size: 8.5 });
+        }
+        const el = r.allenamenti.elenco.slice().sort((a, b) => (a.giorno < b.giorno ? 1 : a.giorno > b.giorno ? -1 : 0));
+        y += 1;
+        tabella(
+          [{ t: "Data", w: 14 }, { t: "Attività", w: 29 }, { t: "Durata", w: 18, dx: true }, { t: "Km", w: 14, dx: true }, { t: "D+ m", w: 15, dx: true }, { t: "FC", w: 12, dx: true }, { t: "Watt NP", w: 17, dx: true }, { t: "IF", w: 12, dx: true }, { t: "TSS", w: 12, dx: true }, { t: "Deriva", w: 17, dx: true }, { t: "Intensità", w: 18, dx: true }],
+          el.map((a) => [breve(a.giorno), a.tipo || "-", a.durata ? ore(a.durata) : "-", a.distanzaKm ? num(a.distanzaKm, 1) : "-", a.dislivelloM ? num(a.dislivelloM) : "-",
+            a.fcMedia || "-", a.potenzaNormalizzata || a.potenzaMedia || "-", a.fattoreIntensita ? num(a.fattoreIntensita, 2) : "-", a.tss || "-",
+            a.derivaCardiaca != null ? `${num(a.derivaCardiaca, 1)}%` : "-", a.intensita || "-"]),
+          { size: 8.3, altezza: 5 });
+        riga("Dati dai file dei dispositivi del paziente quando importati, altrimenti inseriti a mano (solo attività, durata e intensità). IF e TSS richiedono la FTP indicata dal paziente; deriva cardiaca: rapporto potenza/frequenza tra prima e seconda metà, sotto il 5% sforzo aerobico stabile.", { colore: grigio, size: 8 });
+      }
+    }
+
+    // --- peso
+    if (sez.peso) {
+      if (r.peso && r.peso.serie.length >= 2) nuovaPaginaSeServe(72); // titolo, testo e grafico sulla stessa pagina
+      titolo("Peso e misure");
+      if (!r.peso) riga("Nessuna misura registrata nel periodo.");
+      else {
+        const p = r.peso, kg = (n) => `${num(n, 1)} kg`;
+        riga(`Ultimo peso ${kg(p.ultimo.peso)} il ${dataIt(p.ultimo.data)}${p.variazione != null ? ` - variazione dal ${dataIt(p.primo.data)}: ${p.variazione > 0 ? "+" : ""}${num(p.variazione, 1)} kg` : ""}.`, { bold: true });
+        const altre = [["vita", "vita"], ["fianchi", "fianchi"]].filter(([k]) => p.ultimo[k] != null).map(([k, n]) => `${n} ${num(p.ultimo[k], 1)} cm`);
+        if (altre.length) riga(`Ultime circonferenze: ${altre.join(", ")}.`);
+        if (p.serie.length >= 2) {
+          nuovaPaginaSeServe(50);
+          const gx = M, gy = y + 2, gw = L, gh = 34;
+          const pesi = p.serie.map((m) => m.peso);
+          const min = Math.min(...pesi) - 0.5, max = Math.max(...pesi) + 0.5;
+          const t0 = S.daChiave(r.da).getTime(), t1 = Math.max(S.daChiave(r.a).getTime(), t0 + 86400000);
+          const px = (k) => gx + 12 + ((S.daChiave(k).getTime() - t0) / (t1 - t0)) * (gw - 16);
+          const py = (v) => gy + gh - ((v - min) / (max - min)) * gh;
+          doc.setDrawColor(...chiaro);
+          [min + 0.5, (min + max) / 2, max - 0.5].forEach((v) => { doc.line(gx + 10, py(v), gx + gw, py(v)); doc.setFontSize(7.5); doc.setTextColor(...grigio); doc.text(num(v, 1), gx, py(v) + 1); });
+          doc.setDrawColor(...verde); doc.setLineWidth(0.6);
+          for (let i = 1; i < p.serie.length; i++) doc.line(px(p.serie[i - 1].data), py(p.serie[i - 1].peso), px(p.serie[i].data), py(p.serie[i].peso));
+          doc.setFillColor(...verde); p.serie.forEach((m) => doc.circle(px(m.data), py(m.peso), 0.9, "F"));
+          doc.setFontSize(7.5); doc.setTextColor(...grigio);
+          doc.text(dataIt(r.da), gx + 12, gy + gh + 5); doc.text(dataIt(r.a), gx + gw, gy + gh + 5, { align: "right" });
+          y = gy + gh + 9; doc.setLineWidth(0.2);
+        }
+      }
+    }
+
+    // --- note del nutrizionista
+    if (sez.note && opz.note) {
+      titolo("Note del nutrizionista");
+      opz.note.split(/\n+/).forEach((par) => riga(par));
+    }
+
+    // --- piè di pagina
+    const pagine = doc.getNumberOfPages();
+    const oggiIt = dataIt(oggiISO());
+    for (let i = 1; i <= pagine; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(...chiaro); doc.line(M, 283, M + L, 283);
+      if (logo) doc.addImage(logo, "PNG", M, 285.5, 5, 5);
+      doc.setFontSize(7.5); doc.setTextColor(...grigio);
+      doc.text(testoPdf(`Report del ${oggiIt}, condiviso dal nutrizionista con il consenso del paziente.`), M + (logo ? 7 : 0), 287.6);
+      doc.text(testoPdf("Dati riservati: non inoltrare ad altri. Preparato con Il mio Piano - ilmiopiano.it"), M + (logo ? 7 : 0), 291);
+      doc.text(`Pagina ${i} di ${pagine}`, M + L, 289, { align: "right" });
+    }
+    const pulito = nomePaziente.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+    return new File([doc.output("blob")], `report-preparatore-${pulito || "paziente"}-${r.da}_${r.a}.pdf`, { type: "application/pdf" });
+  }
+
   /** Il paziente gestisce da solo il proprio piano (registrato dall'app, non collegato). */
   function gestisceIlPiano() {
     return RUOLO === "paziente" && !!PIANO_ATTIVO && PIANO_ATTIVO.gestore === "paziente";
@@ -1903,7 +2213,14 @@
         </div>
         <p class="stat-nota">Minuti nelle zone di frequenza cardiaca (calcolate dalla FC ${a.zoneBase === "soglia" ? "di soglia" : "massima"} indicata in Impostazioni).</p>`;
     }
-    return `<div class="allenamento-dati">${righe.map(([k, v]) => `<p class="stat-riga"><span>${k}</span><strong>${escapeHTML(v)}</strong></p>`).join("")}</div>${zone}`;
+    const indici = [];
+    if (a.lavoroKJ) indici.push(["Lavoro", `${numeroIt(a.lavoroKJ)} kJ`, "Energia prodotta sui pedali: in bici è circa pari alle kcal spese."]);
+    if (a.kcalOra) indici.push(["Calorie all'ora", `${numeroIt(a.kcalOra)} kcal/h`, "Stima del dispositivo, divisa per la durata."]);
+    if (a.fattoreIntensita) indici.push(["Fattore di intensità", String(a.fattoreIntensita).replace(".", ","), "Potenza normalizzata rispetto alla FTP: sotto 0,75 uscita facile, oltre 0,90 impegnativa."]);
+    if (a.tss) indici.push(["Carico (TSS)", String(a.tss), "Un'ora alla soglia vale 100."]);
+    if (a.derivaCardiaca != null) indici.push(["Deriva cardiaca", `${String(a.derivaCardiaca).replace(".", ",")}%`, a.derivaCardiaca < 5 ? "Sotto il 5%: sforzo aerobico stabile per tutta l'uscita." : "Oltre il 5%: nella seconda metà la frequenza è salita a parità di potenza (fatica, caldo, poca energia o liquidi)."]);
+    const blocco = indici.length ? `<p class="impost-etichetta" style="margin-top:12px;">Indici</p><div class="allenamento-dati">${indici.map(([k, v, h]) => `<p class="stat-riga"><span>${k}</span><strong>${escapeHTML(v)}</strong></p><p class="stat-nota allenamento-indice-nota">${escapeHTML(h)}</p>`).join("")}</div>` : "";
+    return `<div class="allenamento-dati">${righe.map(([k, v]) => `<p class="stat-riga"><span>${k}</span><strong>${escapeHTML(v)}</strong></p>`).join("")}</div>${zone}${blocco}`;
   }
 
   /** Android: file condiviso da un'altra app ("Condividi con Il mio Piano"), messo da parte dal service worker. */
@@ -4760,6 +5077,20 @@
     document.getElementById("analisi-rigenera").addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
   }
 
+  /** Scheda completa di un allenamento importato, vista dal professionista. */
+  function apriAllenamentoProf(a, piano) {
+    const nome = (piano.pazienteNome || "Paziente").split(" ")[0];
+    const d = window.statistiche.daChiave(a.giorno);
+    const giorno = d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+    apriSheet(`
+      <h2 class="sheet__titolo">${escapeHTML(a.tipo || "Allenamento")} di ${escapeHTML(nome)}</h2>
+      <p class="sheet__nota">${escapeHTML(giorno.replace(/^./, (c) => c.toUpperCase()))}${a.ora ? `, alle ${escapeHTML(a.ora)}` : ""} · importato da file ${escapeHTML(a.formato || "")}</p>
+      ${righeAllenamentoHTML(a)}
+      ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : " · scelta dal paziente"}</strong></p>` : ""}
+      <p class="sheet__nota">Zone e indici dipendono dai valori di FC e FTP che il paziente ha indicato nelle sue Impostazioni. Le calorie sono la stima del suo dispositivo.</p>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+  }
+
   async function caricaAttivitaProf(piano) {
     const box = document.getElementById("sezione-attivita");
     if (!box || !piano.pazienteUid || !window.cloud.leggiAttivitaPeriodo) return;
@@ -4777,12 +5108,16 @@
         const d = window.statistiche.daChiave(a.giorno);
         const zone = Array.isArray(a.zoneFC) ? (() => { const tt = a.zoneFC.reduce((x, y) => x + y, 0) || 1; return `Z1-Z2 ${Math.round(((a.zoneFC[0] + a.zoneFC[1]) / tt) * 100)}%`; })() : "";
         const dati = [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
-        return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(a.tipo || "Allenamento")} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span></li>`;
+        return `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-allenamento-prof="${escapeHTML(a.giorno + "|" + a.id)}"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(a.tipo || "Allenamento")} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span><span class="allenamento-prof__apri" aria-hidden="true">Apri ›</span></button></li>`;
       }).join("");
       box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente o importati dai file dei suoi dispositivi.</p>
         <p class="stat-riga"><span>Totale</span><strong>${escapeHTML(t.riga)}</strong></p>
         ${t.dettaglio ? `<p class="stat-nota">${escapeHTML(t.dettaglio)}</p>` : ""}
         ${rigaFile ? `<p class="stat-nota">${escapeHTML(rigaFile)}</p><ul class="stat-note-pasti">${elenco}</ul>` : ""}`;
+      box.querySelectorAll("[data-allenamento-prof]").forEach((b) => b.addEventListener("click", () => {
+        const a = daFile.find((x) => x.giorno + "|" + x.id === b.dataset.allenamentoProf);
+        if (a) apriAllenamentoProf(a, piano);
+      }));
       box.hidden = false;
     } catch (e) { /* sezione facoltativa */ }
   }
@@ -6199,12 +6534,18 @@
       </section>
 
       <button type="button" class="btn btn--ghost" id="btn-apri-piano-da-stat">Apri il piano di ${escapeHTML((piano.pazienteNome || "questo paziente").split(" ")[0])}</button>
+      <section class="settings-section">
+        <h2>Report per il preparatore</h2>
+        <p class="hint">Un PDF con aderenza al piano, peso e carico di allenamento settimana per settimana, da inviare al preparatore di ${escapeHTML((piano.pazienteNome || "questo paziente").split(" ")[0])}. Note e consigli AI restano esclusi.</p>
+        <button type="button" class="btn btn--ghost" id="btn-report-preparatore">Prepara il report</button>
+      </section>
       <p class="registro-link"><button type="button" class="link-btn" id="btn-registro-dettagliato">Registro dettagliato (note e consigli AI)</button></p>
     `;
 
     document.getElementById("btn-torna-stat").addEventListener("click", renderStatistiche);
     document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
     document.getElementById("btn-registro-dettagliato").addEventListener("click", () => renderRegistroPaziente(id));
+    document.getElementById("btn-report-preparatore").addEventListener("click", () => apriReportPreparatore(piano));
     caricaAttivitaProf(piano);
     document.getElementById("btn-piano-da-stat-su").addEventListener("click", () => apriEditorPaziente(id));
     collegaSezionePesoProf(piano);

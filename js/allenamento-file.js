@@ -243,6 +243,48 @@
 
   function dueCifre(n) { return String(n).padStart(2, "0"); }
 
+  /** Campioni con passo regolare di circa 1 s? (serve per la potenza normalizzata) */
+  function passoMedio(campioni) {
+    if (campioni.length < 60) return null;
+    return (campioni[campioni.length - 1].t - campioni[0].t) / (campioni.length - 1);
+  }
+
+  /** Potenza normalizzata: media mobile su 30 s, quarta potenza, media, radice quarta. */
+  function potenzaNormalizzata(campioni) {
+    const passo = passoMedio(campioni);
+    if (!passo || passo > 2.5) return null;
+    const w = campioni.map((c) => (c.w > 0 ? c.w : 0));
+    if (!w.some((x) => x > 0)) return null;
+    const fin = Math.max(1, Math.round(30 / passo));
+    if (w.length < fin * 2) return null;
+    let somma = 0, acc = 0, n = 0;
+    for (let i = 0; i < w.length; i++) {
+      somma += w[i];
+      if (i >= fin) somma -= w[i - fin];
+      if (i >= fin - 1) { acc += Math.pow(somma / fin, 4); n++; }
+    }
+    return n ? Math.round(Math.pow(acc / n, 0.25)) : null;
+  }
+
+  /**
+   * Deriva cardiaca (Pa:HR): quanto peggiora il rapporto potenza / frequenza
+   * cardiaca tra la prima e la seconda metà, in %. Solo con potenza e FC, oltre 20 minuti.
+   * Sotto il 5% l'uscita è considerata aerobicamente stabile.
+   */
+  function derivaCardiaca(campioni) {
+    const v = campioni.filter((c) => c.fc > 0 && c.w != null);
+    if (v.length < 120) return null;
+    const durata = v[v.length - 1].t - v[0].t;
+    if (durata < 1200) return null;
+    const meta = v[0].t + durata / 2;
+    const media = (arr, k) => arr.reduce((t, c) => t + (c[k] || 0), 0) / arr.length;
+    const a = v.filter((c) => c.t < meta), b = v.filter((c) => c.t >= meta);
+    const fcA = media(a, "fc"), fcB = media(b, "fc"), wA = media(a, "w"), wB = media(b, "w");
+    if (!fcA || !fcB || wA <= 0) return null;
+    const rA = wA / fcA, rB = wB / fcB;
+    return Math.round(((rA - rB) / rA) * 1000) / 10;
+  }
+
   /**
    * Riepilogo da salvare (niente campioni né percorso).
    * parametri: { fcMax, fcSoglia, ftp } dalle Impostazioni del paziente.
@@ -264,7 +306,20 @@
     if (d.fcMedia > 0) r.fcMedia = Math.round(d.fcMedia);
     if (d.fcMax > 0) r.fcMax = Math.round(d.fcMax);
     if (d.potenzaMedia > 0) r.potenzaMedia = Math.round(d.potenzaMedia);
-    if (d.potenzaNormalizzata > 0) r.potenzaNormalizzata = Math.round(d.potenzaNormalizzata);
+    const np = d.potenzaNormalizzata > 0 ? d.potenzaNormalizzata : (d.potenzaMedia > 0 ? potenzaNormalizzata(d.campioni || []) : null);
+    if (np > 0) r.potenzaNormalizzata = Math.round(np);
+    // indici di carico, calcolati qui perché il dettaglio dell'allenamento non si conserva
+    if (r.potenzaMedia && d.durataSec) r.lavoroKJ = Math.round((r.potenzaMedia * d.durataSec) / 1000);
+    if (r.kcal && durata >= 10) r.kcalOra = Math.round(r.kcal / (durata / 60));
+    const ftp = num((parametri || {}).ftp);
+    if (ftp && ftp >= 80 && (r.potenzaNormalizzata || r.potenzaMedia) && d.durataSec) {
+      const w = r.potenzaNormalizzata || r.potenzaMedia;
+      const fi = w / ftp;
+      r.fattoreIntensita = Math.round(fi * 100) / 100;
+      r.tss = Math.round(((d.durataSec * w * fi) / (ftp * 3600)) * 100);
+    }
+    const deriva = derivaCardiaca(d.campioni || []);
+    if (deriva != null) r.derivaCardiaca = deriva;
     const zone = limitiZone(parametri);
     if (zone) {
       const m = minutiInZone(d.campioni || [], zone.limiti);
@@ -313,7 +368,7 @@
     throw new Error("formato-non-supportato");
   }
 
-  const api = { tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, riepilogo, leggiFile };
+  const api = { tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.allenamentoFile = api;
 })();
