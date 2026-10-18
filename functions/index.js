@@ -1261,7 +1261,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
         Array.isArray(a.zoneFC) && a.zoneFC.length === 5 ? `minuti nelle zone Z1-Z5 ${a.zoneFC.map(n).join("/")}` : "",
         n(a.kcal) ? `${n(a.kcal)} kcal stimate dal dispositivo` : "",
       ].filter(Boolean) : [];
-      return `${String(a.tipo || "allenamento").slice(0, 40)}${a.durata ? ` ${n(a.durata)} min` : ""}${a.intensita ? `, intensità ${String(a.intensita).slice(0, 20)}${a.intensitaFonte ? " (misurata)" : ""}` : ""}${a.ora ? `, alle ${String(a.ora).slice(0, 5)}` : ""}${dati.length ? `, dati dal file: ${dati.join(", ")}` : ""}`;
+      return `${String(a.tipo || "allenamento").slice(0, 40)}${a.indoor ? " al chiuso" : ""}${a.durata ? ` ${n(a.durata)} min` : ""}${a.intensita ? `, intensità ${String(a.intensita).slice(0, 20)}${a.intensitaFonte ? " (misurata)" : ""}` : ""}${a.ora ? `, alle ${String(a.ora).slice(0, 5)}` : ""}${dati.length ? `, dati dal file: ${dati.join(", ")}` : ""}`;
     });
   const motivo = fatti.motivi && MOTIVI_RISCONTRO[fatti.motivi[pasto]];
   const nota = fatti.note && fatti.note[pasto] ? String(fatti.note[pasto]).slice(0, 200) : "";

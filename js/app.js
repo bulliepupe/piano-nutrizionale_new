@@ -1178,17 +1178,30 @@
     });
   }
 
-  async function condividiOScaricaFile(file) {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: file.name }); return; }
-      catch (e) { if (e && e.name === "AbortError") return; }
-    }
+  function scaricaFile(file) {
     const url = URL.createObjectURL(file);
     const a = document.createElement("a");
     a.href = url; a.download = file.name;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
-    mostraToast("Riepilogo scaricato", 3000);
+    mostraToast("PDF salvato nella cartella Download", 3500);
+  }
+
+  /** PDF pronto: si sceglie se salvarlo sul dispositivo o condividerlo (email, WhatsApp…). */
+  async function condividiOScaricaFile(file) {
+    const puoCondividere = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    if (!puoCondividere) { scaricaFile(file); return; }
+    apriSheet(`
+      <h2 class="sheet__titolo">PDF pronto</h2>
+      <p class="sheet__nota">${escapeHTML(file.name)}</p>
+      <button type="button" class="btn" id="btn-file-salva">Salva sul dispositivo</button>
+      <button type="button" class="btn btn--ghost" id="btn-file-condividi">Condividi (email, WhatsApp…)</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    document.getElementById("btn-file-salva").addEventListener("click", () => { scaricaFile(file); chiudiSheet(); });
+    document.getElementById("btn-file-condividi").addEventListener("click", async () => {
+      try { await navigator.share({ files: [file], title: file.name }); chiudiSheet(); }
+      catch (e) { if (!(e && e.name === "AbortError")) { scaricaFile(file); chiudiSheet(); } }
+    });
   }
 
   /** Testo sicuro per i caratteri del PDF (niente emoji né simboli fuori dall'alfabeto latino). */
@@ -1578,7 +1591,7 @@
       titolo("Allenamenti e carico");
       if (!t.n) riga("Nessun allenamento segnato nel periodo.");
       else {
-        riga(`${t.n} allenamenti, ${ore(t.minuti)}${t.km ? ` - ${num(t.km)} km` : ""}${t.dplus ? ` - ${num(t.dplus)} m di dislivello` : ""}${t.kj ? ` - ${num(t.kj)} kJ` : ""}${t.tss ? ` - TSS ${num(t.tss)}` : ""}.`, { bold: true });
+        riga(`${t.n} allenamenti${t.indoor ? ` (${t.indoor} al chiuso)` : ""}, ${ore(t.minuti)}${t.km ? ` - ${num(t.km)} km` : ""}${t.dplus ? ` - ${num(t.dplus)} m di dislivello` : ""}${t.kj ? ` - ${num(t.kj)} kJ` : ""}${t.tss ? ` - TSS ${num(t.tss)}` : ""}.`, { bold: true });
         const pi = t.perIntensita;
         riga(`Intensità: ${pi.leggera} leggeri, ${pi.moderata} moderati, ${pi.intensa} intensi.${t.kcal ? ` Calorie stimate dai dispositivi: ${num(t.kcal)} kcal.` : ""}`);
         if (t.conZone) {
@@ -1599,7 +1612,7 @@
         y += 1;
         tabella(
           [{ t: "Data", w: 14 }, { t: "Attività", w: 29 }, { t: "Durata", w: 18, dx: true }, { t: "Km", w: 14, dx: true }, { t: "D+ m", w: 15, dx: true }, { t: "FC", w: 12, dx: true }, { t: "Watt NP", w: 17, dx: true }, { t: "IF", w: 12, dx: true }, { t: "TSS", w: 12, dx: true }, { t: "Deriva", w: 17, dx: true }, { t: "Intensità", w: 18, dx: true }],
-          el.map((a) => [breve(a.giorno), a.tipo || "-", a.durata ? ore(a.durata) : "-", a.distanzaKm ? num(a.distanzaKm, 1) : "-", a.dislivelloM ? num(a.dislivelloM) : "-",
+          el.map((a) => [breve(a.giorno), nomeAllenamento(a), a.durata ? ore(a.durata) : "-", a.distanzaKm ? num(a.distanzaKm, 1) : "-", a.dislivelloM ? num(a.dislivelloM) : "-",
             a.fcMedia || "-", a.potenzaNormalizzata || a.potenzaMedia || "-", a.fattoreIntensita ? num(a.fattoreIntensita, 2) : "-", a.tss || "-",
             a.derivaCardiaca != null ? `${num(a.derivaCardiaca, 1)}%` : "-", a.intensita || "-"]),
           { size: 8.3, altezza: 5 });
@@ -2187,8 +2200,11 @@
     };
   }
 
+  /** "Bici" oppure "Bici indoor" (rulli, tapis roulant, virtuale). */
+  function nomeAllenamento(a) { return `${a.tipo || "Allenamento"}${a.indoor ? " indoor" : ""}`; }
+
   function descriviAllenamento(a) {
-    return [a.tipo || "Allenamento", a.durata ? `${a.durata} min` : "", a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "",
+    return [nomeAllenamento(a), a.durata ? `${a.durata} min` : "", a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "",
       a.intensita || "", a.ora ? `alle ${a.ora}` : ""].filter(Boolean).join(" · ");
   }
 
@@ -2255,7 +2271,7 @@
     const a = dati || (ATTIVITA_OGGI.allenamenti || []).find((x) => x.id === id);
     if (!a) return;
     apriSheet(`
-      <h2 class="sheet__titolo">${escapeHTML(a.tipo || "Allenamento")}${giorno !== oggiK ? ` · ${escapeHTML(dataLunga(giorno))}` : ""}${a.ora ? ` · alle ${escapeHTML(a.ora)}` : ""}</h2>
+      <h2 class="sheet__titolo">${escapeHTML(nomeAllenamento(a))}${giorno !== oggiK ? ` · ${escapeHTML(dataLunga(giorno))}` : ""}${a.ora ? ` · alle ${escapeHTML(a.ora)}` : ""}</h2>
       ${a.fonte === "file" ? righeAllenamentoHTML(a) : `<p class="sheet__nota">${escapeHTML(descriviAllenamento(a))}</p>`}
       ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : ""}</strong></p>` : ""}
       <p class="sheet__nota">Le calorie sono quelle stimate dal tuo dispositivo: non cambiano le quantità del piano. Se il piano va adattato agli allenamenti, lo decide il tuo nutrizionista.</p>
@@ -2338,6 +2354,7 @@
       <p class="sheet__nota">${r.giorno === oggi ? "Oggi" : escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}, alle ${escapeHTML(r.ora)} · file ${escapeHTML(r.formato)}</p>
       <label class="editor-campo"><span>Attività</span>
         <select id="imp-tipo">${TIPI_ALLENAMENTO.map((t) => `<option${t === r.tipo ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+      <label class="check-riga"><input type="checkbox" id="imp-indoor"${r.indoor ? " checked" : ""}> <span>Al chiuso (rulli, tapis roulant, piscina)</span></label>
       ${righeAllenamentoHTML(r)}
       <p class="impost-etichetta">Intensità</p>
       <div class="segmento" id="imp-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === intensita}">${nome}</button>`).join("")}</div>
@@ -2359,6 +2376,7 @@
         tipo: document.getElementById("imp-tipo").value,
         intensita,
       });
+      if (document.getElementById("imp-indoor").checked) nuovo.indoor = true; else delete nuovo.indoor;
       if (intensita !== r.intensita) { delete nuovo.intensitaFonte; delete nuovo.intensitaValore; }
       delete nuovo.giorno;
       try {
@@ -2417,6 +2435,7 @@
       <p class="stat-nota">Il file dell'allenamento esportato da Garmin, Wahoo, Bryton, Strava, TrainingPeaks… Oppure inseriscilo a mano:</p>` : ""}
       <label class="editor-campo"><span>Attività</span>
         <select id="all-tipo">${TIPI_ALLENAMENTO.map((t) => `<option>${t}</option>`).join("")}</select></label>
+      <label class="check-riga"><input type="checkbox" id="all-indoor"> <span>Al chiuso (rulli, tapis roulant, piscina)</span></label>
       <div class="ric-griglia">
         <label class="editor-campo"><span>Durata (minuti)</span><input type="number" id="all-durata" inputmode="numeric" min="5" max="600" step="5" value="45"></label>
         <label class="editor-campo"><span>Orario (facoltativo)</span><input type="time" id="all-ora"></label>
@@ -2444,6 +2463,7 @@
         ora: document.getElementById("all-ora").value || "",
         fonte: "manuale",
       };
+      if (document.getElementById("all-indoor").checked) nuovo.indoor = true;
       const lista = (Array.isArray(ATTIVITA_OGGI.allenamenti) ? ATTIVITA_OGGI.allenamenti : []).concat(nuovo).slice(-6);
       try {
         await window.cloud.salvaAttivita(UID, chiaveData(new Date()), { allenamenti: lista });
@@ -5137,7 +5157,7 @@
     const d = window.statistiche.daChiave(a.giorno);
     const giorno = d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
     apriSheet(`
-      <h2 class="sheet__titolo">${escapeHTML(a.tipo || "Allenamento")} di ${escapeHTML(nome)}</h2>
+      <h2 class="sheet__titolo">${escapeHTML(nomeAllenamento(a))} di ${escapeHTML(nome)}</h2>
       <p class="sheet__nota">${escapeHTML(giorno.replace(/^./, (c) => c.toUpperCase()))}${a.ora ? `, alle ${escapeHTML(a.ora)}` : ""} · ${a.fonte === "file" ? `importato da file ${escapeHTML(a.formato || "")}` : "segnato a mano dal paziente"}</p>
       ${a.fonte === "file" ? righeAllenamentoHTML(a) : `<p class="stat-riga"><span>Durata</span><strong>${a.durata} min</strong></p>`}
       ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : " · scelta dal paziente"}</strong></p>` : ""}
@@ -5163,7 +5183,7 @@
         const d = window.statistiche.daChiave(a.giorno);
         const zone = Array.isArray(a.zoneFC) ? (() => { const tt = a.zoneFC.reduce((x, y) => x + y, 0) || 1; return `Z1-Z2 ${Math.round(((a.zoneFC[0] + a.zoneFC[1]) / tt) * 100)}%`; })() : "";
         const dati = a.fonte !== "file" ? "Segnato a mano dal paziente" : [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
-        return `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-allenamento-prof="${escapeHTML(a.giorno + "|" + a.id)}"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(a.tipo || "Allenamento")} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span><span class="allenamento-prof__apri" aria-hidden="true">Apri ›</span></button></li>`;
+        return `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-allenamento-prof="${escapeHTML(a.giorno + "|" + a.id)}"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(nomeAllenamento(a))} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span><span class="allenamento-prof__apri" aria-hidden="true">Apri ›</span></button></li>`;
       }).join("");
       box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente o importati dai file dei suoi dispositivi.</p>
         <p class="stat-riga"><span>Totale</span><strong>${escapeHTML(t.riga)}</strong></p>

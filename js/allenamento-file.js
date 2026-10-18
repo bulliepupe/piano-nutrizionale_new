@@ -35,6 +35,13 @@
 
   function num(x) { const n = Number(x); return Number.isFinite(n) ? n : null; }
 
+  /** Allenamento al chiuso: sottotipo del dispositivo (rulli, tapis roulant, virtuale) oppure nessuna posizione GPS. */
+  const INDOOR = /indoor|virtual|spin|treadmill|trainer|tapis/i;
+  function eIndoor(sport, sottotipo, haPosizione) {
+    if (INDOOR.test(String(sottotipo || "")) || INDOOR.test(String(sport || ""))) return true;
+    return haPosizione === false;
+  }
+
   // ---------------------------------------------------------------------
   // Formato comune: { formato, sport, inizio (ms), durataSec, distanzaM, dislivelloM,
   //   kcal, fcMedia, fcMax, potenzaMedia, potenzaNormalizzata, campioni: [{t, fc, w}] }
@@ -51,9 +58,12 @@
       t: (new Date(r.timestamp).getTime() - inizio) / 1000,
       fc: num(r.heart_rate), w: num(r.power),
     })).filter((c) => Number.isFinite(c.t));
+    const records = (data && data.records) || [];
+    const haPosizione = records.some((r) => r.position_lat != null);
     return {
       formato: "FIT",
       sport: s.sport,
+      indoor: eIndoor(s.sport, s.sub_sport, records.length ? haPosizione : null),
       inizio,
       durataSec: somma("total_timer_time") || somma("total_elapsed_time"),
       distanzaM: somma("total_distance"),
@@ -123,6 +133,7 @@
     return {
       formato: "TCX",
       sport: sportM ? sportM[1] : "",
+      indoor: eIndoor(sportM ? sportM[1] : "", "", punti.length ? /<(?:\w+:)?Position[\s>]/i.test(att) : null),
       inizio,
       durataSec: durata,
       distanzaM: dist,
@@ -171,6 +182,7 @@
     return {
       formato: "GPX",
       sport: tipoM ? tipoM[1] : "",
+      indoor: eIndoor(tipoM ? tipoM[1] : "", "", pp.some((x) => x.lat != null)),
       inizio,
       durataSec: durata,
       distanzaM: dist,
@@ -300,6 +312,7 @@
       fonte: "file",
       formato: d.formato,
     };
+    if (d.indoor) r.indoor = true;
     if (d.distanzaM > 50) r.distanzaKm = Math.round(d.distanzaM / 100) / 10;
     if (d.dislivelloM > 0) r.dislivelloM = Math.round(d.dislivelloM);
     if (d.kcal > 0) r.kcal = Math.round(d.kcal);

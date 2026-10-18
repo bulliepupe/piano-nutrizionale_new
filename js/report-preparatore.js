@@ -60,7 +60,7 @@
       (p.attivita[k].allenamenti || []).forEach((x) => allenamenti.push(Object.assign({ giorno: k }, x)));
     });
     const somma = (lista) => {
-      const t = { n: lista.length, minuti: 0, km: 0, dplus: 0, kj: 0, tss: 0, kcal: 0, conTss: 0, zone: [0, 0, 0, 0, 0], conZone: 0, perIntensita: { leggera: 0, moderata: 0, intensa: 0 } };
+      const t = { n: lista.length, indoor: lista.filter((x) => x.indoor).length, minuti: 0, km: 0, dplus: 0, kj: 0, tss: 0, kcal: 0, conTss: 0, zone: [0, 0, 0, 0, 0], conZone: 0, perIntensita: { leggera: 0, moderata: 0, intensa: 0 } };
       lista.forEach((x) => {
         t.minuti += Number(x.durata) || 0;
         t.km += Number(x.distanzaKm) || 0;
