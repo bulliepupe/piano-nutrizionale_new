@@ -359,6 +359,13 @@
   }
 
   async function eseguiLogout() {
+    // prima di uscire: il telefono non deve più ricevere i promemoria di questo account
+    if (UID) {
+      const scollega = window.cloud.scollegaDispositivo(UID).catch(() => {});
+      await Promise.race([scollega, new Promise((r) => setTimeout(r, 4000))]);
+    }
+    try { localStorage.setItem(LS_KEYS.notifiche, "0"); } catch (e) { /* niente */ }
+    dispositivoRinnovato = false;
     if (unsubProfilo) { unsubProfilo(); unsubProfilo = null; }
     pulisciListenerCloud();
     await window.cloud.logout();
@@ -456,6 +463,7 @@
     }
     mostraInformativaPrimoAccesso(utenteDati, "paziente");
     migraDominioSeServe(utenteDati);
+    rinnovaDispositivoNotifiche(utenteDati);
     if (!window.temaApp) applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
     aggiornaEyebrowData();
@@ -3439,6 +3447,18 @@
   // riattivare i promemoria. I dispositivi che si registrano dopo non
   // vengono più toccati.
   const DOMINIO_APP = "app.ilmiopiano.it";
+
+  // Una volta per sessione, se su questo telefono i promemoria sono attivi:
+  // il server conferma il telefono su questo account e lo toglie da ogni altro
+  // account (es. un paziente di prova usato prima sullo stesso telefono).
+  let dispositivoRinnovato = false;
+  function rinnovaDispositivoNotifiche(u) {
+    if (dispositivoRinnovato || !u || !u.notificheAttive || !notificheAttive()) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (u.dominioNotifiche !== location.hostname) return; // prima la migrazione al nuovo indirizzo
+    dispositivoRinnovato = true;
+    window.cloud.registraTokenPush(UID).catch((e) => console.warn("Rinnovo del dispositivo per i promemoria non riuscito:", e));
+  }
 
   function migraDominioSeServe(u) {
     if (location.hostname !== DOMINIO_APP || !u || u.dominioNotifiche === DOMINIO_APP) return;

@@ -351,10 +351,29 @@
         serviceWorkerRegistration: registrazioneSW,
       });
       if (!token) return null;
-      await db.collection("users").doc(uid).update({
-        fcmTokens: FieldValue.arrayUnion(token),
-      });
+      // Il server collega il telefono a questo account e lo toglie da qualsiasi
+      // altro account (es. un paziente di prova usato prima sullo stesso telefono).
+      try {
+        await this.chiamaFunzione("registraDispositivo", { token });
+      } catch (e) {
+        await db.collection("users").doc(uid).update({
+          fcmTokens: FieldValue.arrayUnion(token),
+        });
+      }
       return token;
+    },
+
+    /**
+     * All'uscita dall'account: toglie questo telefono dall'account, così non
+     * riceve più i promemoria del suo piano. Non chiede permessi: se le notifiche
+     * non sono già consentite non c'è nulla da togliere.
+     */
+    async scollegaDispositivo(uid) {
+      if (!messaging || !uid || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      if (!window.FIREBASE_VAPID_KEY || window.FIREBASE_VAPID_KEY === "INSERISCI_VAPID_KEY") return;
+      const registrazioneSW = await navigator.serviceWorker.ready;
+      const token = await messaging.getToken({ vapidKey: window.FIREBASE_VAPID_KEY, serviceWorkerRegistration: registrazioneSW });
+      if (token) await this.rimuoviTokenPush(uid, token);
     },
 
     /** Rimuove il token di questo dispositivo (es. quando l'utente disattiva i promemoria). */

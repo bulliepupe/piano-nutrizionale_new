@@ -1411,6 +1411,32 @@ exports.stimaRese = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 },
 });
 
 // =========================================================================
+// DISPOSITIVI PER LE NOTIFICHE
+// =========================================================================
+// Un telefono (token FCM) deve stare in un solo account: quando un utente
+// attiva i promemoria, il token viene tolto da tutti gli altri account che lo
+// avevano (es. un paziente di prova usato prima sullo stesso telefono, senza
+// che all'uscita il token fosse stato tolto) e aggiunto al suo.
+exports.registraDispositivo = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const token = String((request.data && request.data.token) || "");
+  if (token.length < 20 || token.length > 4096) throw new HttpsError("invalid-argument", "Token non valido.");
+  const altri = await db.collection("users").where("fcmTokens", "array-contains", token).get();
+  const batch = db.batch();
+  let rimossi = 0;
+  altri.forEach((d) => {
+    if (d.id === uid) return;
+    batch.update(d.ref, { fcmTokens: FieldValue.arrayRemove(token) });
+    rimossi++;
+  });
+  batch.update(db.collection("users").doc(uid), { fcmTokens: FieldValue.arrayUnion(token) });
+  await batch.commit();
+  if (rimossi) console.log("registraDispositivo: telefono tolto da altri account", { uid, rimossi });
+  return { rimossiDaAltri: rimossi };
+});
+
+// =========================================================================
 // MACRONUTRIENTI DEI PASTI (stima AI, archivio comune)
 // =========================================================================
 // L'app invia i testi dei pasti del piano che non trova ancora in archivio.
