@@ -2361,3 +2361,7 @@ body.con-informativa { overflow: hidden; }
 .segmento--a-capo { flex-wrap: wrap; }
 .segmento--a-capo .segmento__voce { flex: 1 1 40%; }
 .rep-consenso { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); }
+.avviso-doppione { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); font-size: 13.5px; }
+#btn-elimina-allenamento { margin-top: 14px; }
+/* Nei pannelli lunghi (che scorrono) nessun elemento deve schiacciarsi: la barra delle zone, senza testo, arrivava a 0 px */
+.sheet > * { flex-shrink: 0; }

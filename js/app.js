@@ -2241,15 +2241,58 @@
     } catch (e) { mostraToast("Non riesco ad aprire il file condiviso"); }
   }
 
-  function apriDettaglioAllenamento(id) {
-    const a = (ATTIVITA_OGGI.allenamenti || []).find((x) => x.id === id);
+  /** Toglie un allenamento da un giorno (oggi o uno dei giorni passati). */
+  async function eliminaAllenamento(giorno, id) {
+    const oggi = chiaveData(new Date());
+    const attuali = giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
+      : (((await window.cloud.leggiAttivitaPeriodo(UID, giorno))[giorno] || {}).allenamenti || []);
+    await window.cloud.salvaAttivita(UID, giorno, { allenamenti: attuali.filter((x) => x.id !== id) });
+  }
+
+  function apriDettaglioAllenamento(id, giorno, dati) {
+    const oggiK = chiaveData(new Date());
+    giorno = giorno || oggiK;
+    const a = dati || (ATTIVITA_OGGI.allenamenti || []).find((x) => x.id === id);
     if (!a) return;
     apriSheet(`
-      <h2 class="sheet__titolo">${escapeHTML(a.tipo || "Allenamento")}${a.ora ? ` · alle ${escapeHTML(a.ora)}` : ""}</h2>
+      <h2 class="sheet__titolo">${escapeHTML(a.tipo || "Allenamento")}${giorno !== oggiK ? ` · ${escapeHTML(dataLunga(giorno))}` : ""}${a.ora ? ` · alle ${escapeHTML(a.ora)}` : ""}</h2>
       ${a.fonte === "file" ? righeAllenamentoHTML(a) : `<p class="sheet__nota">${escapeHTML(descriviAllenamento(a))}</p>`}
       ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : ""}</strong></p>` : ""}
       <p class="sheet__nota">Le calorie sono quelle stimate dal tuo dispositivo: non cambiano le quantità del piano. Se il piano va adattato agli allenamenti, lo decide il tuo nutrizionista.</p>
+      <button type="button" class="btn btn--ghost btn--pericolo" id="btn-elimina-allenamento">Elimina questo allenamento</button>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    const el = document.getElementById("btn-elimina-allenamento");
+    el.addEventListener("click", async () => {
+      if (el.dataset.conferma !== "1") { el.dataset.conferma = "1"; el.textContent = "Tocca di nuovo per eliminare"; return; }
+      el.disabled = true;
+      try {
+        await eliminaAllenamento(giorno, a.id);
+        chiudiSheet();
+        mostraToast("Allenamento eliminato");
+      } catch (e) { el.disabled = false; mostraToast(msgErroreScrittura(e, "Non eliminato: controlla la connessione"), 4000); }
+    });
+  }
+
+  /** Allenamenti degli ultimi 7 giorni, per rivederli, eliminarli o reimportarli. */
+  async function apriAllenamentiRecenti() {
+    apriSheet(`<h2 class="sheet__titolo">Ultimi 7 giorni</h2><p class="sheet__nota">Carico gli allenamenti…</p>`);
+    const da = chiaveData(new Date(Date.now() - 7 * 86400000));
+    let perGiorno = {};
+    try { perGiorno = await window.cloud.leggiAttivitaPeriodo(UID, da); } catch (e) { /* elenco vuoto */ }
+    const voci = [];
+    Object.keys(perGiorno).sort().reverse().forEach((g) => (perGiorno[g].allenamenti || []).forEach((a) => voci.push({ g, a })));
+    apriSheet(`
+      <h2 class="sheet__titolo">Ultimi 7 giorni</h2>
+      <p class="sheet__nota">Tocca un allenamento per vederne i dati o eliminarlo. Per aggiornare i dati di un file già importato, importalo di nuovo.</p>
+      ${voci.length ? `<ul class="stat-note-pasti">${voci.map(({ g, a }, i) => `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-recente="${i}">
+          <span class="stat-nota-pasto__testa">${escapeHTML(dataLunga(g).replace(/^./, (c) => c.toUpperCase()))}</span>
+          <span>${escapeHTML(descriviAllenamento(a))}${a.fonte === "file" ? " · da file" : " · segnato a mano"}</span></button></li>`).join("")}</ul>`
+        : `<p class="sheet__nota">Nessun allenamento negli ultimi 7 giorni.</p>`}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet style="margin-top:12px;">Chiudi</button>`);
+    document.querySelectorAll("[data-recente]").forEach((b) => b.addEventListener("click", () => {
+      const v = voci[Number(b.dataset.recente)];
+      apriDettaglioAllenamento(v.a.id, v.g, v.a);
+    }));
   }
 
   const ERRORI_FILE = {
@@ -2282,6 +2325,14 @@
     }
     const haParametri = PARAMETRI_ALLENAMENTO.fcMax || PARAMETRI_ALLENAMENTO.fcSoglia || PARAMETRI_ALLENAMENTO.ftp;
     let intensita = r.intensita || "moderata";
+    // allenamenti già presenti quel giorno: lo stesso file importato prima, o uno dello stesso tipo segnato a mano
+    let esistenti = [];
+    try {
+      esistenti = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
+        : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
+    } catch (e) { esistenti = []; }
+    const giaImportato = esistenti.find((x) => x.fonte === "file" && x.ora === r.ora && Math.abs((x.durata || 0) - r.durata) <= 1);
+    const aMano = giaImportato ? null : esistenti.find((x) => x.fonte !== "file" && x.tipo === r.tipo);
     apriSheet(`
       <h2 class="sheet__titolo">Allenamento dal file</h2>
       <p class="sheet__nota">${r.giorno === oggi ? "Oggi" : escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}, alle ${escapeHTML(r.ora)} · file ${escapeHTML(r.formato)}</p>
@@ -2291,8 +2342,10 @@
       <p class="impost-etichetta">Intensità</p>
       <div class="segmento" id="imp-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === intensita}">${nome}</button>`).join("")}</div>
       <p class="stat-nota">${r.intensitaFonte ? `Proposta ${FONTI_INTENSITA[r.intensitaFonte]}${r.intensitaFonte === "potenza" ? ` (IF ${String(r.intensitaValore).replace(".", ",")})` : ""}: puoi cambiarla.` : haParametri ? "Il file non ha i dati per calcolarla: scegli tu." : "Scegli tu, oppure indica in Impostazioni → Allenamenti la tua frequenza cardiaca o la FTP per calcolarla dal file."}</p>
+      ${giaImportato ? `<p class="avviso-doppione">Questo allenamento è già stato importato: salvando lo aggiorni con i dati e gli indici di adesso.</p>` : ""}
+      ${aMano ? `<label class="check-riga avviso-doppione"><input type="checkbox" id="imp-sostituisci" checked> <span>Sostituisce quello segnato a mano: ${escapeHTML(descriviAllenamento(aMano))}</span></label>` : ""}
       <p class="sheet__nota">Il file non viene conservato: salviamo solo questi numeri, senza il percorso.</p>
-      <button type="button" class="btn" id="btn-salva-importato" style="margin-top:12px;">Salva</button>
+      <button type="button" class="btn" id="btn-salva-importato" style="margin-top:12px;">${giaImportato ? "Aggiorna" : "Salva"}</button>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
     document.querySelectorAll("#imp-intensita [data-intensita]").forEach((b) => b.addEventListener("click", () => {
       intensita = b.dataset.intensita;
@@ -2309,16 +2362,15 @@
       if (intensita !== r.intensita) { delete nuovo.intensitaFonte; delete nuovo.intensitaValore; }
       delete nuovo.giorno;
       try {
-        const esistenti = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
+        const attuali = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
           : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
-        if (esistenti.some((x) => x.fonte === "file" && x.ora === r.ora && x.durata === r.durata)) {
-          mostraToast("Questo allenamento è già stato importato");
-          chiudiSheet();
-          return;
-        }
-        await window.cloud.salvaAttivita(UID, r.giorno, { allenamenti: esistenti.concat(nuovo).slice(-6) });
+        const sostituisci = document.getElementById("imp-sostituisci");
+        const via = new Set([giaImportato && giaImportato.id, aMano && sostituisci && sostituisci.checked && aMano.id].filter(Boolean));
+        const lista = attuali.filter((x) => !via.has(x.id)).concat(nuovo).slice(-6);
+        await window.cloud.salvaAttivita(UID, r.giorno, { allenamenti: lista });
         chiudiSheet();
-        mostraToast(r.giorno === oggi ? "Allenamento importato" : `Allenamento importato nel ${dataLunga(r.giorno)}`);
+        const quando = r.giorno === oggi ? "" : ` nel ${dataLunga(r.giorno)}`;
+        mostraToast(giaImportato ? `Allenamento aggiornato${quando}` : `Allenamento importato${quando}`);
       } catch (err) {
         btn.disabled = false;
         mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"), 4000);
@@ -2372,7 +2424,9 @@
       <p class="impost-etichetta">Intensità</p>
       <div class="segmento" id="all-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === "moderata"}">${nome}</button>`).join("")}</div>
       <button type="button" class="btn" id="btn-salva-allenamento" style="margin-top:16px;">Salva</button>
-      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
+      <p class="registro-link"><button type="button" class="link-btn" id="btn-allenamenti-recenti">Allenamenti degli ultimi 7 giorni</button></p>`);
+    document.getElementById("btn-allenamenti-recenti").addEventListener("click", apriAllenamentiRecenti);
     const inFile = document.getElementById("all-file");
     if (inFile) inFile.addEventListener("change", () => { if (inFile.files && inFile.files[0]) apriImportaAllenamento(inFile.files[0]); });
     let intensita = "moderata";
@@ -5084,8 +5138,8 @@
     const giorno = d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
     apriSheet(`
       <h2 class="sheet__titolo">${escapeHTML(a.tipo || "Allenamento")} di ${escapeHTML(nome)}</h2>
-      <p class="sheet__nota">${escapeHTML(giorno.replace(/^./, (c) => c.toUpperCase()))}${a.ora ? `, alle ${escapeHTML(a.ora)}` : ""} · importato da file ${escapeHTML(a.formato || "")}</p>
-      ${righeAllenamentoHTML(a)}
+      <p class="sheet__nota">${escapeHTML(giorno.replace(/^./, (c) => c.toUpperCase()))}${a.ora ? `, alle ${escapeHTML(a.ora)}` : ""} · ${a.fonte === "file" ? `importato da file ${escapeHTML(a.formato || "")}` : "segnato a mano dal paziente"}</p>
+      ${a.fonte === "file" ? righeAllenamentoHTML(a) : `<p class="stat-riga"><span>Durata</span><strong>${a.durata} min</strong></p>`}
       ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : " · scelta dal paziente"}</strong></p>` : ""}
       <p class="sheet__nota">Zone e indici dipendono dai valori di FC e FTP che il paziente ha indicato nelle sue Impostazioni. Le calorie sono la stima del suo dispositivo.</p>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
@@ -5100,22 +5154,24 @@
       const t = testoSintesiAllenamenti(sintesiAllenamenti(perGiorno, da));
       if (!t || pazienteSelezionatoId !== piano.id) return;
       // allenamenti importati da file: totali e ultimi 8 con i dati
-      const daFile = [];
-      Object.keys(perGiorno).sort().reverse().forEach((g) => (perGiorno[g].allenamenti || []).forEach((a) => { if (a.fonte === "file") daFile.push(Object.assign({ giorno: g }, a)); }));
+      const tutti = [];
+      Object.keys(perGiorno).sort().reverse().forEach((g) => (perGiorno[g].allenamenti || []).forEach((a) => tutti.push(Object.assign({ giorno: g }, a))));
+      const daFile = tutti.filter((a) => a.fonte === "file");
       const tot = daFile.reduce((x, a) => ({ km: x.km + (Number(a.distanzaKm) || 0), dplus: x.dplus + (Number(a.dislivelloM) || 0), kcal: x.kcal + (Number(a.kcal) || 0) }), { km: 0, dplus: 0, kcal: 0 });
       const rigaFile = daFile.length ? [`${daFile.length} da file`, tot.km ? `${numeroIt(Math.round(tot.km))} km` : "", tot.dplus ? `${numeroIt(tot.dplus)} m di dislivello` : "", tot.kcal ? `${numeroIt(tot.kcal)} kcal stimate dai dispositivi` : ""].filter(Boolean).join(" · ") : "";
-      const elenco = daFile.slice(0, 8).map((a) => {
+      const elenco = tutti.slice(0, 10).map((a) => {
         const d = window.statistiche.daChiave(a.giorno);
         const zone = Array.isArray(a.zoneFC) ? (() => { const tt = a.zoneFC.reduce((x, y) => x + y, 0) || 1; return `Z1-Z2 ${Math.round(((a.zoneFC[0] + a.zoneFC[1]) / tt) * 100)}%`; })() : "";
-        const dati = [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
+        const dati = a.fonte !== "file" ? "Segnato a mano dal paziente" : [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
         return `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-allenamento-prof="${escapeHTML(a.giorno + "|" + a.id)}"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(a.tipo || "Allenamento")} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span><span class="allenamento-prof__apri" aria-hidden="true">Apri ›</span></button></li>`;
       }).join("");
       box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente o importati dai file dei suoi dispositivi.</p>
         <p class="stat-riga"><span>Totale</span><strong>${escapeHTML(t.riga)}</strong></p>
         ${t.dettaglio ? `<p class="stat-nota">${escapeHTML(t.dettaglio)}</p>` : ""}
-        ${rigaFile ? `<p class="stat-nota">${escapeHTML(rigaFile)}</p><ul class="stat-note-pasti">${elenco}</ul>` : ""}`;
+        ${rigaFile ? `<p class="stat-nota">${escapeHTML(rigaFile)}</p>` : ""}
+        ${tutti.length ? `<ul class="stat-note-pasti">${elenco}</ul>${tutti.length > 10 ? `<p class="stat-nota">Gli ultimi 10 di ${tutti.length}: l'elenco completo è nel report per il preparatore.</p>` : ""}` : ""}`;
       box.querySelectorAll("[data-allenamento-prof]").forEach((b) => b.addEventListener("click", () => {
-        const a = daFile.find((x) => x.giorno + "|" + x.id === b.dataset.allenamentoProf);
+        const a = tutti.find((x) => x.giorno + "|" + x.id === b.dataset.allenamentoProf);
         if (a) apriAllenamentoProf(a, piano);
       }));
       box.hidden = false;
