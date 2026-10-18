@@ -68,6 +68,7 @@
   let PIANO_ATTIVO = null; // piano corrente letto da Firestore in tempo reale
   let PIANO_GREZZO = null; // come salvato (con l'eventuale piano programmato in "prossimo")
   let ATTIVITA_OGGI = {}; // allenamenti di oggi { allenamenti: [...] }
+  let PARAMETRI_ALLENAMENTO = {}; // { fcMax, fcSoglia, ftp } dalle Impostazioni, per zone e intensità
   let unsubAttivitaOggi = null;
   const PASTI_APERTI = new Set(); // righe della scheda Oggi aperte dall'utente (restano aperte quando la scheda si ridisegna)
   let ATTESA_REGISTRAZIONE = null; // registrazione del paziente autonomo in corso
@@ -450,6 +451,7 @@
 
   async function avviaPaziente(utenteDati) {
     AUTONOMO = !!utenteDati.autonomo;
+    PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
     mostraSchermata("paziente");
     aggiornaPremium().then(() => caricaReseAI());
     if (!avviaPaziente.collegato) {
@@ -464,6 +466,7 @@
     mostraInformativaPrimoAccesso(utenteDati, "paziente");
     migraDominioSeServe(utenteDati);
     rinnovaDispositivoNotifiche(utenteDati);
+    setTimeout(controllaAllenamentoCondiviso, 1200);
     if (!window.temaApp) applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
     aggiornaEyebrowData();
@@ -1078,6 +1081,47 @@
     crudo.addEventListener("input", daCrudo);
     cotto.addEventListener("input", daCotto);
     aggiornaMetodi();
+  }
+
+  function parametriAllenamentoSezioneHTML() {
+    if (RUOLO !== "paziente") return "";
+    const v = (k) => (PARAMETRI_ALLENAMENTO[k] ? String(PARAMETRI_ALLENAMENTO[k]) : "");
+    return `
+      <section class="settings-section">
+        <h2>Allenamenti</h2>
+        <p class="hint">Facoltativi. Servono a calcolare zone e intensità quando importi un allenamento da file. Se li conosci, usa quelli del tuo test o del tuo preparatore.</p>
+        <div class="ric-griglia">
+          <label class="editor-campo"><span>FC massima (bpm)</span><input type="number" id="par-fcmax" inputmode="numeric" min="120" max="230" value="${v("fcMax")}"></label>
+          <label class="editor-campo"><span>FC di soglia (bpm)</span><input type="number" id="par-fcsoglia" inputmode="numeric" min="100" max="220" value="${v("fcSoglia")}"></label>
+          <label class="editor-campo"><span>FTP (watt, bici)</span><input type="number" id="par-ftp" inputmode="numeric" min="80" max="600" value="${v("ftp")}"></label>
+        </div>
+        <p class="stat-nota">Con la FC di soglia le zone seguono quella; altrimenti la FC massima. Con un misuratore di potenza e la FTP l'intensità si calcola dalla potenza.</p>
+        <button type="button" class="btn btn--ghost" id="btn-salva-parametri">Salva</button>
+      </section>`;
+  }
+
+  function collegaParametriAllenamento() {
+    const btn = document.getElementById("btn-salva-parametri");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      const lim = { "par-fcmax": ["fcMax", 120, 230], "par-fcsoglia": ["fcSoglia", 100, 220], "par-ftp": ["ftp", 80, 600] };
+      const nuovi = {};
+      for (const id of Object.keys(lim)) {
+        const [k, min, max] = lim[id];
+        const raw = document.getElementById(id).value.trim();
+        if (!raw) continue;
+        const n = Math.round(Number(raw));
+        if (!(n >= min && n <= max)) { mostraToast(`Controlla il valore: deve essere tra ${min} e ${max}`); return; }
+        nuovi[k] = n;
+      }
+      btn.disabled = true;
+      try {
+        await window.cloud.salvaParametriAllenamento(UID, nuovi);
+        PARAMETRI_ALLENAMENTO = nuovi;
+        mostraToast("Salvato");
+      } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
+      finally { btn.disabled = false; }
+    });
   }
 
   function calcolatoreSezioneHTML() {
@@ -1834,7 +1878,135 @@
   }
 
   function descriviAllenamento(a) {
-    return [a.tipo || "Allenamento", a.durata ? `${a.durata} min` : "", a.intensita || "", a.ora ? `alle ${a.ora}` : ""].filter(Boolean).join(" · ");
+    return [a.tipo || "Allenamento", a.durata ? `${a.durata} min` : "", a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "",
+      a.intensita || "", a.ora ? `alle ${a.ora}` : ""].filter(Boolean).join(" · ");
+  }
+
+  function numeroIt(n) { return Number(n).toLocaleString("it-IT"); }
+
+  const FONTI_INTENSITA = { potenza: "calcolata dalla potenza", zone: "calcolata dalle zone di frequenza cardiaca", fc: "calcolata dalla frequenza cardiaca media" };
+
+  /** Righe di dati di un allenamento importato (anteprima e dettaglio). */
+  function righeAllenamentoHTML(a) {
+    const righe = [];
+    if (a.durata) righe.push(["Durata", `${a.durata} min`]);
+    if (a.distanzaKm) righe.push(["Distanza", `${String(a.distanzaKm).replace(".", ",")} km`]);
+    if (a.dislivelloM) righe.push(["Dislivello", `${numeroIt(a.dislivelloM)} m`]);
+    if (a.fcMedia) righe.push(["Frequenza cardiaca", `media ${a.fcMedia}${a.fcMax ? ` · max ${a.fcMax}` : ""} bpm`]);
+    if (a.potenzaMedia) righe.push(["Potenza", `media ${a.potenzaMedia} W${a.potenzaNormalizzata ? ` · normalizzata ${a.potenzaNormalizzata} W` : ""}`]);
+    if (a.kcal) righe.push(["Calorie", `${numeroIt(a.kcal)} kcal · stima del dispositivo`]);
+    let zone = "";
+    if (Array.isArray(a.zoneFC)) {
+      const tot = a.zoneFC.reduce((x, y) => x + y, 0) || 1;
+      zone = `<div class="zone-fc" role="img" aria-label="Minuti nelle zone: ${a.zoneFC.map((m, i) => `Z${i + 1} ${m}`).join(", ")}">
+          ${a.zoneFC.map((m, i) => m ? `<span class="zone-fc__z zone-fc__z--${i + 1}" style="flex:${m / tot}">${m / tot >= 0.09 ? `Z${i + 1} · ${m}′` : ""}</span>` : "").join("")}
+        </div>
+        <p class="stat-nota">Minuti nelle zone di frequenza cardiaca (calcolate dalla FC ${a.zoneBase === "soglia" ? "di soglia" : "massima"} indicata in Impostazioni).</p>`;
+    }
+    return `<div class="allenamento-dati">${righe.map(([k, v]) => `<p class="stat-riga"><span>${k}</span><strong>${escapeHTML(v)}</strong></p>`).join("")}</div>${zone}`;
+  }
+
+  /** Android: file condiviso da un'altra app ("Condividi con Il mio Piano"), messo da parte dal service worker. */
+  async function controllaAllenamentoCondiviso() {
+    if (RUOLO !== "paziente" || !window.allenamentoFile || !("caches" in window)) return;
+    const parametri = new URLSearchParams(location.search);
+    if (!parametri.has("importa-allenamento")) return;
+    parametri.delete("importa-allenamento");
+    history.replaceState(null, "", location.pathname + (parametri.toString() ? "?" + parametri : "") + location.hash);
+    try {
+      const cache = await caches.open("pnut-condivisi");
+      const r = await cache.match("/condiviso/allenamento");
+      if (!r) { mostraToast("Il file condiviso non è arrivato: riprova"); return; }
+      const nome = decodeURIComponent(r.headers.get("x-nome") || "allenamento.fit");
+      const file = new File([await r.blob()], nome);
+      await cache.delete("/condiviso/allenamento");
+      apriImportaAllenamento(file);
+    } catch (e) { mostraToast("Non riesco ad aprire il file condiviso"); }
+  }
+
+  function apriDettaglioAllenamento(id) {
+    const a = (ATTIVITA_OGGI.allenamenti || []).find((x) => x.id === id);
+    if (!a) return;
+    apriSheet(`
+      <h2 class="sheet__titolo">${escapeHTML(a.tipo || "Allenamento")}${a.ora ? ` · alle ${escapeHTML(a.ora)}` : ""}</h2>
+      ${a.fonte === "file" ? righeAllenamentoHTML(a) : `<p class="sheet__nota">${escapeHTML(descriviAllenamento(a))}</p>`}
+      ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : ""}</strong></p>` : ""}
+      <p class="sheet__nota">Le calorie sono quelle stimate dal tuo dispositivo: non cambiano le quantità del piano. Se il piano va adattato agli allenamenti, lo decide il tuo nutrizionista.</p>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+  }
+
+  const ERRORI_FILE = {
+    "formato-non-supportato": "Questo file non è un allenamento: scegli un file .fit, .tcx o .gpx.",
+    "file-troppo-grande": "Il file è troppo grande (oltre 25 MB).",
+    "lettore-fit": "Non riesco a leggere i file FIT in questo momento: controlla la connessione e riprova.",
+  };
+
+  /** Legge il file, mostra l'anteprima e salva il riepilogo nel giorno dell'allenamento. */
+  async function apriImportaAllenamento(file) {
+    apriSheet(`<h2 class="sheet__titolo">Allenamento dal file</h2><p class="sheet__nota">Sto leggendo il file…</p>`);
+    let r;
+    try {
+      r = window.allenamentoFile.riepilogo(await window.allenamentoFile.leggiFile(file), PARAMETRI_ALLENAMENTO);
+    } catch (e) {
+      apriSheet(`<h2 class="sheet__titolo">Allenamento dal file</h2>
+        <p class="sheet__nota">${escapeHTML(ERRORI_FILE[e && e.message] || "Non riesco a leggere questo file. Esporta l'allenamento dall'app o dal sito della piattaforma in formato FIT, TCX o GPX e riprova.")}</p>
+        <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+      return;
+    }
+    const oggi = chiaveData(new Date());
+    const limite = chiaveData(new Date(Date.now() - 7 * 86400000));
+    if (!r.durata || r.durata < 3) {
+      apriSheet(`<h2 class="sheet__titolo">Allenamento dal file</h2><p class="sheet__nota">Il file non contiene un allenamento con una durata valida.</p><button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+      return;
+    }
+    if (r.giorno > oggi || r.giorno < limite) {
+      apriSheet(`<h2 class="sheet__titolo">Allenamento dal file</h2><p class="sheet__nota">L'allenamento è del ${escapeHTML(dataLunga(r.giorno))}: puoi importare solo quelli degli ultimi 7 giorni.</p><button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+      return;
+    }
+    const haParametri = PARAMETRI_ALLENAMENTO.fcMax || PARAMETRI_ALLENAMENTO.fcSoglia || PARAMETRI_ALLENAMENTO.ftp;
+    let intensita = r.intensita || "moderata";
+    apriSheet(`
+      <h2 class="sheet__titolo">Allenamento dal file</h2>
+      <p class="sheet__nota">${r.giorno === oggi ? "Oggi" : escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}, alle ${escapeHTML(r.ora)} · file ${escapeHTML(r.formato)}</p>
+      <label class="editor-campo"><span>Attività</span>
+        <select id="imp-tipo">${TIPI_ALLENAMENTO.map((t) => `<option${t === r.tipo ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+      ${righeAllenamentoHTML(r)}
+      <p class="impost-etichetta">Intensità</p>
+      <div class="segmento" id="imp-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === intensita}">${nome}</button>`).join("")}</div>
+      <p class="stat-nota">${r.intensitaFonte ? `Proposta ${FONTI_INTENSITA[r.intensitaFonte]}${r.intensitaFonte === "potenza" ? ` (IF ${String(r.intensitaValore).replace(".", ",")})` : ""}: puoi cambiarla.` : haParametri ? "Il file non ha i dati per calcolarla: scegli tu." : "Scegli tu, oppure indica in Impostazioni → Allenamenti la tua frequenza cardiaca o la FTP per calcolarla dal file."}</p>
+      <p class="sheet__nota">Il file non viene conservato: salviamo solo questi numeri, senza il percorso.</p>
+      <button type="button" class="btn" id="btn-salva-importato" style="margin-top:12px;">Salva</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    document.querySelectorAll("#imp-intensita [data-intensita]").forEach((b) => b.addEventListener("click", () => {
+      intensita = b.dataset.intensita;
+      document.querySelectorAll("#imp-intensita [data-intensita]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    }));
+    document.getElementById("btn-salva-importato").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const nuovo = Object.assign({}, r, {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        tipo: document.getElementById("imp-tipo").value,
+        intensita,
+      });
+      if (intensita !== r.intensita) { delete nuovo.intensitaFonte; delete nuovo.intensitaValore; }
+      delete nuovo.giorno;
+      try {
+        const esistenti = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
+          : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
+        if (esistenti.some((x) => x.fonte === "file" && x.ora === r.ora && x.durata === r.durata)) {
+          mostraToast("Questo allenamento è già stato importato");
+          chiudiSheet();
+          return;
+        }
+        await window.cloud.salvaAttivita(UID, r.giorno, { allenamenti: esistenti.concat(nuovo).slice(-6) });
+        chiudiSheet();
+        mostraToast(r.giorno === oggi ? "Allenamento importato" : `Allenamento importato nel ${dataLunga(r.giorno)}`);
+      } catch (err) {
+        btn.disabled = false;
+        mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"), 4000);
+      }
+    });
   }
 
   function allenamentiOggiHTML() {
@@ -1843,8 +2015,9 @@
     return `
       <div class="allenamenti-oggi">
         ${lista.map((a) => `<span class="allenamento-chip">
+            <button type="button" class="allenamento-chip__apri" data-dettaglio-allenamento="${escapeHTML(a.id)}" aria-label="Dettagli: ${escapeHTML(descriviAllenamento(a))}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 4a1.5 1.5 0 1 0 0-.01"/><path d="m7 21 3-6 3 2v5"/><path d="m5 12 3-3 4 1 3 3 3 1"/></svg>
-            ${escapeHTML(descriviAllenamento(a))}
+            ${escapeHTML(descriviAllenamento(a))}${a.fonte === "file" ? ` <span class="allenamento-chip__file" aria-hidden="true">· dati</span>` : ""}</button>
             <button type="button" class="allenamento-chip__via" data-togli-allenamento="${escapeHTML(a.id)}" aria-label="Togli ${escapeHTML(a.tipo || "allenamento")}">✕</button>
           </span>`).join("")}
         <button type="button" class="allenamento-aggiungi" id="btn-aggiungi-allenamento">
@@ -1857,6 +2030,7 @@
   function collegaAllenamentiOggi() {
     const agg = document.getElementById("btn-aggiungi-allenamento");
     if (agg) agg.addEventListener("click", apriNuovoAllenamento);
+    document.querySelectorAll("[data-dettaglio-allenamento]").forEach((b) => b.addEventListener("click", () => apriDettaglioAllenamento(b.dataset.dettaglioAllenamento)));
     document.querySelectorAll("[data-togli-allenamento]").forEach((b) => b.addEventListener("click", async () => {
       const lista = (ATTIVITA_OGGI.allenamenti || []).filter((a) => a.id !== b.dataset.togliAllenamento);
       try { await window.cloud.salvaAttivita(UID, chiaveData(new Date()), { allenamenti: lista }); }
@@ -1868,6 +2042,10 @@
     apriSheet(`
       <h2 class="sheet__titolo">Allenamento di oggi</h2>
       <p class="sheet__nota">Serve a te e al tuo nutrizionista per leggere il piano insieme all'attività. Non cambia le quantità del piano.</p>
+      ${window.allenamentoFile ? `<label class="btn btn--ghost allenamento-file-btn">
+        <input type="file" id="all-file" accept=".fit,.tcx,.gpx,.FIT,.TCX,.GPX" hidden>
+        Importa da file (FIT, TCX o GPX)</label>
+      <p class="stat-nota">Il file dell'allenamento esportato da Garmin, Wahoo, Bryton, Strava, TrainingPeaks… Oppure inseriscilo a mano:</p>` : ""}
       <label class="editor-campo"><span>Attività</span>
         <select id="all-tipo">${TIPI_ALLENAMENTO.map((t) => `<option>${t}</option>`).join("")}</select></label>
       <div class="ric-griglia">
@@ -1878,6 +2056,8 @@
       <div class="segmento" id="all-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === "moderata"}">${nome}</button>`).join("")}</div>
       <button type="button" class="btn" id="btn-salva-allenamento" style="margin-top:16px;">Salva</button>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    const inFile = document.getElementById("all-file");
+    if (inFile) inFile.addEventListener("change", () => { if (inFile.files && inFile.files[0]) apriImportaAllenamento(inFile.files[0]); });
     let intensita = "moderata";
     document.querySelectorAll("#all-intensita [data-intensita]").forEach((b) => b.addEventListener("click", () => {
       intensita = b.dataset.intensita;
@@ -3065,6 +3245,7 @@
       </section>` : ""}
       ${riepilogoVisitaSezioneHTML()}
       ${calcolatoreSezioneHTML()}
+      ${parametriAllenamentoSezioneHTML()}
       ${AUTONOMO ? nutrizionistaSezioneHTML() : ""}
       <section class="settings-section">
         <h2>Promemoria pasti</h2>
@@ -3135,6 +3316,7 @@
     collegaRiepilogoVisita();
     const calc = document.getElementById("btn-calcolatore-cotto");
     if (calc) calc.addEventListener("click", apriCalcolatoreCotto);
+    collegaParametriAllenamento();
     const verificaPremium = document.getElementById("btn-verifica-premium");
     if (verificaPremium) verificaPremium.addEventListener("click", () => { TENTATIVI_PREMIUM = 0; aggiornaPremium(true); });
 
@@ -4583,11 +4765,24 @@
     if (!box || !piano.pazienteUid || !window.cloud.leggiAttivitaPeriodo) return;
     try {
       const da = chiaveData(new Date(Date.now() - 29 * 86400000));
-      const t = testoSintesiAllenamenti(sintesiAllenamenti(await window.cloud.leggiAttivitaPeriodo(piano.pazienteUid, da), da));
+      const perGiorno = await window.cloud.leggiAttivitaPeriodo(piano.pazienteUid, da);
+      const t = testoSintesiAllenamenti(sintesiAllenamenti(perGiorno, da));
       if (!t || pazienteSelezionatoId !== piano.id) return;
-      box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente.</p>
+      // allenamenti importati da file: totali e ultimi 8 con i dati
+      const daFile = [];
+      Object.keys(perGiorno).sort().reverse().forEach((g) => (perGiorno[g].allenamenti || []).forEach((a) => { if (a.fonte === "file") daFile.push(Object.assign({ giorno: g }, a)); }));
+      const tot = daFile.reduce((x, a) => ({ km: x.km + (Number(a.distanzaKm) || 0), dplus: x.dplus + (Number(a.dislivelloM) || 0), kcal: x.kcal + (Number(a.kcal) || 0) }), { km: 0, dplus: 0, kcal: 0 });
+      const rigaFile = daFile.length ? [`${daFile.length} da file`, tot.km ? `${numeroIt(Math.round(tot.km))} km` : "", tot.dplus ? `${numeroIt(tot.dplus)} m di dislivello` : "", tot.kcal ? `${numeroIt(tot.kcal)} kcal stimate dai dispositivi` : ""].filter(Boolean).join(" · ") : "";
+      const elenco = daFile.slice(0, 8).map((a) => {
+        const d = window.statistiche.daChiave(a.giorno);
+        const zone = Array.isArray(a.zoneFC) ? (() => { const tt = a.zoneFC.reduce((x, y) => x + y, 0) || 1; return `Z1-Z2 ${Math.round(((a.zoneFC[0] + a.zoneFC[1]) / tt) * 100)}%`; })() : "";
+        const dati = [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
+        return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(a.tipo || "Allenamento")} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span></li>`;
+      }).join("");
+      box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente o importati dai file dei suoi dispositivi.</p>
         <p class="stat-riga"><span>Totale</span><strong>${escapeHTML(t.riga)}</strong></p>
-        ${t.dettaglio ? `<p class="stat-nota">${escapeHTML(t.dettaglio)}</p>` : ""}`;
+        ${t.dettaglio ? `<p class="stat-nota">${escapeHTML(t.dettaglio)}</p>` : ""}
+        ${rigaFile ? `<p class="stat-nota">${escapeHTML(rigaFile)}</p><ul class="stat-note-pasti">${elenco}</ul>` : ""}`;
       box.hidden = false;
     } catch (e) { /* sezione facoltativa */ }
   }

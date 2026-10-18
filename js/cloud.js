@@ -714,6 +714,10 @@
     },
 
     /** Aspetto dell'app scelto dall'utente (stile, colore, chiaro/scuro, testo). */
+    async salvaParametriAllenamento(uid, parametri) {
+      await db.collection("users").doc(uid).update({ parametriAllenamento: parametri });
+    },
+
     async salvaAspetto(uid, aspetto) {
       await db.collection("users").doc(uid).update({ aspetto });
     },

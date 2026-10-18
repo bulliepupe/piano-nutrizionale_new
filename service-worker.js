@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v85";
+const CACHE_VERSION = "v86";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -33,6 +33,7 @@ const APP_SHELL = [
   "./js/statistiche.js",
   "./js/week-logic.js",
   "./js/macro.js",
+  "./js/allenamento-file.js",
   "./js/firebase-config.js",
   "./js/cloud.js",
   "./js/app.js",
@@ -56,9 +57,28 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((nomi) =>
-      Promise.all(nomi.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n)))
+      Promise.all(nomi.filter((n) => n !== CACHE_NAME && n !== "pnut-condivisi").map((n) => caches.delete(n)))
     ).then(() => self.clients.claim())
   );
+});
+
+// Android: "Condividi con Il mio Piano" da un'app di allenamento (share_target
+// nel manifest). Il file si mette da parte in una cache temporanea e l'app lo
+// apre subito dopo; lo cancella appena letto.
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== "POST" || url.origin !== self.location.origin || !url.pathname.endsWith("/condividi-allenamento")) return;
+  event.respondWith((async () => {
+    try {
+      const dati = await event.request.formData();
+      const file = dati.get("file");
+      if (file && file.size) {
+        const cache = await caches.open("pnut-condivisi");
+        await cache.put("/condiviso/allenamento", new Response(file, { headers: { "x-nome": encodeURIComponent(file.name || "allenamento") } }));
+      }
+    } catch (e) { /* l'app avvisa che il file non è arrivato */ }
+    return Response.redirect(new URL("./?importa-allenamento=1", self.registration.scope).href, 303);
+  })());
 });
 
 // Rete prima (dati/aspetto sempre aggiornati), cache come riserva offline.

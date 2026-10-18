@@ -1137,7 +1137,7 @@ COSA FARE
 - messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
 - macroEffettivi: stima in grammi di carboidrati, proteine, grassi (e alcol, se c'è) di quello che il paziente ha mangiato davvero in questo pasto. Compilalo solo se la nota del paziente descrive cosa ha mangiato, anche a grandi linee; se ha fatto il pasto "in parte", stima la parte effettivamente mangiata. Se la nota manca o non dice cosa ha mangiato, ometti macroEffettivi. Valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard; "affidabilita" alta, media o bassa secondo quanto è precisa la descrizione.
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
-- Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista.
+- Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista. Se l'allenamento è importato da file trovi distanza, dislivello, frequenza cardiaca e le calorie stimate dal dispositivo: usali solo per capire quanto è stato impegnativo, mai per fare conti di calorie da recuperare e senza citare le calorie al paziente.
 
 LIMITI INVIOLABILI
 - Mai suggerire digiuni, pasti saltati, riduzioni oltre circa un quarto di un pasto, eliminazione di gruppi alimentari, attività fisica per "compensare", lassativi o qualsiasi comportamento compensatorio.
@@ -1252,7 +1252,17 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
 
   const attivitaOggi = ((await utenteRef.collection("attivita").doc(dateKey).get()).data()) || {};
   const allenamenti = (Array.isArray(attivitaOggi.allenamenti) ? attivitaOggi.allenamenti : []).slice(0, 4)
-    .map((a) => `${String(a.tipo || "allenamento").slice(0, 40)}${a.durata ? ` ${Math.round(Number(a.durata))} min` : ""}${a.intensita ? `, intensità ${String(a.intensita).slice(0, 20)}` : ""}${a.ora ? `, alle ${String(a.ora).slice(0, 5)}` : ""}`);
+    .map((a) => {
+      const n = (x) => Math.round(Number(x)) || 0;
+      const dati = a.fonte === "file" ? [
+        a.distanzaKm ? `${Number(a.distanzaKm)} km` : "",
+        n(a.dislivelloM) ? `dislivello ${n(a.dislivelloM)} m` : "",
+        n(a.fcMedia) ? `FC media ${n(a.fcMedia)} bpm` : "",
+        Array.isArray(a.zoneFC) && a.zoneFC.length === 5 ? `minuti nelle zone Z1-Z5 ${a.zoneFC.map(n).join("/")}` : "",
+        n(a.kcal) ? `${n(a.kcal)} kcal stimate dal dispositivo` : "",
+      ].filter(Boolean) : [];
+      return `${String(a.tipo || "allenamento").slice(0, 40)}${a.durata ? ` ${n(a.durata)} min` : ""}${a.intensita ? `, intensità ${String(a.intensita).slice(0, 20)}${a.intensitaFonte ? " (misurata)" : ""}` : ""}${a.ora ? `, alle ${String(a.ora).slice(0, 5)}` : ""}${dati.length ? `, dati dal file: ${dati.join(", ")}` : ""}`;
+    });
   const motivo = fatti.motivi && MOTIVI_RISCONTRO[fatti.motivi[pasto]];
   const nota = fatti.note && fatti.note[pasto] ? String(fatti.note[pasto]).slice(0, 200) : "";
   const sostituzioni = (Array.isArray(piano.sostituzioni) ? piano.sostituzioni : []).slice(0, 12)

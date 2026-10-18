@@ -2342,3 +2342,15 @@ body.con-informativa { overflow: hidden; }
 :root[data-stile="essenziale"] .macro-oggi { background: none; border: none; padding: 0; border-top: 1px solid var(--border-soft); padding-top: 14px; border-radius: 0; margin-top: 0; }
 :root[data-stile="essenziale"] .macro-riga__barra { height: 6px; }
 @media (prefers-reduced-motion: reduce) { .macro-riga__barra span { transition: none; } }
+
+/* ---- Allenamenti importati da file ---- */
+.allenamento-chip__apri { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; color: inherit; font: inherit; padding: 0; cursor: pointer; text-align: left; }
+.allenamento-chip__file { font-weight: 500; opacity: 0.75; }
+.allenamento-file-btn { display: flex; align-items: center; justify-content: center; cursor: pointer; margin: 4px 0 6px; }
+.allenamento-dati { margin: 8px 0 4px; }
+:root { --z1: #9AA5B1; --z2: #5E9E6E; --z3: #D9B13B; --z4: #E07B39; --z5: #C8423B; }
+:root[data-theme="dark"] { --z1: #7F8A96; --z2: #6FBF83; --z3: #E6C25A; --z4: #EE9257; --z5: #E46A63; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --z1: #7F8A96; --z2: #6FBF83; --z3: #E6C25A; --z4: #EE9257; --z5: #E46A63; } }
+.zone-fc { display: flex; height: 26px; border-radius: 8px; overflow: hidden; margin: 10px 0 4px; gap: 2px; }
+.zone-fc__z { display: flex; align-items: center; justify-content: center; min-width: 4px; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; }
+.zone-fc__z--1 { background: var(--z1); } .zone-fc__z--2 { background: var(--z2); } .zone-fc__z--3 { background: var(--z3); color: #2a2410; } .zone-fc__z--4 { background: var(--z4); } .zone-fc__z--5 { background: var(--z5); }

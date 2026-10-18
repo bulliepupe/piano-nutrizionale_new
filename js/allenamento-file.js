@@ -1,0 +1,319 @@
+/**
+ * allenamento-file.js
+ * Importazione di un allenamento da file: FIT (Garmin, Wahoo, Bryton, Strava
+ * "Esporta originale"), TCX (Garmin Connect, TrainingPeaks), GPX (Strava e altri).
+ *
+ * Il file si legge sul telefono e NON si conserva: si salva solo il riepilogo
+ * (durata, distanza, dislivello, calorie stimate dal dispositivo, frequenza
+ * cardiaca, potenza, minuti nelle zone). Il percorso GPS viene scartato.
+ *
+ * Le funzioni di calcolo sono "pure" e girano anche in Node (test/allenamento-file.test.js).
+ * Per i FIT serve js/vendor/fit-parser.min.js (fit-file-parser, licenza MIT), caricato solo al bisogno.
+ */
+(function () {
+  "use strict";
+
+  const TIPI = {
+    cycling: "Bici", e_biking: "Bici", biking: "Bici", bike: "Bici", ciclismo: "Bici", ride: "Bici", virtualride: "Bici",
+    running: "Corsa", run: "Corsa", trail_running: "Corsa", corsa: "Corsa",
+    walking: "Camminata veloce", walk: "Camminata veloce", hiking: "Camminata veloce", hike: "Camminata veloce",
+    swimming: "Nuoto", swim: "Nuoto",
+    training: "Palestra / pesi", fitness_equipment: "Palestra / pesi", strength_training: "Palestra / pesi", weighttraining: "Palestra / pesi",
+    yoga: "Yoga / pilates", pilates: "Yoga / pilates",
+    soccer: "Sport di squadra", basketball: "Sport di squadra", volleyball: "Sport di squadra",
+  };
+
+  function tipoDa(sport) {
+    const k = String(sport || "").toLowerCase().replace(/[\s-]+/g, "_");
+    if (TIPI[k]) return TIPI[k];
+    if (/bik|cycl|ride/.test(k)) return "Bici";
+    if (/run/.test(k)) return "Corsa";
+    if (/walk|hik/.test(k)) return "Camminata veloce";
+    if (/swim/.test(k)) return "Nuoto";
+    return "Altro";
+  }
+
+  function num(x) { const n = Number(x); return Number.isFinite(n) ? n : null; }
+
+  // ---------------------------------------------------------------------
+  // Formato comune: { formato, sport, inizio (ms), durataSec, distanzaM, dislivelloM,
+  //   kcal, fcMedia, fcMax, potenzaMedia, potenzaNormalizzata, campioni: [{t, fc, w}] }
+  // ---------------------------------------------------------------------
+
+  /** Dall'oggetto restituito da fit-file-parser (mode "list", lengthUnit "m"). */
+  function daFit(data) {
+    const sessioni = (data && data.sessions) || [];
+    if (!sessioni.length) throw new Error("nessuna-sessione");
+    const s = sessioni[0];
+    const inizio = new Date(s.start_time || s.timestamp).getTime();
+    const somma = (k) => sessioni.reduce((t, x) => t + (num(x[k]) || 0), 0);
+    const campioni = ((data && data.records) || []).map((r) => ({
+      t: (new Date(r.timestamp).getTime() - inizio) / 1000,
+      fc: num(r.heart_rate), w: num(r.power),
+    })).filter((c) => Number.isFinite(c.t));
+    return {
+      formato: "FIT",
+      sport: s.sport,
+      inizio,
+      durataSec: somma("total_timer_time") || somma("total_elapsed_time"),
+      distanzaM: somma("total_distance"),
+      dislivelloM: somma("total_ascent") || null,
+      kcal: somma("total_calories") || null,
+      fcMedia: num(s.avg_heart_rate),
+      fcMax: num(s.max_heart_rate),
+      potenzaMedia: num(s.avg_power),
+      potenzaNormalizzata: num(s.normalized_power),
+      campioni,
+    };
+  }
+
+  function tag(xml, nome) {
+    const m = xml.match(new RegExp("<(?:\\w+:)?" + nome + "(?:\\s[^>]*)?>([\\s\\S]*?)</(?:\\w+:)?" + nome + ">", "i"));
+    return m ? m[1].trim() : null;
+  }
+  function tutti(xml, nome) {
+    return xml.match(new RegExp("<(?:\\w+:)?" + nome + "[\\s>][\\s\\S]*?</(?:\\w+:)?" + nome + ">", "gi")) || [];
+  }
+
+  function dislivelloDa(quote) {
+    // salita con soglia di 3 m, per non sommare il rumore dell'altimetro
+    let salita = 0, base = null;
+    quote.forEach((q) => {
+      if (q == null) return;
+      if (base == null) { base = q; return; }
+      if (q - base >= 3) { salita += q - base; base = q; } else if (q < base) base = q;
+    });
+    return salita ? Math.round(salita) : null;
+  }
+
+  function mediaMax(campioni, k) {
+    const v = campioni.map((c) => c[k]).filter((x) => x != null && x > 0);
+    if (!v.length) return [null, null];
+    return [Math.round(v.reduce((a, b) => a + b, 0) / v.length), Math.max.apply(null, v)];
+  }
+
+  /** TCX (testo XML). */
+  function daTcx(xml) {
+    const att = tutti(xml, "Activity")[0] || xml;
+    const sportM = att.match(/<(?:\w+:)?Activity[^>]*Sport="([^"]+)"/i);
+    const giri = tutti(att, "Lap");
+    if (!giri.length) throw new Error("nessun-giro");
+    const inizioM = att.match(/<(?:\w+:)?Lap[^>]*StartTime="([^"]+)"/i);
+    const inizio = new Date(inizioM ? inizioM[1] : tag(att, "Id")).getTime();
+    let durata = 0, dist = 0, kcal = 0;
+    giri.forEach((g) => {
+      durata += num(tag(g, "TotalTimeSeconds")) || 0;
+      dist += num(tag(g, "DistanceMeters")) || 0;
+      kcal += num(tag(g, "Calories")) || 0;
+    });
+    const punti = tutti(att, "Trackpoint");
+    const campioni = punti.map((p) => {
+      const hr = tag(p, "HeartRateBpm");
+      return {
+        t: (new Date(tag(p, "Time")).getTime() - inizio) / 1000,
+        fc: hr ? num(tag(hr, "Value")) : null,
+        w: num(tag(p, "Watts")),
+        q: num(tag(p, "AltitudeMeters")),
+      };
+    }).filter((c) => Number.isFinite(c.t));
+    const [fcMediaC, fcMaxC] = mediaMax(campioni, "fc");
+    const [wMedia] = mediaMax(campioni, "w");
+    const fcMediaGiro = giri.map((g) => { const b = tag(g, "AverageHeartRateBpm"); return b ? num(tag(b, "Value")) : null; }).filter(Boolean);
+    const fcMaxGiro = giri.map((g) => { const b = tag(g, "MaximumHeartRateBpm"); return b ? num(tag(b, "Value")) : null; }).filter(Boolean);
+    return {
+      formato: "TCX",
+      sport: sportM ? sportM[1] : "",
+      inizio,
+      durataSec: durata,
+      distanzaM: dist,
+      dislivelloM: dislivelloDa(campioni.map((c) => c.q)),
+      kcal: kcal || null,
+      // i valori del giro sono quelli calcolati dal dispositivo: hanno la precedenza
+      fcMedia: fcMediaGiro.length ? Math.round(fcMediaGiro.reduce((a, b) => a + b, 0) / fcMediaGiro.length) : fcMediaC,
+      fcMax: Math.max(fcMaxC || 0, fcMaxGiro.length ? Math.max.apply(null, fcMaxGiro) : 0) || null,
+      potenzaMedia: wMedia,
+      potenzaNormalizzata: null,
+      campioni,
+    };
+  }
+
+  function distanzaM(a, b) {
+    const R = 6371000, r = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  /** GPX (testo XML). Di solito senza calorie: la durata esclude le pause oltre 60 secondi. */
+  function daGpx(xml) {
+    const punti = xml.match(/<trkpt[\s\S]*?(?:<\/trkpt>|\/>)/gi) || [];
+    if (punti.length < 2) throw new Error("nessun-punto");
+    const pp = punti.map((p) => {
+      const lat = p.match(/lat="([^"]+)"/i), lon = p.match(/lon="([^"]+)"/i);
+      return {
+        lat: lat ? Number(lat[1]) : null, lon: lon ? Number(lon[1]) : null,
+        ms: new Date(tag(p, "time")).getTime(),
+        q: num(tag(p, "ele")), fc: num(tag(p, "hr")), w: num(tag(p, "power")),
+      };
+    }).filter((x) => Number.isFinite(x.ms));
+    if (pp.length < 2) throw new Error("nessun-punto");
+    const inizio = pp[0].ms;
+    let dist = 0, durata = 0;
+    for (let i = 1; i < pp.length; i++) {
+      if (pp[i].lat != null && pp[i - 1].lat != null) dist += distanzaM(pp[i - 1], pp[i]);
+      const dt = (pp[i].ms - pp[i - 1].ms) / 1000;
+      if (dt > 0 && dt <= 60) durata += dt;
+    }
+    const campioni = pp.map((x) => ({ t: (x.ms - inizio) / 1000, fc: x.fc, w: x.w }));
+    const [fcMedia, fcMax] = mediaMax(campioni, "fc");
+    const [wMedia] = mediaMax(campioni, "w");
+    const tipoM = xml.match(/<trk>[\s\S]*?<type>([^<]+)<\/type>/i);
+    return {
+      formato: "GPX",
+      sport: tipoM ? tipoM[1] : "",
+      inizio,
+      durataSec: durata,
+      distanzaM: dist,
+      dislivelloM: dislivelloDa(pp.map((x) => x.q)),
+      kcal: null,
+      fcMedia, fcMax,
+      potenzaMedia: wMedia,
+      potenzaNormalizzata: null,
+      campioni,
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Zone e intensità
+  // ---------------------------------------------------------------------
+
+  /**
+   * Limiti delle 5 zone di frequenza cardiaca (bpm, limite inferiore di Z2…Z5).
+   * Con la FC di soglia: 81 / 90 / 94 / 100 % (zone di Friel); con la FC massima: 60 / 70 / 80 / 90 %.
+   */
+  function limitiZone(parametri) {
+    parametri = parametri || {};
+    const soglia = num(parametri.fcSoglia), max = num(parametri.fcMax);
+    if (soglia && soglia >= 100 && soglia <= 220) return { base: "soglia", limiti: [0.81, 0.90, 0.94, 1.00].map((p) => Math.round(soglia * p)) };
+    if (max && max >= 120 && max <= 230) return { base: "massima", limiti: [0.60, 0.70, 0.80, 0.90].map((p) => Math.round(max * p)) };
+    return null;
+  }
+
+  /** Minuti in ciascuna zona Z1…Z5, pesando ogni campione per il tempo fino al successivo (al massimo 10 s). */
+  function minutiInZone(campioni, limiti) {
+    const sec = [0, 0, 0, 0, 0];
+    for (let i = 0; i < campioni.length - 1; i++) {
+      const fc = campioni[i].fc;
+      if (!fc) continue;
+      const dt = Math.min(10, Math.max(0, campioni[i + 1].t - campioni[i].t));
+      let z = 0;
+      while (z < 4 && fc >= limiti[z]) z++;
+      sec[z] += dt;
+    }
+    const tot = sec.reduce((a, b) => a + b, 0);
+    if (tot < 120) return null;
+    return sec.map((s) => Math.round(s / 60));
+  }
+
+  /**
+   * Intensità misurata: con la potenza e la FTP (fattore di intensità), altrimenti
+   * con il tempo nelle zone di frequenza cardiaca, altrimenti con la FC media.
+   * Restituisce { intensita, fonte, valore } oppure null.
+   */
+  function intensitaMisurata(r, parametri) {
+    parametri = parametri || {};
+    const ftp = num(parametri.ftp);
+    const w = r.potenzaNormalizzata || r.potenzaMedia;
+    if (ftp && ftp >= 80 && w) {
+      const fi = w / ftp;
+      return { intensita: fi < 0.75 ? "leggera" : fi <= 0.9 ? "moderata" : "intensa", fonte: "potenza", valore: Math.round(fi * 100) / 100 };
+    }
+    if (r.zoneFC) {
+      const tot = r.zoneFC.reduce((a, b) => a + b, 0) || 1;
+      const bassa = (r.zoneFC[0] + r.zoneFC[1]) / tot, alta = (r.zoneFC[3] + r.zoneFC[4]) / tot;
+      return { intensita: alta >= 0.2 ? "intensa" : bassa >= 0.75 ? "leggera" : "moderata", fonte: "zone", valore: null };
+    }
+    const max = num(parametri.fcMax);
+    if (max && r.fcMedia) {
+      const p = r.fcMedia / max;
+      return { intensita: p < 0.7 ? "leggera" : p < 0.8 ? "moderata" : "intensa", fonte: "fc", valore: Math.round(p * 100) };
+    }
+    return null;
+  }
+
+  function dueCifre(n) { return String(n).padStart(2, "0"); }
+
+  /**
+   * Riepilogo da salvare (niente campioni né percorso).
+   * parametri: { fcMax, fcSoglia, ftp } dalle Impostazioni del paziente.
+   */
+  function riepilogo(d, parametri) {
+    const inizio = new Date(d.inizio);
+    const durata = Math.round((d.durataSec || 0) / 60);
+    const r = {
+      tipo: tipoDa(d.sport),
+      durata,
+      giorno: `${inizio.getFullYear()}-${dueCifre(inizio.getMonth() + 1)}-${dueCifre(inizio.getDate())}`,
+      ora: `${dueCifre(inizio.getHours())}:${dueCifre(inizio.getMinutes())}`,
+      fonte: "file",
+      formato: d.formato,
+    };
+    if (d.distanzaM > 50) r.distanzaKm = Math.round(d.distanzaM / 100) / 10;
+    if (d.dislivelloM > 0) r.dislivelloM = Math.round(d.dislivelloM);
+    if (d.kcal > 0) r.kcal = Math.round(d.kcal);
+    if (d.fcMedia > 0) r.fcMedia = Math.round(d.fcMedia);
+    if (d.fcMax > 0) r.fcMax = Math.round(d.fcMax);
+    if (d.potenzaMedia > 0) r.potenzaMedia = Math.round(d.potenzaMedia);
+    if (d.potenzaNormalizzata > 0) r.potenzaNormalizzata = Math.round(d.potenzaNormalizzata);
+    const zone = limitiZone(parametri);
+    if (zone) {
+      const m = minutiInZone(d.campioni || [], zone.limiti);
+      if (m) { r.zoneFC = m; r.zoneBase = zone.base; }
+    }
+    const mis = intensitaMisurata(r, parametri);
+    if (mis) { r.intensita = mis.intensita; r.intensitaFonte = mis.fonte; if (mis.valore != null) r.intensitaValore = mis.valore; }
+    return r;
+  }
+
+  // ---------------------------------------------------------------------
+  // Solo browser: lettura del file scelto dall'utente
+  // ---------------------------------------------------------------------
+  let caricamentoFit = null;
+  function caricaLettoreFit() {
+    if (typeof window === "undefined") return Promise.reject(new Error("solo-browser"));
+    if (window.FitParser) return Promise.resolve(window.FitParser);
+    if (!caricamentoFit) {
+      caricamentoFit = new Promise((ok, ko) => {
+        const s = document.createElement("script");
+        s.src = "js/vendor/fit-parser.min.js";
+        s.onload = () => (window.FitParser ? ok(window.FitParser) : ko(new Error("lettore-fit")));
+        s.onerror = () => { caricamentoFit = null; ko(new Error("lettore-fit")); };
+        document.head.appendChild(s);
+      });
+    }
+    return caricamentoFit;
+  }
+
+  function leggiFit(buffer) {
+    return caricaLettoreFit().then((FitParser) => new Promise((ok, ko) => {
+      const p = new FitParser({ force: true, mode: "list", speedUnit: "km/h", lengthUnit: "m" });
+      p.parse(buffer, (err, data) => (err ? ko(new Error("fit-illeggibile")) : ok(data)));
+    }));
+  }
+
+  /** Legge un File (input type=file) e restituisce il formato comune. */
+  async function leggiFile(file) {
+    if (!file) throw new Error("nessun-file");
+    if (file.size > 25 * 1024 * 1024) throw new Error("file-troppo-grande");
+    const nome = String(file.name || "").toLowerCase();
+    if (nome.endsWith(".fit")) return daFit(await leggiFit(await file.arrayBuffer()));
+    const testo = await file.text();
+    if (nome.endsWith(".tcx") || /<TrainingCenterDatabase/i.test(testo)) return daTcx(testo);
+    if (nome.endsWith(".gpx") || /<gpx[\s>]/i.test(testo)) return daGpx(testo);
+    throw new Error("formato-non-supportato");
+  }
+
+  const api = { tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, riepilogo, leggiFile };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  if (typeof window !== "undefined") window.allenamentoFile = api;
+})();
