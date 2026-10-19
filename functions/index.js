@@ -1124,6 +1124,15 @@ const MOTIVI_RISCONTRO = {
 };
 const RE_SUGGERIMENTO_VIETATO = /digiun|salta(re|lo|la|te)?\b|non mangiare|niente (colazione|pranzo|cena|merenda|spuntino)|elimina (il|la|lo) (pasto|cena|pranzo)|attivit[aà] fisic|allenament|camminat|\bcorsa\b|palestra|bruci|compens|purg|vomit|lassativ/i;
 const RE_SUGGERIMENTO_VUOTO = /(niente|nulla|non) (da )?cambia|così com'è|va bene così|resta invariat|^\s*(mantieni|continua con|segui) (il|la|lo) (piano|cena|pranzo|spuntino|merenda|colazione)( del piano| come previst[oa])?\s*[.:,]?\s*(la|il|è)?\b(?!.*\b(scegli|aggiungi|preferisci|al posto|invece)\b)/i;
+// Pasti di domani: l'AI non conosce il piano degli altri giorni, quindi non deve nominarli.
+const RE_DOMANI_PASTO = /\bdomani\b[^.!?]*\b(colazione|pranzo|cena|spuntin|merenda)|\b(colazione|pranzo|cena|spuntin|merenda)\w*\b[^.!?]*\bdomani\b/i;
+// Frasi ipotetiche sul piano ("se presenti nel tuo piano"): l'AI riceve già tutto quello che può usare.
+const RE_IPOTETICO = /,?\s*\(?\s*(?:se|qualora|purché)\s+(?:(?:è|sono|li|lo|la|le|ce\s+l[oaie]|c'è)\s+)?(?:present|previst|inclus|indicat|consentit)\w*(?:\s+(?:nel|dal|in|nella\s+tua)\s+(?:tuo\s+)?(?:piano|dieta))?\s*\)?/gi;
+/** Toglie le frasi che nominano i pasti di domani e le condizioni ipotetiche sul piano. */
+function ripulisciRiscontro(t) {
+  const frasi = String(t == null ? "" : t).replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]*/g) || [];
+  return frasi.filter((f) => !RE_DOMANI_PASTO.test(f)).join(" ").replace(RE_IPOTETICO, "").replace(/\s+([,.;:!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
+}
 const MESSAGGIO_BASE = "Un pasto diverso dal previsto non compromette il percorso: al prossimo pasto riparti dal piano.";
 
 const ISTRUZIONI_RISCONTRO = `Sei l'assistente dell'app "Il mio Piano", usata dai pazienti di un nutrizionista. Il paziente ha segnato un pasto come non svolto come da piano. Dai un riscontro breve, rassicurante e pratico chiamando lo strumento riscontro_pasto.
@@ -1133,9 +1142,10 @@ COSA FARE
 - "irrilevante" quando la variazione è uno scambio equivalente: stesso gruppo alimentare e quantità simile, anche se i valori differiscono di poco. Esempi: mela al posto dei frutti di bosco, mandorle al posto delle noci, merluzzo al posto dell'orata, riso, farro o pasta integrale al posto dell'orzo o della pasta, tacchino al posto del pollo, oppure un alimento presente nelle sostituzioni approvate dal nutrizionista. In questo caso: stima breve che lo dica (es. "Pasta integrale al posto dell'orzo: valori nutrizionali simili"), spiegazione vuota o di una frase, nessun suggerimento, e un messaggio che confermi soltanto che va bene così (es. "Va bene così: prosegui con il piano."). Non dire di "tornare" o "riprendere" il piano: con uno scambio equivalente il paziente non ne è mai uscito.
 - stima: una frase con l'effetto principale in termini semplici e approssimati (es. "Circa 25-30 g di proteine in meno del previsto", "Circa 250 kcal in più, soprattutto zuccheri"). Usa "circa": sono stime, non misure.
 - spiegazione: una o due frasi su cosa significa per la giornata, senza allarmismi.
-- suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Non ridurre mai le porzioni di proteine (carne, pesce, uova, legumi, latticini) né di verdura: saziano e sostengono il piano. Se serve alleggerire, agisci su carboidrati aggiunti e condimenti (pane, cracker, olio oltre il previsto, opzione più ricca) o scegli l'alternativa più leggera prevista dal piano. Usa solo alimenti già presenti nel piano del giorno, nelle sostituzioni o nelle indicazioni del nutrizionista. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
+- suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Non ridurre mai le porzioni di proteine (carne, pesce, uova, legumi, latticini) né di verdura: saziano e sostengono il piano. Se serve alleggerire, agisci su carboidrati aggiunti e condimenti (pane, cracker, olio oltre il previsto, opzione più ricca) o scegli l'alternativa più leggera prevista dal piano. Usa solo alimenti scritti testualmente nei pasti rimasti, nelle sostituzioni o nelle indicazioni del nutrizionista che ricevi qui: sono tutto ciò che puoi usare. Non scrivere mai condizioni come "se presente nel tuo piano" o "se previsto": se nessun alimento di quell'elenco va bene, non dare il suggerimento. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
 - messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
 - macroEffettivi: stima in grammi di carboidrati, proteine, grassi (e alcol, se c'è) di quello che il paziente ha mangiato davvero in questo pasto. Compilalo solo se la nota del paziente descrive cosa ha mangiato, anche a grandi linee; se ha fatto il pasto "in parte", stima la parte effettivamente mangiata. Se la nota manca o non dice cosa ha mangiato, ometti macroEffettivi. Valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard; "affidabilita" alta, media o bassa secondo quanto è precisa la descrizione.
+- Non nominare mai i pasti di domani o di altri giorni (non li conosci): se oggi non ci sono altri pasti, al massimo ricorda che domani si riparte dal piano, senza dire cosa mangiare.
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
 - Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista. Se l'allenamento è importato da file trovi distanza, dislivello, frequenza cardiaca e le calorie stimate dal dispositivo: usali solo per capire quanto è stato impegnativo, mai per fare conti di calorie da recuperare e senza citare le calorie al paziente.
 
@@ -1191,15 +1201,17 @@ function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
   const impatto = r.impatto === "nessuno" ? "irrilevante" : ["irrilevante", "lieve", "moderato", "rilevante"].includes(r.impatto) ? r.impatto : "lieve";
   // variazione irrilevante: mai aggiustamenti
   const suggerimenti = !conSuggerimenti || impatto === "irrilevante" ? [] : (Array.isArray(r.suggerimenti) ? r.suggerimenti : [])
-    .filter((x) => x && rimanenti.includes(x.pasto) && x.testo && !RE_SUGGERIMENTO_VIETATO.test(x.testo) && !RE_SUGGERIMENTO_VUOTO.test(x.testo))
-    .slice(0, 2).map((x) => ({ pasto: x.pasto, testo: breve(x.testo, 300) }));
-  let messaggio = breve(r.messaggio, 240);
+    .filter((x) => x && rimanenti.includes(x.pasto) && x.testo && !RE_SUGGERIMENTO_VIETATO.test(x.testo) && !RE_SUGGERIMENTO_VUOTO.test(x.testo) && !/\bdomani\b/i.test(x.testo))
+    .map((x) => ({ pasto: x.pasto, testo: breve(ripulisciRiscontro(x.testo), 300) }))
+    .filter((x) => x.testo.length > 8)
+    .slice(0, 2);
+  let messaggio = breve(ripulisciRiscontro(r.messaggio), 240);
   if (!messaggio || RE_SUGGERIMENTO_VIETATO.test(messaggio)) messaggio = impatto === "irrilevante" ? "Va benissimo così: continua con il piano." : MESSAGGIO_BASE;
   // scambio equivalente: il paziente non è mai uscito dal piano, niente "riprendi" o "torna"
   if (impatto === "irrilevante" && /\b(ripren|riparti|torna|rientr)/i.test(messaggio)) messaggio = "Va benissimo così: continua con il piano.";
-  let spiegazione = breve(r.spiegazione, 420);
+  let spiegazione = breve(ripulisciRiscontro(r.spiegazione), 420);
   if (RE_SUGGERIMENTO_VIETATO.test(spiegazione)) spiegazione = "";
-  const out = { impatto, stima: breve(r.stima, 200), spiegazione, suggerimenti, messaggio };
+  const out = { impatto, stima: breve(ripulisciRiscontro(r.stima), 200), spiegazione, suggerimenti, messaggio };
   // stima dei macronutrienti del pasto effettivo (per il riquadro della scheda Oggi)
   if (r.macroEffettivi && typeof r.macroEffettivi === "object") {
     const m = macroLogic.pulisciStima(Object.assign({}, r.macroEffettivi, { libero: false }));
