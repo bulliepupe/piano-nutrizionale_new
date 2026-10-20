@@ -2365,3 +2365,4 @@ body.con-informativa { overflow: hidden; }
 #btn-elimina-allenamento { margin-top: 14px; }
 /* Nei pannelli lunghi (che scorrono) nessun elemento deve schiacciarsi: la barra delle zone, senza testo, arrivava a 0 px */
 .sheet > * { flex-shrink: 0; }
+.stato-pasto__avviso { display: block; margin-top: 4px; font-size: 12px; line-height: 1.4; color: var(--ink-faint); font-weight: 400; }

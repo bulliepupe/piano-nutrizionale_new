@@ -2722,6 +2722,7 @@
         <label class="editor-campo stato-pasto__nota">Vuoi aggiungere un dettaglio? <span>(facoltativo)</span>
           <textarea id="stato-pasto-nota" rows="2" maxlength="${S.MAX_NOTA}" placeholder="${escapeHTML(S.SUGGERIMENTI_NOTA[motivo] || (scelta === "diverso" ? "Cosa hai mangiato al posto del pasto previsto?" : "Es. riso al posto della pasta, ho lasciato metà del secondo…"))}">${escapeHTML(nota)}</textarea>
           <span class="stato-pasto__sotto">${DETTATURA_DISPONIBILE ? `<button type="button" class="btn-detta" id="stato-pasto-detta" aria-label="Detta la nota a voce">🎤 Detta</button>` : ""}<small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small></span>
+          <small class="stato-pasto__avviso">Scrivi solo cosa hai mangiato e perché: niente nomi, telefoni o indirizzi.${CONSENSO_AI ? " La nota può essere letta dall'intelligenza artificiale per il riscontro." : ""}</small>
         </label>` : "";
       box.querySelectorAll("[data-motivo]").forEach((b) => b.addEventListener("click", () => {
         motivo = motivo === b.dataset.motivo ? null : b.dataset.motivo;

@@ -1092,7 +1092,7 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
     }
     contenuto.push({ type: "text", text: `Pagina ${i + 1} — testo estratto:\n${testoBreve(p && p.testo, 12000) || "(nessun testo: usa l'immagine)"}` });
   });
-  const note = testoBreve(request.data && request.data.note, 1000);
+  const note = oscuraIdentificativi(testoBreve(request.data && request.data.note, 1000));
   contenuto.push({ type: "text", text: `Converti il piano di queste ${pagine.length} pagine chiamando lo strumento piano_convertito.${note ? `\nIndicazioni del professionista: ${note}` : ""}` });
 
   let risposta;
@@ -1168,6 +1168,18 @@ const RE_IPOTETICO = /,?\s*\(?\s*(?:se|qualora|purché)\s+(?:(?:è|sono|li|lo|la
 function ripulisciRiscontro(t) {
   const frasi = String(t == null ? "" : t).replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]*/g) || [];
   return frasi.filter((f) => !RE_DOMANI_PASTO.test(f)).join(" ").replace(RE_IPOTETICO, "").replace(/\s+([,.;:!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
+}
+// Dati identificativi nei testi liberi (note, indicazioni): prima dell'invio
+// all'AI si sostituiscono email, numeri di telefono, codici fiscali e IBAN.
+function oscuraIdentificativi(t) {
+  return String(t == null ? "" : t)
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
+    .replace(/\b[A-Z]{6}\d{2}[A-EHLMPRST]\d{2}[A-Z]\d{3}[A-Z]\b/gi, "[codice fiscale]")
+    .replace(/\bIT\d{2}[A-Z]\d{10}[0-9A-Z]{12}\b/gi, "[IBAN]")
+    .replace(/(?:\+|00)?\d[\d\s.\/-]{7,}\d/g, (m) => {
+      if (/^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}$/.test(m.trim())) return m; // date
+      return m.replace(/\D/g, "").length >= 9 ? "[telefono]" : m;
+    });
 }
 const MESSAGGIO_BASE = "Un pasto diverso dal previsto non compromette il percorso: al prossimo pasto riparti dal piano.";
 
@@ -1313,7 +1325,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
       return `${String(a.tipo || "allenamento").slice(0, 40)}${a.indoor ? " al chiuso" : ""}${a.durata ? ` ${n(a.durata)} min` : ""}${a.intensita ? `, intensità ${String(a.intensita).slice(0, 20)}${a.intensitaFonte ? " (misurata)" : ""}` : ""}${a.ora ? `, alle ${String(a.ora).slice(0, 5)}` : ""}${dati.length ? `, dati dal file: ${dati.join(", ")}` : ""}`;
     });
   const motivo = fatti.motivi && MOTIVI_RISCONTRO[fatti.motivi[pasto]];
-  const nota = fatti.note && fatti.note[pasto] ? String(fatti.note[pasto]).slice(0, 200) : "";
+  const nota = fatti.note && fatti.note[pasto] ? oscuraIdentificativi(String(fatti.note[pasto]).slice(0, 200)) : "";
   const sostituzioni = (Array.isArray(piano.sostituzioni) ? piano.sostituzioni : []).slice(0, 12)
     .map((g) => `${g.nome}: ${(g.opzioni || []).join(", ")}`).join("\n");
   const testo = [
@@ -1717,7 +1729,7 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
   const usate = (utente.analisiAI && utente.analisiAI.data === oggi) ? Number(utente.analisiAI.n) || 0 : 0;
   if (usate >= LIMITE_ANALISI_GIORNO) throw new HttpsError("resource-exhausted", "limite-giornaliero");
 
-  const testo = JSON.stringify(dati).slice(0, 14000);
+  const testo = oscuraIdentificativi(JSON.stringify(dati)).slice(0, 14000);
   let risposta;
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
