@@ -75,12 +75,17 @@ service cloud.firestore {
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato", "stimeRese", "stimeMacro"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato", "stimeRese", "stimeMacro", "consensi"]);
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
       // può leggerle (non modificarle) per le statistiche di andamento.
       // Riscontri AI sui pasti non come da piano: li scrive solo il server
+      // Storico dei consensi del paziente: lo scrive solo il server
+      match /consensiStorico/{voce} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow write: if false;
+      }
       match /riscontri/{riscontroId} {
         allow write: if false;
         allow read: if isSignedIn() && (

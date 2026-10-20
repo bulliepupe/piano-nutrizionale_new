@@ -559,6 +559,32 @@ async function pianoDelPaziente(uid) {
  * (email e password), poi chiama questa funzione che crea profilo e piano.
  * Dati attesi: { nome, piano } (piano = piano di partenza, anche vuoto).
  */
+// ---------------------------------------------------------------------------
+// CONSENSI DEL PAZIENTE (versione dell'informativa per i pazienti)
+// ---------------------------------------------------------------------------
+// consensi: { versione, maggiorenne: data, salute: { si, data }, ai: { si, data } }.
+// Li scrive solo il server; ogni cambio va anche in users/{uid}/consensiStorico.
+const VERSIONE_CONSENSI = "2026-10-20";
+
+/** Vero se il paziente ha revocato (o negato) il consenso alle funzioni AI. */
+function consensoAINegato(utente) {
+  return !!(utente && utente.consensi && utente.consensi.ai && utente.consensi.ai.si === false);
+}
+
+exports.aggiornaConsensoAI = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const si = !!(request.data && request.data.si === true);
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  const batch = db.batch();
+  batch.set(utenteRef, { consensi: { versione: VERSIONE_CONSENSI, ai: { si, data: FieldValue.serverTimestamp() } } }, { merge: true });
+  batch.set(utenteRef.collection("consensiStorico").doc(), { tipo: "ai", si, versione: VERSIONE_CONSENSI, data: FieldValue.serverTimestamp(), da: "impostazioni" });
+  await batch.commit();
+  return { si };
+});
+
 exports.registraPaziente = onCall(async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
@@ -567,6 +593,10 @@ exports.registraPaziente = onCall(async (request) => {
   const email = String((request.auth.token && request.auth.token.email) || "").toLowerCase();
   if (!nome) throw new HttpsError("invalid-argument", "Indica il tuo nome.");
   if (!email) throw new HttpsError("invalid-argument", "Account senza email.");
+  const c = d.consensi || {};
+  if (c.maggiorenne !== true || c.salute !== true) throw new HttpsError("invalid-argument", "consensi-mancanti");
+  const ora = FieldValue.serverTimestamp();
+  const consensi = { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, data: ora } };
   const piano = d.piano && typeof d.piano === "object" && !Array.isArray(d.piano) ? d.piano : { settimane: {} };
   if (Buffer.byteLength(JSON.stringify(piano)) > 900 * 1024) {
     throw new HttpsError("invalid-argument", "Piano di partenza troppo grande.");
@@ -580,7 +610,10 @@ exports.registraPaziente = onCall(async (request) => {
   await db.runTransaction(async (t) => {
     const esistente = await t.get(utenteRef);
     if (esistente.exists) throw new HttpsError("already-exists", "profilo-esistente");
-    t.create(utenteRef, { ruolo: "paziente", nome, email, autonomo: true, creato: FieldValue.serverTimestamp() });
+    t.create(utenteRef, { ruolo: "paziente", nome, email, autonomo: true, creato: FieldValue.serverTimestamp(), consensi });
+    ["maggiorenne", "salute", "ai"].forEach((tipo) => t.create(utenteRef.collection("consensiStorico").doc(), {
+      tipo, si: tipo === "ai" ? c.ai === true : true, versione: VERSIONE_CONSENSI, data: ora, da: "registrazione",
+    }));
     t.create(pianoRef, Object.assign(pulito, {
       professionistaUid: null,
       gestore: "paziente",
@@ -1020,6 +1053,8 @@ exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 
   let limiteMese = LIMITE_IMPORTAZIONI_MESE;
   if (utente.ruolo === "professionista") {
     if (!statoLicenzaServer(utente.licenza, adesso).attiva) throw new HttpsError("failed-precondition", "licenza-non-attiva");
+  } else if (utente.ruolo === "paziente" && consensoAINegato(utente)) {
+    throw new HttpsError("failed-precondition", "consenso-ai-negato");
   } else if (utente.ruolo === "paziente" && utente.autonomo) {
     // Paziente autonomo: importa nel proprio piano, solo se ne è il gestore.
     const pianoDoc = await pianoDelPaziente(uid);
@@ -1229,6 +1264,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (consensoAINegato(utente)) throw new HttpsError("failed-precondition", "consenso-ai-negato");
   if (!(await statoPremiumPaziente(utente, Date.now())).attivo) throw new HttpsError("failed-precondition", "premium-richiesto");
   const pianiSnap = await db.collection("piani").where("pazienteUid", "==", uid).limit(1).get();
   if (pianiSnap.empty) throw new HttpsError("failed-precondition", "nessun-piano");
@@ -1373,6 +1409,7 @@ exports.stimaRese = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 },
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (consensoAINegato(utente)) throw new HttpsError("failed-precondition", "consenso-ai-negato");
   if (!(await statoPremiumPaziente(utente, Date.now())).attivo) throw new HttpsError("failed-precondition", "premium-richiesto");
 
   // quelli già in archivio non si richiedono
@@ -1521,6 +1558,7 @@ exports.stimaMacro = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (consensoAINegato(utente)) throw new HttpsError("failed-precondition", "consenso-ai-negato");
   if (!(await statoPremiumPaziente(utente, Date.now())).attivo) throw new HttpsError("failed-precondition", "premium-richiesto");
 
   // quelli già in archivio non si richiedono
@@ -1669,6 +1707,10 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
   const pianoRef = db.collection("piani").doc(pianoId);
   const piano = (await pianoRef.get()).data();
   if (!piano || piano.professionistaUid !== uid) throw new HttpsError("permission-denied", "Paziente non tuo.");
+  if (piano.pazienteUid) {
+    const pazienteDoc = (await db.collection("users").doc(piano.pazienteUid).get()).data();
+    if (consensoAINegato(pazienteDoc)) throw new HttpsError("failed-precondition", "consenso-ai-negato");
+  }
 
   const oggi = new Date().toISOString().slice(0, 10);
   const usate = (utente.analisiAI && utente.analisiAI.data === oggi) ? Number(utente.analisiAI.n) || 0 : 0;

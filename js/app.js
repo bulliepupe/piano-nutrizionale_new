@@ -69,6 +69,7 @@
   let PIANO_GREZZO = null; // come salvato (con l'eventuale piano programmato in "prossimo")
   let ATTIVITA_OGGI = {}; // allenamenti di oggi { allenamenti: [...] }
   let PARAMETRI_ALLENAMENTO = {}; // { fcMax, fcSoglia, ftp } dalle Impostazioni, per zone e intensità
+  let CONSENSO_AI = true;        // false se il paziente ha negato o revocato il consenso alle funzioni AI
   let unsubAttivitaOggi = null;
   const PASTI_APERTI = new Set(); // righe della scheda Oggi aperte dall'utente (restano aperte quando la scheda si ridisegna)
   let ATTESA_REGISTRAZIONE = null; // registrazione del paziente autonomo in corso
@@ -270,7 +271,12 @@
       ATTESA_REGISTRAZIONE = window.cloud.registraPaziente(
         document.getElementById("paz-email").value,
         document.getElementById("paz-password").value,
-        document.getElementById("paz-nome").value
+        document.getElementById("paz-nome").value,
+        {
+          maggiorenne: document.getElementById("paz-cons-maggiorenne").checked,
+          salute: document.getElementById("paz-cons-salute").checked,
+          ai: document.getElementById("paz-cons-ai").checked,
+        }
       );
       try {
         await ATTESA_REGISTRAZIONE;
@@ -452,6 +458,7 @@
   async function avviaPaziente(utenteDati) {
     AUTONOMO = !!utenteDati.autonomo;
     PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
+    CONSENSO_AI = !(utenteDati.consensi && utenteDati.consensi.ai && utenteDati.consensi.ai.si === false);
     mostraSchermata("paziente");
     aggiornaPremium().then(() => caricaReseAI());
     if (!avviaPaziente.collegato) {
@@ -876,7 +883,7 @@
 
   /** In sottofondo: chiede all'AI le rese degli alimenti del piano non ancora stimati (solo Premium). */
   async function richiediStimeRese() {
-    if (!RESE_CARICATE || !PREMIUM.noto || !PREMIUM.attivo || !PIANO_ATTIVO || !window.conversioni || !window.cloud.chiamaFunzione) return;
+    if (!RESE_CARICATE || !CONSENSO_AI || !PREMIUM.noto || !PREMIUM.attivo || !PIANO_ATTIVO || !window.conversioni || !window.cloud.chiamaFunzione) return;
     const nomi = new Set();
     Object.values(PIANO_ATTIVO.settimane || {}).forEach((giorni) => (giorni || []).forEach((g) => g && MEAL_KEYS.forEach((k) => {
       window.conversioni.daStimare(g[k], RESE_AI).forEach((n) => { if (!RESE_RICHIESTE.has(n)) nomi.add(n); });
@@ -914,7 +921,7 @@
   }
 
   function macroDisponibile() {
-    return RUOLO === "paziente" && PREMIUM.noto && PREMIUM.attivo && !!PIANO_ATTIVO && !!window.macro
+    return RUOLO === "paziente" && CONSENSO_AI && PREMIUM.noto && PREMIUM.attivo && !!PIANO_ATTIVO && !!window.macro
       && !(PIANO_ATTIVO.macro && PIANO_ATTIVO.macro.visibile === false)
       && typeof crypto !== "undefined" && !!crypto.subtle;
   }
@@ -1081,6 +1088,35 @@
     crudo.addEventListener("input", daCrudo);
     cotto.addEventListener("input", daCotto);
     aggiornaMetodi();
+  }
+
+  function privacyPazienteSezioneHTML() {
+    if (RUOLO !== "paziente") return "";
+    return `
+      <section class="settings-section" id="sezione-privacy">
+        <h2>Privacy</h2>
+        <p class="hint">Riscontri sui pasti, stime dei macronutrienti e del peso da cotto e lettura del piano da PDF usano l'intelligenza artificiale di Anthropic (Stati Uniti): ricevono i testi del piano e dei pasti, mai nome né email.</p>
+        <label class="check-riga"><input type="checkbox" id="consenso-ai"${CONSENSO_AI ? " checked" : ""}> <span>Acconsento all'uso delle funzioni di intelligenza artificiale</span></label>
+        <p class="stat-nota">Senza questo consenso l'app funziona, senza le funzioni AI. Puoi cambiarlo quando vuoi.</p>
+        <button type="button" class="btn btn--ghost" id="btn-salva-consenso-ai">Salva</button>
+        <p class="hint" style="margin-top:12px;">Il consenso ai dati sulla salute serve per usare l'app: per revocarlo elimina l'account, qui sotto. Tutti i dettagli sono nell'<a href="https://ilmiopiano.it/privacy.html" target="_blank" rel="noopener" data-link="privacy">Informativa privacy</a>.</p>
+      </section>`;
+  }
+
+  function collegaPrivacyPaziente() {
+    const btn = document.getElementById("btn-salva-consenso-ai");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      const si = document.getElementById("consenso-ai").checked;
+      if (si === CONSENSO_AI) { mostraToast("Nessuna modifica"); return; }
+      btn.disabled = true;
+      try {
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si });
+        CONSENSO_AI = si;
+        mostraToast(si ? "Funzioni AI attivate" : "Funzioni AI disattivate: non inviamo più nulla ad Anthropic");
+      } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
+      finally { btn.disabled = false; }
+    });
   }
 
   function parametriAllenamentoSezioneHTML() {
@@ -1758,6 +1794,7 @@
 
   function avviaImportazionePaziente() {
     if (!gestisceIlPiano()) return;
+    if (!CONSENSO_AI) { mostraToast("La lettura del PDF usa l'intelligenza artificiale: puoi attivarla in Impostazioni → Privacy. Il piano lo puoi sempre scrivere a mano.", 6000); return; }
     if (premiumLimitato() && PREMIUM.provaUsata) { apriPremium(); return; }
     avviaImportazioneAI(PIANO_ATTIVO, contestoImportPaziente());
   }
@@ -2541,7 +2578,7 @@
   }
 
   async function chiediRiscontro(key) {
-    if (!riscontroAttivo() || !window.cloud.valutaVariazione) return;
+    if (!riscontroAttivo() || !CONSENSO_AI || !window.cloud.valutaVariazione) return;
     if (premiumLimitato()) {
       RISCONTRI.perPasto[key] = { bloccato: true };
       if (currentView === "oggi") renderOggi();
@@ -3652,6 +3689,7 @@
       ${riepilogoVisitaSezioneHTML()}
       ${calcolatoreSezioneHTML()}
       ${parametriAllenamentoSezioneHTML()}
+      ${privacyPazienteSezioneHTML()}
       ${AUTONOMO ? nutrizionistaSezioneHTML() : ""}
       <section class="settings-section">
         <h2>Promemoria pasti</h2>
@@ -3723,6 +3761,7 @@
     const calc = document.getElementById("btn-calcolatore-cotto");
     if (calc) calc.addEventListener("click", apriCalcolatoreCotto);
     collegaParametriAllenamento();
+    collegaPrivacyPaziente();
     const verificaPremium = document.getElementById("btn-verifica-premium");
     if (verificaPremium) verificaPremium.addEventListener("click", () => { TENTATIVI_PREMIUM = 0; aggiornaPremium(true); });
 

@@ -577,11 +577,11 @@
      * piano (vuoto) creati dal server. Se il server non risponde, l'account
      * appena creato viene cancellato, così si può riprovare con la stessa email.
      */
-    async registraPaziente(email, password, nome) {
+    async registraPaziente(email, password, nome, consensi) {
       if (!funzioni) throw { code: "functions/unavailable" };
       const cred = await auth.createUserWithEmailAndPassword(email.trim(), password);
       try {
-        await funzioni.httpsCallable("registraPaziente")({ nome: (nome || "").trim(), piano: { settimane: {} } });
+        await funzioni.httpsCallable("registraPaziente")({ nome: (nome || "").trim(), piano: { settimane: {} }, consensi: consensi || {} });
       } catch (e) {
         await cred.user.delete().catch(() => {});
         throw e;
