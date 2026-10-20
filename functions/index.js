@@ -580,7 +580,8 @@ exports.aggiornaConsensoAI = onCall(async (request) => {
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
   const batch = db.batch();
   batch.set(utenteRef, { consensi: { versione: VERSIONE_CONSENSI, ai: { si, data: FieldValue.serverTimestamp() } } }, { merge: true });
-  batch.set(utenteRef.collection("consensiStorico").doc(), { tipo: "ai", si, versione: VERSIONE_CONSENSI, data: FieldValue.serverTimestamp(), da: "impostazioni" });
+  const da = request.data && request.data.da === "richiesta" ? "richiesta nell'app" : "impostazioni";
+  batch.set(utenteRef.collection("consensiStorico").doc(), { tipo: "ai", si, versione: VERSIONE_CONSENSI, data: FieldValue.serverTimestamp(), da });
   await batch.commit();
   return { si };
 });

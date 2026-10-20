@@ -1776,6 +1776,38 @@
     }));
   }
 
+  /**
+   * Consenso alle funzioni AI chiesto nel momento in cui serve (es. caricare il
+   * PDF del piano): con "Attiva e continua" si registra il consenso, con lo
+   * storico sul server, e si prosegue; in alternativa si compila a mano.
+   */
+  function chiediConsensoAI(poi, alternativa) {
+    apriSheet(`
+      <h2 class="sheet__titolo">Leggere il piano con l'intelligenza artificiale</h2>
+      <p class="sheet__nota">Per leggere il PDF o le foto, e per riscontri, macronutrienti e stime, l'app usa l'intelligenza artificiale di Anthropic negli Stati Uniti. Riceve solo le pagine e i testi del piano e dei pasti, mai il tuo nome né la tua email; prima dell'invio vedi e copri i dati personali.</p>
+      <label class="check-riga rep-consenso"><input type="checkbox" id="jit-consenso-ai"> <span>Acconsento all'invio dei testi del mio piano e dei pasti, senza nome né email, ad Anthropic negli Stati Uniti per le funzioni di intelligenza artificiale. Posso revocare il consenso in Impostazioni → Privacy.</span></label>
+      <button type="button" class="btn" id="btn-jit-attiva" disabled>Attiva e continua</button>
+      ${alternativa ? `<button type="button" class="btn btn--ghost" id="btn-jit-mano">Compilo il piano a mano</button>` : ""}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    const casella = document.getElementById("jit-consenso-ai");
+    const attiva = document.getElementById("btn-jit-attiva");
+    casella.addEventListener("change", () => { attiva.disabled = !casella.checked; });
+    attiva.addEventListener("click", async () => {
+      attiva.disabled = true; attiva.textContent = "Attivo…";
+      try {
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: true, da: "richiesta" });
+        CONSENSO_AI = true;
+        chiudiSheet();
+        if (poi) poi();
+      } catch (e) {
+        attiva.disabled = false; attiva.textContent = "Attiva e continua";
+        mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
+      }
+    });
+    const mano = document.getElementById("btn-jit-mano");
+    if (mano) mano.addEventListener("click", () => { chiudiSheet(); alternativa(); });
+  }
+
   function contestoImportPaziente() {
     return {
       paziente: true,
@@ -1794,7 +1826,7 @@
 
   function avviaImportazionePaziente() {
     if (!gestisceIlPiano()) return;
-    if (!CONSENSO_AI) { mostraToast("La lettura del PDF usa l'intelligenza artificiale: puoi attivarla in Impostazioni → Privacy. Il piano lo puoi sempre scrivere a mano.", 6000); return; }
+    if (!CONSENSO_AI) { chiediConsensoAI(avviaImportazionePaziente, creaBozzaManuale); return; }
     if (premiumLimitato() && PREMIUM.provaUsata) { apriPremium(); return; }
     avviaImportazioneAI(PIANO_ATTIVO, contestoImportPaziente());
   }
