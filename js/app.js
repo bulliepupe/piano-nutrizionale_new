@@ -1838,6 +1838,19 @@
       <p class="hint">Dalla settimana della data scelta il piano parte dalla settimana indicata, poi prosegue con le successive e ricomincia. Utile se il piano nuovo deve continuare un ciclo già avviato.</p>`;
   }
 
+  /**
+   * Partire da una settimana diversa dalla 1 serve solo per continuare un ciclo
+   * già avviato (es. il menù di una mensa): chiede conferma, perché è facile
+   * confondere la numerazione del piano con quella di un altro calendario.
+   * Restituisce true se si può procedere.
+   */
+  function confermaSettimanaPartenza(inizio, settimanaPrima) {
+    const n = Number(inizio && inizio.settimanaIniziale) || 1;
+    if (n === 1 || n === Number(settimanaPrima)) return true;
+    const quando = inizio.dataInizio ? `dalla settimana del ${dataLunga(inizio.dataInizio)}` : "dalla data di inizio";
+    return window.confirm(`Hai scelto di partire dalla Settimana ${n}: ${quando} l'app mostrerà i pasti della Settimana ${n} del piano, non della Settimana 1.\n\nControlla la numerazione del piano: se nel documento la prima settimana da seguire è la "Settimana 1", lascia la 1.\n\nVuoi partire davvero dalla Settimana ${n}?`);
+  }
+
   function leggiSceltaInizio() {
     const data = (document.getElementById("inizio-data") || {}).value || "";
     const sett = Number((document.getElementById("inizio-settimana") || {}).value) || 1;
@@ -1893,7 +1906,9 @@
     document.getElementById("btn-salva-pasto").addEventListener("click", salvaGiornoPaziente);
     collegaCopiaSettimana(piano, (nuovo) => { Object.assign(PIANO_ATTIVO, nuovo); controllaPianoCompleto(nuovo); renderMioPiano(); });
     document.getElementById("btn-mio-data-inizio").addEventListener("click", async () => {
-      try { await window.cloud.salvaPiano(piano.id, leggiSceltaInizio()); mostraToast("Inizio del piano salvato"); }
+      const inizio = leggiSceltaInizio();
+      if (!confermaSettimanaPartenza(inizio, piano.settimanaIniziale)) return;
+      try { await window.cloud.salvaPiano(piano.id, inizio); Object.assign(piano, inizio); mostraToast("Inizio del piano salvato"); }
       catch (err) { mostraToast(msgErroreScrittura(err, "Non salvata: controlla la connessione")); }
     });
     document.getElementById("btn-mio-norme").addEventListener("click", async () => {
@@ -5968,7 +5983,7 @@
       </section>
       <section class="settings-section">
         <h2>Quando inizia</h2>
-        ${sceltaInizioHTML(IMPORTA.piano.dataInizio || lunediCorrenteISO(), IMPORTA.piano.settimanaIniziale, r.settimane.map((_, i) => i + 1))}
+        ${sceltaInizioHTML(lunediCorrenteISO(), 1, r.settimane.map((_, i) => i + 1))}
         ${pianoHaPasti(IMPORTA.ctx.pianoCorrente()) ? `
         <label class="check-riga" style="margin-top:10px;"><input type="checkbox" id="inizio-programma" checked> <span>Se la data è futura, tieni il piano attuale fino ad allora e passa a questo da quel giorno</span></label>` : ""}
       </section>
@@ -6038,6 +6053,7 @@
     if (!esito.ok) { mostraToast("Non salvato — " + esito.errori[0], 5000); return; }
     const inizio = leggiSceltaInizio();
     if (!inizio.dataInizio) { mostraToast("Indica la data di inizio del piano", 4000); return; }
+    if (!confermaSettimanaPartenza(inizio, 1)) return;
     const programma = !!(document.getElementById("inizio-programma") || {}).checked && inizio.dataInizio > oggiISO();
     const domanda = programma ? null : IMPORTA.ctx.conferma(piano);
     if (domanda && !window.confirm(domanda)) return;
@@ -7912,6 +7928,7 @@
       // separato dal contenuto del piano validato, lo aggiungiamo qui.
       const extra = { pazienteNome: nuovoPazienteNome };
       const inizio = leggiSceltaInizio();
+      if (inizio.dataInizio && !confermaSettimanaPartenza(inizio, piano.settimanaIniziale)) return;
       if (inizio.dataInizio) Object.assign(extra, inizio);
       const altezza = Number((document.getElementById("editor-altezza") || {}).value);
       const obiettivo = Number(String((document.getElementById("editor-peso-obiettivo") || {}).value || "").replace(",", "."));
