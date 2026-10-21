@@ -12,3 +12,13 @@ Riservato/
 *.xls
 *.docx
 Backup-codes*.txt
+
+# App Android (Capacitor): file generati e chiavi di firma
+mobile/node_modules/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/.idea/
+*.jks
+*.keystore

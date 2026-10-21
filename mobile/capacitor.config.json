@@ -1,0 +1,13 @@
+{
+  "appId": "it.ilmiopiano.app",
+  "appName": "Il mio Piano",
+  "webDir": "www",
+  "server": {
+    "url": "https://app.ilmiopiano.it",
+    "cleartext": false,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

@@ -42,7 +42,8 @@
       "**/*.xlsx",
       "**/*.xls",
       "**/*.docx",
-      "**/*.csv"
+      "**/*.csv",
+      "mobile/**"
     ],
     "headers": [
       {

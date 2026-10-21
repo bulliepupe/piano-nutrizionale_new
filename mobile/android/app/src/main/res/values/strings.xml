@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Il mio Piano</string>
+    <string name="title_activity_main">Il mio Piano</string>
+    <string name="package_name">it.ilmiopiano.app</string>
+    <string name="custom_url_scheme">it.ilmiopiano.app</string>
+</resources>
