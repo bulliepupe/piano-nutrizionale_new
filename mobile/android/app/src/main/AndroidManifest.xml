@@ -18,9 +18,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- "Condividi con Il mio Piano": file degli allenamenti (FIT, TCX, GPX) da altre app -->
+            <!-- "Condividi con Il mio Piano": file degli allenamenti (FIT, TCX, GPX) da altre app.
+                 Alcune app (es. Bryton Active) usano SEND_MULTIPLE anche per un solo file. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="application/vnd.ant.fit" />

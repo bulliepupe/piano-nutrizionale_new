@@ -14,6 +14,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
 
 /**
  * "Condividi con Il mio Piano": riceve il file di un allenamento (FIT, TCX, GPX)
@@ -47,8 +48,18 @@ public class FileCondivisoPlugin extends Plugin {
     }
 
     private boolean leggiIntent(Intent intent) {
-        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return false;
-        Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        if (intent == null) return false;
+        String azione = intent.getAction();
+        Uri uri = null;
+        if (Intent.ACTION_SEND.equals(azione)) {
+            uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(azione)) {
+            // si importa un allenamento alla volta: il primo file condiviso
+            ArrayList<Uri> uris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (uris != null && !uris.isEmpty()) uri = uris.get(0);
+        } else {
+            return false;
+        }
         if (uri == null) return false;
         try (InputStream in = getContext().getContentResolver().openInputStream(uri)) {
             if (in == null) return false;
