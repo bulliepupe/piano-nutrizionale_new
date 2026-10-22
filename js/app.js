@@ -2324,7 +2324,27 @@
   }
 
   /** Android: file condiviso da un'altra app ("Condividi con Il mio Piano"), messo da parte dal service worker. */
+  /** App Android: il file arriva dal plugin nativo FileCondiviso (base64), non dalla cache del service worker. */
+  let ascoltoFileNativo = false;
+  async function prendiFileCondivisoNativo() {
+    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FileCondiviso;
+    if (!P) return;
+    if (!ascoltoFileNativo) {
+      ascoltoFileNativo = true;
+      P.addListener("fileCondiviso", () => prendiFileCondivisoNativo());
+    }
+    try {
+      const r = await P.prendi();
+      if (!r || !r.dati) return;
+      const bin = atob(r.dati);
+      const byte = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) byte[i] = bin.charCodeAt(i);
+      apriImportaAllenamento(new File([byte], r.nome || "allenamento.fit"));
+    } catch (e) { mostraToast("Non riesco ad aprire il file condiviso"); }
+  }
+
   async function controllaAllenamentoCondiviso() {
+    if (RUOLO === "paziente" && window.allenamentoFile && window.cloud.nativo) { prendiFileCondivisoNativo(); return; }
     if (RUOLO !== "paziente" || !window.allenamentoFile || !("caches" in window)) return;
     const parametri = new URLSearchParams(location.search);
     if (!parametri.has("importa-allenamento")) return;

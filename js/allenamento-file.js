@@ -369,19 +369,26 @@
     }));
   }
 
+  function eFit(buffer) {
+    const b = new Uint8Array(buffer.slice(0, 12));
+    return b.length >= 12 && b[8] === 0x2e && b[9] === 0x46 && b[10] === 0x49 && b[11] === 0x54;
+  }
+
   /** Legge un File (input type=file) e restituisce il formato comune. */
   async function leggiFile(file) {
     if (!file) throw new Error("nessun-file");
     if (file.size > 25 * 1024 * 1024) throw new Error("file-troppo-grande");
     const nome = String(file.name || "").toLowerCase();
-    if (nome.endsWith(".fit")) return daFit(await leggiFit(await file.arrayBuffer()));
+    const buffer = await file.arrayBuffer();
+    // FIT riconosciuto anche senza estensione (file condivisi da altre app): ".FIT" ai byte 8-11 dell'intestazione
+    if (nome.endsWith(".fit") || eFit(buffer)) return daFit(await leggiFit(buffer));
     const testo = await file.text();
     if (nome.endsWith(".tcx") || /<TrainingCenterDatabase/i.test(testo)) return daTcx(testo);
     if (nome.endsWith(".gpx") || /<gpx[\s>]/i.test(testo)) return daGpx(testo);
     throw new Error("formato-non-supportato");
   }
 
-  const api = { tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile };
+  const api = { tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.allenamentoFile = api;
 })();

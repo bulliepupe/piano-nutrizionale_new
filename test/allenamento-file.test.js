@@ -54,4 +54,8 @@ ok(rulli.indoor === true, "rulli dal sottotipo");
 const senzaGps = A.riepilogo(A.daFit({ sessions: [{ sport: "cycling", start_time: new Date(inizio).toISOString(), total_timer_time: 3600 }], records }), {});
 ok(senzaGps.indoor === true, "senza GPS = indoor");
 ok(A.riepilogo(A.daFit({ sessions: [{ sport: "cycling", start_time: new Date(inizio).toISOString(), total_timer_time: 3600 }], records: records.map((r) => Object.assign({ position_lat: 45.5, position_long: 9.2 }, r)) }), {}).indoor === undefined, "con GPS = su strada");
+
+// FIT riconosciuto dall'intestazione anche senza estensione
+const intest = new Uint8Array([14, 0x10, 0, 0, 0, 0, 0, 0, 0x2e, 0x46, 0x49, 0x54, 0, 0]);
+ok(A.eFit(intest.buffer) && !A.eFit(new TextEncoder().encode("<gpx>...</gpx>").buffer), "intestazione FIT");
 console.log("OK: " + n + " verifiche superate");
