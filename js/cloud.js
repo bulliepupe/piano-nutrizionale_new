@@ -67,9 +67,46 @@
   // Funzioni server (Cloud Functions), stessa regione della funzione dei promemoria.
   const funzioni = typeof app.functions === "function" ? app.functions("europe-west1") : null;
 
+  // App Android (Capacitor): le notifiche del browser non esistono, si usano
+  // quelle native di Firebase Cloud Messaging tramite il plugin PushNotifications.
+  const NATIVO = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
+  const pushNativo = () => (NATIVO && window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications) || null;
+  const LS_TOKEN_NATIVO = "pnut:token-nativo";
+
+  /** Permesso, canale e token del telefono per le notifiche native. Restituisce il token o null se il permesso è negato. */
+  async function tokenNativo(chiediPermesso) {
+    const P = pushNativo();
+    if (!P) return null;
+    let perm = await P.checkPermissions();
+    if (perm.receive !== "granted" && chiediPermesso) perm = await P.requestPermissions();
+    if (perm.receive !== "granted") return null;
+    try {
+      await P.createChannel({ id: "promemoria", name: "Promemoria dei pasti", description: "Ti ricorda i pasti del piano", importance: 4, visibility: 1, vibration: true });
+    } catch (e) { /* canale già presente */ }
+    const ascolti = [];
+    const token = await new Promise((ok, ko) => {
+      let fatto = false;
+      const fine = (f, v) => { if (!fatto) { fatto = true; f(v); } };
+      ascolti.push(P.addListener("registration", (t) => fine(ok, t && t.value)));
+      ascolti.push(P.addListener("registrationError", (e) => fine(ko, e)));
+      setTimeout(() => fine(ko, new Error("timeout-registrazione")), 20000);
+      P.register();
+    }).finally(() => ascolti.forEach((h) => Promise.resolve(h).then((x) => x && x.remove && x.remove()).catch(() => {})));
+    if (token) { try { localStorage.setItem(LS_TOKEN_NATIVO, token); } catch (e) { /* niente */ } }
+    return token || null;
+  }
+
   window.cloud = {
     configurato: CONFIGURATO,
-    pushSupportato: !!messaging,
+    nativo: NATIVO,
+    pushSupportato: !!messaging || !!pushNativo(),
+
+    /** Solo app Android: "granted", "denied" o "prompt" per le notifiche native. */
+    async permessoNotificheNativo() {
+      const P = pushNativo();
+      if (!P) return "unsupported";
+      try { return (await P.checkPermissions()).receive; } catch (e) { return "unsupported"; }
+    },
     auth,
     db,
 
@@ -339,7 +376,17 @@
      * Va chiamata SOLO dopo che il permesso di notifica è già stato concesso.
      * Ritorna il token salvato, o null se il push non è supportato/configurato.
      */
-    async registraTokenPush(uid) {
+    async registraTokenPush(uid, opzioni) {
+      if (NATIVO) {
+        const token = await tokenNativo(!opzioni || opzioni.chiediPermesso !== false);
+        if (!token) return null;
+        try {
+          await this.chiamaFunzione("registraDispositivo", { token });
+        } catch (e) {
+          await db.collection("users").doc(uid).update({ fcmTokens: FieldValue.arrayUnion(token) });
+        }
+        return token;
+      }
       if (!messaging) return null;
       if (!window.FIREBASE_VAPID_KEY || window.FIREBASE_VAPID_KEY === "INSERISCI_VAPID_KEY") {
         console.warn("Chiave VAPID non configurata: le notifiche push restano disattivate.");
@@ -369,6 +416,12 @@
      * non sono già consentite non c'è nulla da togliere.
      */
     async scollegaDispositivo(uid) {
+      if (NATIVO) {
+        let token = null;
+        try { token = localStorage.getItem(LS_TOKEN_NATIVO); } catch (e) { /* niente */ }
+        if (uid && token) await this.rimuoviTokenPush(uid, token);
+        return;
+      }
       if (!messaging || !uid || typeof Notification === "undefined" || Notification.permission !== "granted") return;
       if (!window.FIREBASE_VAPID_KEY || window.FIREBASE_VAPID_KEY === "INSERISCI_VAPID_KEY") return;
       const registrazioneSW = await navigator.serviceWorker.ready;

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "797276922843",
+    "project_id": "piano-nutrizionale---app",
+    "storage_bucket": "piano-nutrizionale---app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:797276922843:android:9444dcf758d25cfc7dbdfe",
+        "android_client_info": {
+          "package_name": "it.ilmiopiano.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC_9XndQF8fu6L7DRCEC5Omz5bPfwBf3l0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

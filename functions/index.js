@@ -212,6 +212,13 @@ exports.controllaPromemoria = onSchedule(
             //    promemoria non ha più senso e viene scartato;
             //  - tag: lo stesso usato dai promemoria locali dell'app, così
             //    eventuali doppioni si sostituiscono invece di sommarsi.
+            // App Android (notifiche native): consegna immediata, scadenza dopo
+            // 30 minuti, canale "promemoria" creato dall'app, stessa logica del tag.
+            android: {
+              priority: "high",
+              ttl: 1800 * 1000,
+              notification: { channelId: "promemoria", tag: "pasto-" + titolo, icon: "ic_stat_notifica", color: "#2F5142" },
+            },
             webpush: {
               headers: { Urgency: "high", TTL: "1800" },
               notification: {

@@ -3700,7 +3700,8 @@
     const p = (PIANO_ATTIVO && PIANO_ATTIVO.paziente) || {};
     const orari = orariEffettivi();
     const attive = notificheAttive();
-    const permesso = ("Notification" in window) ? Notification.permission : "unsupported";
+    const permesso = window.cloud.nativo ? (PERMESSO_NATIVO || "default") : ("Notification" in window) ? Notification.permission : "unsupported";
+    if (window.cloud.nativo) aggiornaPermessoNativo();
 
     root.innerHTML = `
       ${AUTONOMO ? `
@@ -3828,6 +3829,7 @@
   }
 
   function statoNotificheTesto(permesso, attive) {
+    if (window.cloud.nativo && permesso === "denied") return "Bloccate: Impostazioni del telefono → App → Il mio Piano → Notifiche";
     if (permesso === "unsupported") {
       if (eIOS() && !eStandalone()) return "Prima installa l'app sulla schermata Home";
       if (eIOS() && !iosSupportaPush()) return "Serve iOS 16.4 o successivo";
@@ -3936,7 +3938,43 @@
     }
   }
 
+  // App Android: stato del permesso delle notifiche native ("granted", "denied", "prompt")
+  let PERMESSO_NATIVO = null;
+  async function aggiornaPermessoNativo() {
+    const p = await window.cloud.permessoNotificheNativo();
+    const nuovo = p === "prompt" || p === "prompt-with-rationale" ? "default" : p;
+    if (nuovo !== PERMESSO_NATIVO) { PERMESSO_NATIVO = nuovo; if (currentView === "impostazioni") render(); }
+  }
+
+  /** App Android: i promemoria arrivano solo dal server (notifiche native), non ci sono promemoria locali. */
+  async function attivaNotificheNative() {
+    let token = null;
+    try {
+      token = await window.cloud.registraTokenPush(UID);
+    } catch (e) {
+      console.warn("Registrazione delle notifiche native non riuscita:", e);
+      mostraToast("Non riesco ad attivare i promemoria: controlla la connessione e riprova", 4500);
+      return false;
+    }
+    await aggiornaPermessoNativo();
+    if (!token) {
+      mostraToast("Permesso non concesso: puoi attivarlo nelle impostazioni del telefono, alla voce App → Il mio Piano → Notifiche", 6000);
+      return false;
+    }
+    localStorage.setItem(LS_KEYS.notifiche, "1");
+    localStorage.setItem(LS_KEYS.pushOk, "1");
+    aggiornaIconaCampanella();
+    mostraToast("Promemoria attivati");
+    if (currentView === "impostazioni") render();
+    try {
+      const override = JSON.parse(localStorage.getItem(LS_KEYS.orari) || "null");
+      await window.cloud.salvaPreferenzeNotifiche(UID, { notificheAttive: true, orariOverride: override || null, anticipoMinuti: anticipoMinutiEffettivo() });
+    } catch (e) { console.warn("Preferenze dei promemoria non salvate:", e); }
+    return true;
+  }
+
   async function attivaNotifiche() {
+    if (window.cloud.nativo) return attivaNotificheNative();
     if (!("Notification" in window) || (eIOS() && !eStandalone())) {
       if (eIOS()) apriGuidaIOS();
       else mostraToast("Questo browser non supporta le notifiche");
@@ -3994,6 +4032,7 @@
   function pianificaNotificheOggi() {
     timersProgrammati.forEach((t) => clearTimeout(t));
     timersProgrammati = [];
+    if (window.cloud.nativo) return; // nell'app Android i promemoria arrivano solo come notifiche native
 
     const oggi = new Date();
     const { giorno } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
@@ -4114,6 +4153,12 @@
   let dispositivoRinnovato = false;
   function rinnovaDispositivoNotifiche(u) {
     if (dispositivoRinnovato || !u || !u.notificheAttive || !notificheAttive()) return;
+    if (window.cloud.nativo) {
+      // App Android: rinnova il token senza chiedere di nuovo il permesso
+      dispositivoRinnovato = true;
+      window.cloud.registraTokenPush(UID, { chiediPermesso: false }).catch((e) => console.warn("Rinnovo del dispositivo per i promemoria non riuscito:", e));
+      return;
+    }
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
     if (u.dominioNotifiche !== location.hostname) return; // prima la migrazione al nuovo indirizzo
     dispositivoRinnovato = true;
