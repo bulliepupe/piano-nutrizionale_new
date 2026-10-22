@@ -19,3 +19,11 @@ Prima volta, su un PC con Android Studio:
 Dopo ogni modifica alla configurazione o ai plugin: `npm run sincronizza`.
 
 **La chiave di firma (file .jks / .keystore) non va mai su GitHub né su Dropbox:** se si perde non si possono più pubblicare aggiornamenti dell'app. Va conservata in due copie sicure, con la sua password.
+
+## Icona e schermata di avvio
+
+Le immagini di partenza sono in `assets/` (icona, primo piano trasparente della foglia, sfondo verde #2F5142, schermate di avvio chiara e scura). Per rigenerare tutte le dimensioni Android dopo averle cambiate:
+
+    npx @capacitor/assets@3.0.5 generate --android --iconBackgroundColor "#2F5142" --iconBackgroundColorDark "#2F5142" --splashBackgroundColor "#EEF2E8" --splashBackgroundColorDark "#151A16"
+
+Su Android 12 e successivi la schermata di avvio mostra l'icona su un colore fisso: `res/values/colori_avvio.xml` (chiaro) e `res/values-night/colori_avvio.xml` (scuro).
