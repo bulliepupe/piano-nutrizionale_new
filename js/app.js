@@ -1224,7 +1224,53 @@
   }
 
   /** PDF pronto: si sceglie se salvarlo sul dispositivo o condividerlo (email, WhatsApp…). */
+  /** Contenuto di un File in base64 (senza il prefisso data:…). */
+  function fileInBase64(file) {
+    return new Promise((ok, ko) => {
+      const r = new FileReader();
+      r.onload = () => ok(String(r.result).split(",")[1] || "");
+      r.onerror = () => ko(r.error);
+      r.readAsDataURL(file);
+    });
+  }
+
+  /**
+   * App Android: nel WebView il download del browser e la condivisione web non
+   * esistono. Si salva con il plugin Filesystem nella cartella pubblica
+   * Documenti/Il mio Piano e si condivide con il plugin Share.
+   */
+  async function condividiOSalvaNativo(file) {
+    const FS = window.Capacitor.Plugins.Filesystem, SH = window.Capacitor.Plugins.Share;
+    const nome = String(file.name || "documento.pdf").replace(/[\\/:*?"<>|]+/g, "-");
+    apriSheet(`
+      <h2 class="sheet__titolo">PDF pronto</h2>
+      <p class="sheet__nota">${escapeHTML(nome)}</p>
+      <button type="button" class="btn" id="btn-file-salva">Salva sul telefono</button>
+      <button type="button" class="btn btn--ghost" id="btn-file-condividi">Condividi (email, WhatsApp, Drive…)</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    document.getElementById("btn-file-salva").addEventListener("click", async () => {
+      try {
+        await FS.writeFile({ path: "Il mio Piano/" + nome, data: await fileInBase64(file), directory: "DOCUMENTS", recursive: true });
+        chiudiSheet();
+        mostraToast("PDF salvato in Documenti › Il mio Piano: lo trovi con l'app File del telefono", 5000);
+      } catch (e) {
+        console.warn("Salvataggio nativo non riuscito:", e);
+        mostraToast("Non riesco a salvarlo: usa Condividi e scegli Drive o l'app File", 5000);
+      }
+    });
+    document.getElementById("btn-file-condividi").addEventListener("click", async () => {
+      try {
+        const scritto = await FS.writeFile({ path: nome, data: await fileInBase64(file), directory: "CACHE" });
+        await SH.share({ title: nome, files: [scritto.uri], dialogTitle: "Invia o salva il PDF" });
+        chiudiSheet();
+      } catch (e) {
+        if (!/cancel/i.test(String(e && (e.message || e)))) mostraToast("Condivisione non riuscita: riprova", 4000);
+      }
+    });
+  }
+
   async function condividiOScaricaFile(file) {
+    if (window.cloud.nativo && window.Capacitor.Plugins.Filesystem && window.Capacitor.Plugins.Share) { await condividiOSalvaNativo(file); return; }
     const puoCondividere = !!(navigator.canShare && navigator.canShare({ files: [file] }));
     if (!puoCondividere) { scaricaFile(file); return; }
     apriSheet(`
