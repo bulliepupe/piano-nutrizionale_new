@@ -1243,6 +1243,23 @@ const STRUMENTO_RISCONTRO = {
 };
 
 /** Ripulisce il riscontro: solo pasti rimasti, niente suggerimenti vietati, testi brevi. */
+/**
+ * Stima del riscontro calcolata dai macronutrienti (pasto previsto e pasto
+ * effettivo): differenze arrotondate a 5 g, trascurabili sotto i 5 g.
+ */
+function stimaDaMacro(previsti, effettivi) {
+  if (!previsti || !effettivi) return null;
+  const voci = [["carboidrati", "di carboidrati"], ["proteine", "di proteine"], ["grassi", "di grassi"]];
+  const parti = [];
+  voci.forEach(([k, nome]) => {
+    const d = Math.round(((Number(effettivi[k]) || 0) - (Number(previsti[k]) || 0)) / 5) * 5;
+    if (Math.abs(d) >= 5) parti.push(`circa ${Math.abs(d)} g ${nome} ${d > 0 ? "in più" : "in meno"}`);
+  });
+  const dk = Math.round(((Number(effettivi.kcal) || 0) - (Number(previsti.kcal) || 0)) / 10) * 10;
+  if (!parti.length) return "Rispetto al pasto previsto, valori simili.";
+  return `Rispetto al pasto previsto: ${parti.join(", ")}${Math.abs(dk) >= 20 ? ` (circa ${Math.abs(dk)} kcal ${dk > 0 ? "in più" : "in meno"})` : ""}.`;
+}
+
 function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
   // Accorcia senza troncare a metà frase: si ferma all'ultima frase intera
   const breve = (t, max) => {
@@ -1333,11 +1350,19 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
     });
   const motivo = fatti.motivi && MOTIVI_RISCONTRO[fatti.motivi[pasto]];
   const nota = fatti.note && fatti.note[pasto] ? oscuraIdentificativi(String(fatti.note[pasto]).slice(0, 200)) : "";
+  // Macronutrienti stimati del pasto previsto (archivio comune, se già calcolati):
+  // servono all'AI come riferimento e al server per una stima coerente con l'app.
+  let macroPrevisti = null;
+  try {
+    const d = await db.collection("macroPasti").doc(chiaveMacro(String(giorno[pasto] || ""))).get();
+    if (d.exists && !d.data().libero) macroPrevisti = macroLogic.pulisciStima(d.data());
+  } catch (e) { macroPrevisti = null; }
   const sostituzioni = (Array.isArray(piano.sostituzioni) ? piano.sostituzioni : []).slice(0, 12)
     .map((g) => `${g.nome}: ${(g.opzioni || []).join(", ")}`).join("\n");
   const testo = [
     `Pasto: ${MEAL_LABELS[pasto]}`,
     `Previsto dal piano: ${String(giorno[pasto]).slice(0, 800)}`,
+    macroPrevisti ? `Macronutrienti stimati del pasto previsto: carboidrati ${Math.round(macroPrevisti.carboidrati)} g, proteine ${Math.round(macroPrevisti.proteine)} g, grassi ${Math.round(macroPrevisti.grassi)} g (circa ${macroPrevisti.kcal} kcal). Se compili macroEffettivi, le differenze che citi devono essere coerenti con questi valori.` : "",
     `Com'è andato: ${STATI_NON_COME_PIANO[stato]}${motivo ? ` (motivo: ${motivo})` : ""}${nota ? `. Il paziente scrive: "${nota}"` : ""}`,
     "",
     rimanenti.length ? "Pasti rimasti di oggi:\n" + rimanenti.map((k) => `- ${MEAL_LABELS[k]} [${k}]: ${String(giorno[k]).slice(0, 600)}`).join("\n") : "Non ci sono altri pasti oggi: niente suggerimenti per oggi, solo il riscontro e il ritorno al piano da domani.",
@@ -1372,6 +1397,10 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "riscontro_pasto");
   if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
   const riscontro = Object.assign(normalizzaRiscontro(blocco.input, rimanenti, conSuggerimenti), { data: dateKey, pasto, stato, frequente });
+  // La stima mostrata al paziente si ricalcola dai numeri, così non può
+  // contraddire il riquadro dei macronutrienti dell'app.
+  const stimaNumerica = stimaDaMacro(macroPrevisti, riscontro.macroEffettivi);
+  if (stimaNumerica) { riscontro.stima = stimaNumerica; riscontro.macroPrevisti = macroPrevisti; }
   await riscontriRef.doc(`${dateKey}_${pasto}`).set(Object.assign({}, riscontro, { creato: FieldValue.serverTimestamp() }));
   return riscontro;
 });

@@ -178,6 +178,22 @@ service cloud.firestore {
         allow read: if eIlProfessionista();
         allow write: if false;
       }
+
+      // Registro dei report per il preparatore: chi l'ha generato, quando, per quale
+      // periodo e con quali sezioni, con la conferma del consenso del paziente.
+      // Si aggiunge e non si modifica; lo leggono professionista e paziente.
+      match /condivisioni/{voce} {
+        allow read: if eIlProfessionista() || eIlPaziente();
+        allow create: if eIlProfessionista()
+          && request.resource.data.keys().hasOnly(["tipo", "da", "a", "sezioni", "consensoConfermato", "professionistaUid", "creato"])
+          && request.resource.data.tipo == "report-preparatore"
+          && request.resource.data.consensoConfermato == true
+          && request.resource.data.professionistaUid == request.auth.uid
+          && request.resource.data.da is string && request.resource.data.a is string
+          && request.resource.data.sezioni is list && request.resource.data.sezioni.size() <= 4
+          && request.resource.data.creato == request.time;
+        allow update, delete: if false;
+      }
     }
 
     // Ricette del professionista. Le legge lui e i SUOI pazienti: tutti, se

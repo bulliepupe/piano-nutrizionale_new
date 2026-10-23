@@ -650,6 +650,14 @@
       return rese;
     },
 
+    /** Registro dei report per il preparatore (consenso del paziente confermato dal professionista). */
+    async registraReportPreparatore(pianoId, uid, dati) {
+      await db.collection("piani").doc(pianoId).collection("condivisioni").add({
+        tipo: "report-preparatore", da: dati.da, a: dati.a, sezioni: dati.sezioni,
+        consensoConfermato: true, professionistaUid: uid, creato: FieldValue.serverTimestamp(),
+      });
+    },
+
     /** Macronutrienti stimati dei pasti, letti per chiave dall'archivio comune: { chiave: stima }. */
     async leggiMacro(chiavi) {
       const out = {};

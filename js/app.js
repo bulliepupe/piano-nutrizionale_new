@@ -1494,6 +1494,8 @@
       crea.disabled = true; crea.textContent = "Preparo il report…";
       try {
         const file = await creaReportPreparatorePdf(piano, { da, a, sezioni, note: sezioni.note ? document.getElementById("rep-note").value.trim() : "" });
+        // documenta la condivisione: periodo, sezioni e conferma del consenso
+        await window.cloud.registraReportPreparatore(piano.id, UID, { da, a, sezioni: Object.keys(sezioni).filter((k) => sezioni[k]) });
         chiudiSheet();
         await condividiOScaricaFile(file);
       } catch (e) {
@@ -2698,6 +2700,8 @@
   }
 
   function riscontroPastoHTML(key, stato) {
+    // consenso AI revocato: non si mostrano nemmeno i riscontri generati prima
+    if (RUOLO === "paziente" && !CONSENSO_AI) return "";
     if (!stato || stato === "fatto" || !riscontroAttivo()) return "";
     const r = RISCONTRI.perPasto[key];
     if (!r) return "";
@@ -5238,7 +5242,8 @@
   }
 
   // ---- Professionista: analisi AI dell'andamento (in cima alla scheda) ----
-  const ETICHETTE_ANALISI = { verde: "In linea con il piano", giallo: "Da tenere d'occhio", rosso: "Da contattare" };
+  // Lettura dell'AI (considera anche note, riscontri e peso): distinta dall'indicatore di aderenza ETICHETTE_STATO
+  const ETICHETTE_ANALISI = { verde: "Lettura AI: nessun segnale critico", giallo: "Lettura AI: da tenere d'occhio", rosso: "Lettura AI: da contattare" };
 
   function analisiAttesaHTML() {
     return `
@@ -5329,6 +5334,7 @@
         </div>
       </div>
       <p class="analisi-ai__sintesi">${escapeHTML(a.sintesi || "")}</p>
+      <p class="stat-nota">La lettura AI considera anche note, riscontri e peso; l'indicatore nella lista dei pazienti conta solo uso dell'app, pasti segnati e promemoria. Per questo possono dare indicazioni diverse.</p>
       ${a.impattoScostamenti ? `<p class="analisi-ai__impatto"><strong>Scostamenti:</strong> ${escapeHTML(a.impattoScostamenti)}</p>` : ""}
       <div class="analisi-ai__colonne">
         ${a.puntiAttenzione && a.puntiAttenzione.length ? `<div><h3>Punti di attenzione</h3><ul>${a.puntiAttenzione.map((x) => `<li>${escapeHTML(x)}</li>`).join("")}</ul></div>` : ""}
@@ -6454,9 +6460,10 @@
   const STAT = { risultati: {}, caricato: null, inCorso: null, errorePermessi: false };
   const STAT_VALIDITA_MS = 10 * 60 * 1000;
   const ETICHETTE_STATO = {
-    rosso: "Da ricontattare",
-    giallo: "Da seguire",
-    verde: "In linea",
+    // indicatore calcolato dall'app: uso dell'app, pasti segnati, promemoria (non dall'AI)
+    rosso: "Non usa l'app",
+    giallo: "Segnali da verificare",
+    verde: "Usa l'app regolarmente",
     attesa: "Piano non iniziato",
   };
 
