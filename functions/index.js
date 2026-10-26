@@ -1545,7 +1545,7 @@ exports.registraDispositivo = onCall(async (request) => {
 });
 
 // =========================================================================
-// EMAIL (SMTP di Register.it, casella info@ilmiopiano.it)
+// EMAIL (SMTP di Register.it su authsmtp.securemail.pro, casella info@ilmiopiano.it)
 // =========================================================================
 // Il server scrive un documento in /mail con accodaEmail(); questa funzione lo
 // spedisce e annota l'esito in "delivery". La raccolta è solo per il server
@@ -1578,7 +1578,8 @@ exports.inviaEmail = onDocumentCreated({ document: "mail/{id}", secrets: [SMTP_P
   }
   const nodemailer = require("nodemailer");
   const trasporto = nodemailer.createTransport({
-    host: "authsmtp.register.it", port: 465, secure: true,
+    // Register.it usa l'infrastruttura "securemail": il certificato TLS è per *.securemail.pro
+    host: "authsmtp.securemail.pro", port: 465, secure: true,
     auth: { user: "info@ilmiopiano.it", pass: SMTP_PASSWORD.value() },
   });
   try {
