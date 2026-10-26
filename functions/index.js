@@ -1545,6 +1545,55 @@ exports.registraDispositivo = onCall(async (request) => {
 });
 
 // =========================================================================
+// EMAIL (SMTP di Register.it, casella info@ilmiopiano.it)
+// =========================================================================
+// Il server scrive un documento in /mail con accodaEmail(); questa funzione lo
+// spedisce e annota l'esito in "delivery". La raccolta è solo per il server
+// (regole Firestore). La password della casella sta in Secret Manager:
+//   firebase functions:secrets:set SMTP_PASSWORD
+// I documenti hanno il campo "scadenza" (+30 giorni) per la cancellazione
+// automatica con un criterio TTL di Firestore su quel campo.
+const SMTP_PASSWORD = defineSecret("SMTP_PASSWORD");
+const MITTENTE = "Il mio Piano <info@ilmiopiano.it>";
+
+/** Mette in coda un'email: { to, subject, text, html? }. */
+async function accodaEmail(email) {
+  return db.collection("mail").add({
+    to: email.to,
+    message: { subject: String(email.subject || "").slice(0, 200), text: String(email.text || ""), html: email.html || null },
+    creato: FieldValue.serverTimestamp(),
+    scadenza: Timestamp.fromMillis(Date.now() + 30 * 86400000),
+  });
+}
+
+exports.inviaEmail = onDocumentCreated({ document: "mail/{id}", secrets: [SMTP_PASSWORD] }, async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const d = snap.data() || {};
+  const destinatari = (Array.isArray(d.to) ? d.to : [d.to]).filter((x) => typeof x === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 5);
+  const m = d.message || {};
+  if (!destinatari.length || !m.subject || !(m.text || m.html)) {
+    await snap.ref.update({ delivery: { state: "ERROR", error: "Destinatario, oggetto o testo mancanti", at: FieldValue.serverTimestamp() } });
+    return;
+  }
+  const nodemailer = require("nodemailer");
+  const trasporto = nodemailer.createTransport({
+    host: "authsmtp.register.it", port: 465, secure: true,
+    auth: { user: "info@ilmiopiano.it", pass: SMTP_PASSWORD.value() },
+  });
+  try {
+    const info = await trasporto.sendMail({
+      from: MITTENTE, replyTo: "info@ilmiopiano.it", to: destinatari.join(", "),
+      subject: String(m.subject).slice(0, 200), text: m.text || undefined, html: m.html || undefined,
+    });
+    await snap.ref.update({ delivery: { state: "SUCCESS", messageId: info.messageId || null, at: FieldValue.serverTimestamp() } });
+  } catch (err) {
+    console.error("Invio email non riuscito:", err && err.message);
+    await snap.ref.update({ delivery: { state: "ERROR", error: String((err && err.message) || err).slice(0, 300), at: FieldValue.serverTimestamp() } });
+  }
+});
+
+// =========================================================================
 // MACRONUTRIENTI DEI PASTI (stima AI, archivio comune)
 // =========================================================================
 // L'app invia i testi dei pasti del piano che non trova ancora in archivio.
