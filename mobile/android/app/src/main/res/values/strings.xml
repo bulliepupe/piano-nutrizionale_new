@@ -4,4 +4,6 @@
     <string name="title_activity_main">Il mio Piano</string>
     <string name="package_name">it.ilmiopiano.app</string>
     <string name="custom_url_scheme">it.ilmiopiano.app</string>
+    <!-- Informativa mostrata da Health Connect ("Norme sulla privacy" nella richiesta di permesso) -->
+    <string name="health_connect_privacy_policy_url">https://ilmiopiano.it/privacy.html</string>
 </resources>

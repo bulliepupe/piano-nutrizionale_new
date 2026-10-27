@@ -58,4 +58,19 @@ ok(A.riepilogo(A.daFit({ sessions: [{ sport: "cycling", start_time: new Date(ini
 // FIT riconosciuto dall'intestazione anche senza estensione
 const intest = new Uint8Array([14, 0x10, 0, 0, 0, 0, 0, 0, 0x2e, 0x46, 0x49, 0x54, 0, 0]);
 ok(A.eFit(intest.buffer) && !A.eFit(new TextEncoder().encode("<gpx>...</gpx>").buffer), "intestazione FIT");
+// Health Connect: solo tipo, giorno, orario e durata
+const hc = A.daHealthConnect({ workoutType: "bikingStationary", duration: 3720, startDate: "2026-10-20T16:30:00.000Z", endDate: "2026-10-20T17:32:00.000Z", sourceName: "com.garmin.android.apps.connectmobile", totalDistance: 30000, totalEnergyBurned: 700 });
+ok(hc.tipo === "Bici" && hc.indoor === true && hc.durata === 62, "hc tipo, indoor e durata " + JSON.stringify(hc));
+ok(hc.giorno === "2026-10-20" && hc.ora === "18:30" && hc.fonte === "healthconnect", "hc giorno e ora locali");
+ok(!("distanzaKm" in hc) && !JSON.stringify(hc).includes("30000"), "hc: niente distanza");
+ok(hc.kcal === 700, "hc: calorie attive dalla sessione");
+const G = "com.garmin.android.apps.connectmobile";
+ok(A.kcalDaCampioni([{ value: 300, sourceName: G }, { value: 250.4, sourceName: G }, { value: 900, sourceName: "com.sec.android.app.shealth" }], G) === 550, "kcal: solo la fonte dell'allenamento, senza doppi conteggi");
+ok(A.kcalDaCampioni([{ value: 100, sourceName: "a" }, { value: 400, sourceName: "b" }], "x") === 400, "kcal: altrimenti la fonte con il totale più alto");
+ok(A.kcalDaCampioni([], G) === null && A.kcalDaCampioni(null) === null, "kcal: nessun campione");
+ok(A.daHealthConnect({ workoutType: "running", duration: 1800, startDate: "2026-10-20T07:00:00Z", totalEnergyBurned: 0 }).kcal === undefined, "hc: zero calorie non salvate");
+ok(hc.hcId === A.daHealthConnect({ workoutType: "cycling", duration: 3720, startDate: "2026-10-20T16:30:00.000Z", sourceName: "com.garmin.android.apps.connectmobile" }).hcId, "hc: stesso identificativo per la stessa sessione");
+ok(A.daHealthConnect({ workoutType: "running", duration: 120, startDate: "2026-10-20T07:00:00Z" }) === null, "hc: sotto i 3 minuti scartato");
+ok(A.daHealthConnect({ workoutType: "golf", duration: 3600, startDate: "2026-10-20T07:00:00Z" }).tipo === "Altro", "hc: tipo sconosciuto = Altro");
+ok(A.daHealthConnect({ workoutType: "swimmingOpenWater", duration: 1800, startDate: "2026-10-20T07:00:00Z" }).indoor === undefined, "hc: nuoto in acque libere non al chiuso");
 console.log("OK: " + n + " verifiche superate");

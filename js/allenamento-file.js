@@ -388,7 +388,75 @@
     throw new Error("formato-non-supportato");
   }
 
-  const api = { tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
+
+  // ---------------------------------------------------------------------
+  // Health Connect (app Android): sessioni di allenamento (tipo, inizio, fine)
+  // e calorie attive del periodo. Distanza e frequenza non si leggono
+  // (permessi READ_EXERCISE e READ_ACTIVE_CALORIES_BURNED soltanto).
+  // ---------------------------------------------------------------------
+  const TIPI_HC = {
+    running: ["Corsa"], runningTreadmill: ["Corsa", true],
+    walking: ["Camminata veloce"], hiking: ["Camminata veloce"], wheelchair: ["Altro"],
+    cycling: ["Bici"], bikingStationary: ["Bici", true],
+    swimmingPool: ["Nuoto", true], swimmingOpenWater: ["Nuoto"],
+    strengthTraining: ["Palestra / pesi"], weightlifting: ["Palestra / pesi"], calisthenics: ["Palestra / pesi"],
+    crossTraining: ["Palestra / pesi"], bootCamp: ["Palestra / pesi"], exerciseClass: ["Palestra / pesi"],
+    elliptical: ["Palestra / pesi", true], rowingMachine: ["Palestra / pesi", true], stairClimbingMachine: ["Palestra / pesi", true],
+    yoga: ["Yoga / pilates"], pilates: ["Yoga / pilates"], stretching: ["Yoga / pilates"],
+    soccer: ["Sport di squadra"], basketball: ["Sport di squadra"], volleyball: ["Sport di squadra"], handball: ["Sport di squadra"],
+    rugby: ["Sport di squadra"], waterPolo: ["Sport di squadra"], americanFootball: ["Sport di squadra"], australianFootball: ["Sport di squadra"],
+    baseball: ["Sport di squadra"], softball: ["Sport di squadra"], cricket: ["Sport di squadra"], iceHockey: ["Sport di squadra"], rollerHockey: ["Sport di squadra"],
+  };
+
+  /**
+   * Calorie attive di un allenamento dai campioni di Health Connect
+   * ({ value, sourceName }). Per non sommare due volte le stesse calorie scritte
+   * da app diverse (orologio e telefono) si usa una sola fonte: quella
+   * dell'allenamento se presente, altrimenti la fonte con il totale più alto.
+   */
+  function kcalDaCampioni(campioni, fonteAllenamento) {
+    const perFonte = {};
+    (campioni || []).forEach((c) => {
+      const v = Number(c && c.value);
+      if (!(v > 0)) return;
+      const f = String((c && c.sourceName) || "");
+      perFonte[f] = (perFonte[f] || 0) + v;
+    });
+    const fonti = Object.keys(perFonte);
+    if (!fonti.length) return null;
+    const scelta = fonteAllenamento && perFonte[fonteAllenamento] != null ? fonteAllenamento
+      : fonti.sort((a, b) => perFonte[b] - perFonte[a])[0];
+    const kcal = Math.round(perFonte[scelta]);
+    return kcal >= 1 ? kcal : null;
+  }
+
+  /**
+   * Sessione di Health Connect ({ workoutType, duration (s), startDate, endDate, sourceName })
+   * nel formato degli allenamenti dell'app. null se la durata è sotto i 3 minuti.
+   */
+  function daHealthConnect(w) {
+    if (!w || !w.startDate) return null;
+    const inizio = new Date(w.startDate);
+    if (isNaN(inizio.getTime())) return null;
+    const durata = Math.round((Number(w.duration) || 0) / 60);
+    if (durata < 3) return null;
+    const [tipo, indoor] = TIPI_HC[w.workoutType] || ["Altro"];
+    const dueCifre = (n) => String(n).padStart(2, "0");
+    const out = {
+      tipo, durata,
+      giorno: `${inizio.getFullYear()}-${dueCifre(inizio.getMonth() + 1)}-${dueCifre(inizio.getDate())}`,
+      ora: `${dueCifre(inizio.getHours())}:${dueCifre(inizio.getMinutes())}`,
+      fonte: "healthconnect",
+      hcId: `${inizio.getTime()}_${String(w.sourceName || "").slice(0, 80)}`,
+    };
+    if (indoor) out.indoor = true;
+    if (w.sourceName) out.origine = String(w.sourceName).slice(0, 80);
+    const kcal = Math.round(Number(w.totalEnergyBurned) || 0);
+    if (kcal > 0 && kcal < 10000) out.kcal = kcal;
+    return out;
+  }
+
+  const api = { daHealthConnect, kcalDaCampioni, tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.allenamentoFile = api;
 })();

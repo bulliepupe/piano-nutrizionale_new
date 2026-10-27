@@ -2345,6 +2345,11 @@
 
   function numeroIt(n) { return Number(n).toLocaleString("it-IT"); }
 
+  /** "da file", "da Health Connect" o "segnato a mano". */
+  function fonteAllenamento(a) {
+    return a.fonte === "file" ? "da file" : a.fonte === "healthconnect" ? "da Health Connect" : "segnato a mano";
+  }
+
   const FONTI_INTENSITA = { potenza: "calcolata dalla potenza", zone: "calcolata dalle zone di frequenza cardiaca", fc: "calcolata dalla frequenza cardiaca media" };
 
   /** Righe di dati di un allenamento importato (anteprima e dettaglio). */
@@ -2427,7 +2432,7 @@
     if (!a) return;
     apriSheet(`
       <h2 class="sheet__titolo">${escapeHTML(nomeAllenamento(a))}${giorno !== oggiK ? ` · ${escapeHTML(dataLunga(giorno))}` : ""}${a.ora ? ` · alle ${escapeHTML(a.ora)}` : ""}</h2>
-      ${a.fonte === "file" ? righeAllenamentoHTML(a) : `<p class="sheet__nota">${escapeHTML(descriviAllenamento(a))}</p>`}
+      ${a.fonte === "file" || a.fonte === "healthconnect" ? righeAllenamentoHTML(a) : `<p class="sheet__nota">${escapeHTML(descriviAllenamento(a))}</p>`}
       ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : ""}</strong></p>` : ""}
       <p class="sheet__nota">Le calorie sono quelle stimate dal tuo dispositivo: non cambiano le quantità del piano. Se il piano va adattato agli allenamenti, lo decide il tuo nutrizionista.</p>
       <button type="button" class="btn btn--ghost btn--pericolo" id="btn-elimina-allenamento">Elimina questo allenamento</button>
@@ -2457,7 +2462,7 @@
       <p class="sheet__nota">Tocca un allenamento per vederne i dati o eliminarlo. Per aggiornare i dati di un file già importato, importalo di nuovo.</p>
       ${voci.length ? `<ul class="stat-note-pasti">${voci.map(({ g, a }, i) => `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-recente="${i}">
           <span class="stat-nota-pasto__testa">${escapeHTML(dataLunga(g).replace(/^./, (c) => c.toUpperCase()))}</span>
-          <span>${escapeHTML(descriviAllenamento(a))}${a.fonte === "file" ? " · da file" : " · segnato a mano"}</span></button></li>`).join("")}</ul>`
+          <span>${escapeHTML(descriviAllenamento(a))}${" · " + fonteAllenamento(a)}</span></button></li>`).join("")}</ul>`
         : `<p class="sheet__nota">Nessun allenamento negli ultimi 7 giorni.</p>`}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet style="margin-top:12px;">Chiudi</button>`);
     document.querySelectorAll("[data-recente]").forEach((b) => b.addEventListener("click", () => {
@@ -2515,7 +2520,7 @@
       <div class="segmento" id="imp-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === intensita}">${nome}</button>`).join("")}</div>
       <p class="stat-nota">${r.intensitaFonte ? `Proposta ${FONTI_INTENSITA[r.intensitaFonte]}${r.intensitaFonte === "potenza" ? ` (IF ${String(r.intensitaValore).replace(".", ",")})` : ""}: puoi cambiarla.` : haParametri ? "Il file non ha i dati per calcolarla: scegli tu." : "Scegli tu, oppure indica in Impostazioni → Allenamenti la tua frequenza cardiaca o la FTP per calcolarla dal file."}</p>
       ${giaImportato ? `<p class="avviso-doppione">Questo allenamento è già stato importato: salvando lo aggiorni con i dati e gli indici di adesso.</p>` : ""}
-      ${aMano ? `<label class="check-riga avviso-doppione"><input type="checkbox" id="imp-sostituisci" checked> <span>Sostituisce quello segnato a mano: ${escapeHTML(descriviAllenamento(aMano))}</span></label>` : ""}
+      ${aMano ? `<label class="check-riga avviso-doppione"><input type="checkbox" id="imp-sostituisci" checked> <span>Sostituisce quello ${fonteAllenamento(aMano)}: ${escapeHTML(descriviAllenamento(aMano))}</span></label>` : ""}
       <p class="sheet__nota">Il file non viene conservato: salviamo solo questi numeri, senza il percorso.</p>
       <button type="button" class="btn" id="btn-salva-importato" style="margin-top:12px;">${giaImportato ? "Aggiorna" : "Salva"}</button>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
@@ -2538,6 +2543,127 @@
         const attuali = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
           : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
         const sostituisci = document.getElementById("imp-sostituisci");
+        const via = new Set([giaImportato && giaImportato.id, aMano && sostituisci && sostituisci.checked && aMano.id].filter(Boolean));
+        const lista = attuali.filter((x) => !via.has(x.id)).concat(nuovo).slice(-6);
+        await window.cloud.salvaAttivita(UID, r.giorno, { allenamenti: lista });
+        chiudiSheet();
+        const quando = r.giorno === oggi ? "" : ` nel ${dataLunga(r.giorno)}`;
+        mostraToast(giaImportato ? `Allenamento aggiornato${quando}` : `Allenamento importato${quando}`);
+      } catch (err) {
+        btn.disabled = false;
+        mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"), 4000);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Health Connect (solo app Android): allenamenti degli ultimi 7 giorni,
+  // letti solo quando il paziente tocca il pulsante. Si legge e si salva solo
+  // tipo, giorno, orario, durata e calorie attive stimate dal dispositivo
+  // (permessi READ_EXERCISE e READ_ACTIVE_CALORIES_BURNED).
+  // ---------------------------------------------------------------------
+  function healthConnect() {
+    return (RUOLO === "paziente" && window.cloud.nativo && window.allenamentoFile && window.allenamentoFile.daHealthConnect
+      && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Health) || null;
+  }
+
+  function sheetHC(testo, conImpostazioni) {
+    apriSheet(`<h2 class="sheet__titolo">Health Connect</h2><p class="sheet__nota">${testo}</p>
+      ${conImpostazioni ? `<button type="button" class="btn" id="hc-impostazioni">Apri Health Connect</button>` : ""}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    const b = document.getElementById("hc-impostazioni");
+    if (b) b.addEventListener("click", () => { const H = healthConnect(); if (H) H.openHealthConnectSettings().catch(() => {}); });
+  }
+
+  async function apriHealthConnect() {
+    const H = healthConnect();
+    if (!H) return;
+    apriSheet(`<h2 class="sheet__titolo">Health Connect</h2><p class="sheet__nota">Cerco gli allenamenti degli ultimi 7 giorni…</p>`);
+    try {
+      const disp = await H.isAvailable();
+      if (!disp || !disp.available) {
+        sheetHC("Health Connect non è disponibile su questo telefono. Da Android 14 è già incluso; sulle versioni precedenti si installa l'app «Health Connect» dal Play Store.");
+        return;
+      }
+      await H.requestAuthorization({ read: ["workouts", "calories"] });
+    } catch (e) {
+      sheetHC("Non riesco ad aprire Health Connect. Riprova, oppure segna l'allenamento a mano.");
+      return;
+    }
+    const limite = chiaveData(new Date(Date.now() - 7 * 86400000));
+    let sessioni = [];
+    try {
+      const inizio = new Date(); inizio.setDate(inizio.getDate() - 7); inizio.setHours(0, 0, 0, 0);
+      const r = await H.queryWorkouts({ startDate: inizio.toISOString(), endDate: new Date().toISOString(), limit: 50, ascending: false });
+      const grezze = ((r && r.workouts) || []).filter((w) => { const x = window.allenamentoFile.daHealthConnect(w); return x && x.giorno >= limite; });
+      // calorie attive di ogni allenamento (se il permesso non c'è, restano senza)
+      for (const w of grezze) {
+        if (Number(w.totalEnergyBurned) > 0) continue;
+        try {
+          const c = await H.readSamples({ dataType: "calories", startDate: w.startDate, endDate: w.endDate, limit: 1000 });
+          const kcal = window.allenamentoFile.kcalDaCampioni(c && c.samples, w.sourceName);
+          if (kcal) w.totalEnergyBurned = kcal;
+        } catch (e) { /* senza calorie */ }
+      }
+      sessioni = grezze.map(window.allenamentoFile.daHealthConnect);
+    } catch (e) {
+      sheetHC("Il permesso per leggere gli allenamenti non è stato concesso. Puoi darlo da Health Connect, alla voce Il mio Piano.", true);
+      return;
+    }
+    let perGiorno = {};
+    try { perGiorno = await window.cloud.leggiAttivitaPeriodo(UID, limite); } catch (e) { perGiorno = {}; }
+    const importati = new Set();
+    Object.values(perGiorno).forEach((g) => (g.allenamenti || []).forEach((a) => { if (a.hcId) importati.add(a.hcId); }));
+    apriSheet(`
+      <h2 class="sheet__titolo">Health Connect</h2>
+      <p class="sheet__nota">Allenamenti degli ultimi 7 giorni. Di ciascuno salviamo solo tipo, giorno, orario, durata e calorie stimate dal dispositivo.</p>
+      ${sessioni.length ? `<ul class="stat-note-pasti">${sessioni.map((r, i) => `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-hc="${i}">
+          <span class="stat-nota-pasto__testa">${escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}</span>
+          <span>${escapeHTML(descriviAllenamento(r))}${r.kcal ? ` · ${numeroIt(r.kcal)} kcal` : ""}${importati.has(r.hcId) ? " · già importato" : ""}</span></button></li>`).join("")}</ul>`
+        : `<p class="sheet__nota">Nessun allenamento in Health Connect negli ultimi 7 giorni. Controlla che l'app del tuo orologio o del ciclocomputer sia collegata a Health Connect.</p>`}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet style="margin-top:12px;">Chiudi</button>`);
+    document.querySelectorAll("[data-hc]").forEach((b) => b.addEventListener("click", () => {
+      const r = sessioni[Number(b.dataset.hc)];
+      apriSalvaHealthConnect(r, (perGiorno[r.giorno] && perGiorno[r.giorno].allenamenti) || []);
+    }));
+  }
+
+  function apriSalvaHealthConnect(r, esistenti) {
+    const oggi = chiaveData(new Date());
+    const giaImportato = esistenti.find((x) => x.hcId && x.hcId === r.hcId);
+    const aMano = giaImportato ? null : esistenti.find((x) => x.fonte === "manuale" && x.tipo === r.tipo);
+    let intensita = (giaImportato && giaImportato.intensita) || "moderata";
+    apriSheet(`
+      <h2 class="sheet__titolo">Allenamento da Health Connect</h2>
+      <p class="sheet__nota">${r.giorno === oggi ? "Oggi" : escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}, alle ${escapeHTML(r.ora)}</p>
+      <label class="editor-campo"><span>Attività</span>
+        <select id="hc-tipo">${TIPI_ALLENAMENTO.map((t) => `<option${t === r.tipo ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+      <label class="check-riga"><input type="checkbox" id="hc-indoor"${r.indoor ? " checked" : ""}> <span>Al chiuso (rulli, tapis roulant, piscina)</span></label>
+      ${righeAllenamentoHTML(r)}
+      <p class="impost-etichetta">Intensità</p>
+      <div class="segmento" id="hc-intensita">${INTENSITA.map(([id, nome]) => `<button type="button" class="segmento__voce" data-intensita="${id}" aria-pressed="${id === intensita}">${nome}</button>`).join("")}</div>
+      <p class="stat-nota">Health Connect non indica l'intensità: scegli tu.</p>
+      ${giaImportato ? `<p class="avviso-doppione">Questo allenamento è già stato importato: salvando lo aggiorni.</p>` : ""}
+      ${aMano ? `<label class="check-riga avviso-doppione"><input type="checkbox" id="hc-sostituisci" checked> <span>Sostituisce quello segnato a mano: ${escapeHTML(descriviAllenamento(aMano))}</span></label>` : ""}
+      <button type="button" class="btn" id="btn-salva-hc" style="margin-top:12px;">${giaImportato ? "Aggiorna" : "Salva"}</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    document.querySelectorAll("#hc-intensita [data-intensita]").forEach((b) => b.addEventListener("click", () => {
+      intensita = b.dataset.intensita;
+      document.querySelectorAll("#hc-intensita [data-intensita]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    }));
+    document.getElementById("btn-salva-hc").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const nuovo = Object.assign({}, r, {
+        id: (giaImportato && giaImportato.id) || Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        tipo: document.getElementById("hc-tipo").value, intensita,
+      });
+      if (document.getElementById("hc-indoor").checked) nuovo.indoor = true; else delete nuovo.indoor;
+      delete nuovo.giorno;
+      try {
+        const attuali = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
+          : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
+        const sostituisci = document.getElementById("hc-sostituisci");
         const via = new Set([giaImportato && giaImportato.id, aMano && sostituisci && sostituisci.checked && aMano.id].filter(Boolean));
         const lista = attuali.filter((x) => !via.has(x.id)).concat(nuovo).slice(-6);
         await window.cloud.salvaAttivita(UID, r.giorno, { allenamenti: lista });
@@ -2588,6 +2714,7 @@
         <input type="file" id="all-file" accept=".fit,.tcx,.gpx,.FIT,.TCX,.GPX" hidden>
         Importa da file (FIT, TCX o GPX)</label>
       <p class="stat-nota">Il file dell'allenamento esportato da Garmin, Wahoo, Bryton, Strava, TrainingPeaks… Oppure inseriscilo a mano:</p>` : ""}
+      ${healthConnect() ? `<button type="button" class="btn btn--ghost" id="all-hc">Importa da Health Connect</button>` : ""}
       <label class="editor-campo"><span>Attività</span>
         <select id="all-tipo">${TIPI_ALLENAMENTO.map((t) => `<option>${t}</option>`).join("")}</select></label>
       <label class="check-riga"><input type="checkbox" id="all-indoor"> <span>Al chiuso (rulli, tapis roulant, piscina)</span></label>
@@ -2603,6 +2730,8 @@
     document.getElementById("btn-allenamenti-recenti").addEventListener("click", apriAllenamentiRecenti);
     const inFile = document.getElementById("all-file");
     if (inFile) inFile.addEventListener("change", () => { if (inFile.files && inFile.files[0]) apriImportaAllenamento(inFile.files[0]); });
+    const btnHC = document.getElementById("all-hc");
+    if (btnHC) btnHC.addEventListener("click", apriHealthConnect);
     let intensita = "moderata";
     document.querySelectorAll("#all-intensita [data-intensita]").forEach((b) => b.addEventListener("click", () => {
       intensita = b.dataset.intensita;
@@ -5365,8 +5494,8 @@
     const giorno = d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
     apriSheet(`
       <h2 class="sheet__titolo">${escapeHTML(nomeAllenamento(a))} di ${escapeHTML(nome)}</h2>
-      <p class="sheet__nota">${escapeHTML(giorno.replace(/^./, (c) => c.toUpperCase()))}${a.ora ? `, alle ${escapeHTML(a.ora)}` : ""} · ${a.fonte === "file" ? `importato da file ${escapeHTML(a.formato || "")}` : "segnato a mano dal paziente"}</p>
-      ${a.fonte === "file" ? righeAllenamentoHTML(a) : `<p class="stat-riga"><span>Durata</span><strong>${a.durata} min</strong></p>`}
+      <p class="sheet__nota">${escapeHTML(giorno.replace(/^./, (c) => c.toUpperCase()))}${a.ora ? `, alle ${escapeHTML(a.ora)}` : ""} · ${a.fonte === "file" ? `importato da file ${escapeHTML(a.formato || "")}` : a.fonte === "healthconnect" ? "importato da Health Connect" : "segnato a mano dal paziente"}</p>
+      ${a.fonte === "file" || a.fonte === "healthconnect" ? righeAllenamentoHTML(a) : `<p class="stat-riga"><span>Durata</span><strong>${a.durata} min</strong></p>`}
       ${a.intensita ? `<p class="stat-riga"><span>Intensità</span><strong>${escapeHTML(a.intensita)}${a.intensitaFonte && FONTI_INTENSITA[a.intensitaFonte] ? ` · ${FONTI_INTENSITA[a.intensitaFonte]}` : " · scelta dal paziente"}</strong></p>` : ""}
       <p class="sheet__nota">Zone e indici dipendono dai valori di FC e FTP che il paziente ha indicato nelle sue Impostazioni. Le calorie sono la stima del suo dispositivo.</p>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
@@ -5389,7 +5518,7 @@
       const elenco = tutti.slice(0, 10).map((a) => {
         const d = window.statistiche.daChiave(a.giorno);
         const zone = Array.isArray(a.zoneFC) ? (() => { const tt = a.zoneFC.reduce((x, y) => x + y, 0) || 1; return `Z1-Z2 ${Math.round(((a.zoneFC[0] + a.zoneFC[1]) / tt) * 100)}%`; })() : "";
-        const dati = a.fonte !== "file" ? "Segnato a mano dal paziente" : [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
+        const dati = a.fonte !== "file" ? (a.fonte === "healthconnect" ? ["Da Health Connect", a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ") : "Segnato a mano dal paziente") : [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
         return `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-allenamento-prof="${escapeHTML(a.giorno + "|" + a.id)}"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(nomeAllenamento(a))} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span><span class="allenamento-prof__apri" aria-hidden="true">Apri ›</span></button></li>`;
       }).join("");
       box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente o importati dai file dei suoi dispositivi.</p>
