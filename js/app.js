@@ -458,7 +458,10 @@
   async function avviaPaziente(utenteDati) {
     AUTONOMO = !!utenteDati.autonomo;
     PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
-    CONSENSO_AI = !(utenteDati.consensi && utenteDati.consensi.ai && utenteDati.consensi.ai.si === false);
+    // Senza una scelta registrata: sì per i pazienti del nutrizionista, no per
+    // gli autonomi (iscritti prima del 20/10), come il controllo sul server.
+    const sceltaAI = utenteDati.consensi && utenteDati.consensi.ai;
+    CONSENSO_AI = sceltaAI ? sceltaAI.si !== false : !utenteDati.autonomo;
     mostraSchermata("paziente");
     aggiornaPremium().then(() => caricaReseAI());
     if (!avviaPaziente.collegato) {

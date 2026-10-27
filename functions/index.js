@@ -573,9 +573,21 @@ async function pianoDelPaziente(uid) {
 // Li scrive solo il server; ogni cambio va anche in users/{uid}/consensiStorico.
 const VERSIONE_CONSENSI = "2026-10-20";
 
-/** Vero se il paziente ha revocato (o negato) il consenso alle funzioni AI. */
+/**
+ * Vero se le funzioni AI vanno bloccate per questo paziente:
+ * - consenso AI revocato o negato;
+ * - paziente autonomo senza una scelta registrata (iscritto prima del
+ *   20/10/2026, quando i consensi non si salvavano): resta bloccato finché
+ *   non dà il consenso (Impostazioni → Privacy o richiesta al momento).
+ * I pazienti creati dal nutrizionista senza scelta registrata restano come
+ * prima: la loro base giuridica è un punto aperto della DPIA.
+ */
 function consensoAINegato(utente) {
-  return !!(utente && utente.consensi && utente.consensi.ai && utente.consensi.ai.si === false);
+  if (!utente) return false;
+  const ai = utente.consensi && utente.consensi.ai;
+  if (ai && ai.si === false) return true;
+  if (utente.autonomo === true && !(ai && ai.si === true)) return true;
+  return false;
 }
 
 exports.aggiornaConsensoAI = onCall(async (request) => {
@@ -2031,5 +2043,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

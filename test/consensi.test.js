@@ -41,5 +41,19 @@ let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; };
   ok(Object.keys(store).filter((k) => k.startsWith("users/b/consensiStorico")).length === 4, "storico del cambio");
   await f.stimaMacro({ auth: { uid: "b" }, data: { testi: ["Pasta 70g al pomodoro"] } });
   ok(chiamateAI === 1, "AI di nuovo disponibile");
+  // Paziente autonomo iscritto prima del 20/10: nessuna scelta registrata, AI bloccata
+  store["users/v"] = { ruolo: "paziente", autonomo: true, premium: { stato: "prova", scadenza: { toMillis: () => Date.now() + 1e9 } } };
+  const prima = chiamateAI;
+  await assert.rejects(f.stimaMacro({ auth: { uid: "v" }, data: { testi: ["Riso 80g"] } }), /consenso-ai-negato/); n++;
+  await assert.rejects(f.valutaVariazione({ auth: { uid: "v" }, data: { pasto: "pranzo" } }), /consenso-ai-negato/); n++;
+  ok(chiamateAI === prima, "nessuna chiamata ad Anthropic per l'autonomo senza scelta");
+  await f.aggiornaConsensoAI({ auth: { uid: "v" }, data: { si: true } });
+  await f.stimaMacro({ auth: { uid: "v" }, data: { testi: ["Riso 80g"] } });
+  ok(chiamateAI === prima + 1, "dopo il consenso l'AI funziona");
+  // Paziente creato dal nutrizionista senza scelta registrata: comportamento invariato
+  const t = f._test.consensoAINegato;
+  ok(t({ ruolo: "paziente" }) === false, "paziente seguito senza scelta: non bloccato");
+  ok(t({ ruolo: "paziente", consensi: { ai: { si: false } } }) === true, "paziente seguito con revoca: bloccato");
+  ok(t({ ruolo: "paziente", autonomo: true, consensi: { ai: { si: true } } }) === false, "autonomo con consenso: non bloccato");
   console.log("OK: " + n + " verifiche superate");
 })().catch((e) => { console.error(e); process.exit(1); });
