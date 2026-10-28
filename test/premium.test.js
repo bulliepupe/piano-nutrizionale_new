@@ -54,8 +54,11 @@ assert.equal(p.stato, "attivo"); assert.equal(p.origine, "play_store"); assert.e
 r = T.statoPremiumServer(p, null, ora); assert.equal(r.attivo, true); assert.equal(r.origine, "abbonamento");
 p = T.premiumDaRevenueCat(sub(ora + 300 * giorno, { unsubscribe_detected_at: iso(ora) }), ora);
 assert.equal(p.stato, "attivo"); assert.equal(p.rinnovo, false); // disdetto: attivo fino a scadenza
+r = T.statoPremiumServer(p, null, ora); assert.equal(r.attivo, true); assert.equal(r.rinnovo, false);
 p = T.premiumDaRevenueCat(sub(ora - giorno), ora);
 assert.equal(p.stato, "scaduto"); r = T.statoPremiumServer(p, null, ora); assert.equal(r.attivo, false);
+assert.equal(r.abbonamentoTerminato, ora - giorno); // messaggio di fine abbonamento, non di fine prova
+r = T.statoPremiumServer(prova, null, ora + 15 * giorno); assert.equal(r.abbonamentoTerminato, undefined);
 p = T.premiumDaRevenueCat(sub(ora + 3 * giorno, { billing_issues_detected_at: iso(ora) }), ora);
 assert.equal(p.problemaPagamento, true);
 assert.equal(T.premiumDaRevenueCat({ entitlements: {} }, ora), null);

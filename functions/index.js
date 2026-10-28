@@ -515,9 +515,14 @@ function statoPremiumServer(premium, licenzaProf, adesso) {
   if (premium && (premium.stato === "attivo" || premium.stato === "prova")) {
     const scadenza = millisDi(premium.scadenza);
     if (scadenza == null || scadenza > adesso) {
-      return { attivo: true, origine: premium.stato === "prova" ? "prova" : "abbonamento", scadenza, provaUsata };
+      if (premium.stato === "prova") return { attivo: true, origine: "prova", scadenza, provaUsata };
+      // rinnovo: false dopo una disdetta (resta attivo fino a scadenza)
+      return { attivo: true, origine: "abbonamento", scadenza, provaUsata, rinnovo: premium.rinnovo !== false };
     }
   }
+  // abbonamento dello store terminato: l'app lo dice con un messaggio suo
+  const fine = premium && premium.prodotto ? millisDi(premium.scadenza) : null;
+  if (fine != null && fine <= adesso) return { attivo: false, origine: null, scadenza: null, provaUsata, abbonamentoTerminato: fine };
   return { attivo: false, origine: null, scadenza: null, provaUsata };
 }
 

@@ -668,6 +668,8 @@
   const PREMIUM = { noto: false, attivo: true, origine: null, scadenza: null, provaUsata: false };
   let AUTONOMO = false;
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
+  // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
+  const VERSIONE_APP = "v105";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -684,7 +686,7 @@
       if (!window.cloud.chiamaFunzione) throw { code: "app-non-aggiornata" };
       const r = await window.cloud.chiamaFunzione("statoPremium");
       if (!r || typeof r.attivo !== "boolean") throw { code: "risposta-non-valida" };
-      Object.assign(PREMIUM, r, { noto: true, errore: null });
+      Object.assign(PREMIUM, { rinnovo: undefined, abbonamentoTerminato: undefined }, r, { noto: true, errore: null });
       TENTATIVI_PREMIUM = 0;
     } catch (e) {
       PREMIUM.errore = String((e && (e.code || e.message)) || "errore");
@@ -727,6 +729,7 @@
       : PREMIUM.attivo
       ? (PREMIUM.origine === "nutrizionista" ? "Premium è incluso perché sei seguito dal tuo nutrizionista."
         : giorni != null ? `Sei in prova: ${giorni === 1 ? "oggi è l'ultimo giorno" : `ancora ${giorni} giorni`}.` : "Premium è attivo.")
+      : PREMIUM.abbonamentoTerminato ? "Il tuo abbonamento Premium è terminato: ora usi la versione gratuita."
       : PREMIUM.provaUsata ? "La prova gratuita è terminata: ora usi la versione gratuita." : "Stai usando la versione gratuita.";
     apriSheet(`
       <h2 class="sheet__titolo">Il mio Piano Premium</h2>
@@ -766,7 +769,10 @@
   function zonaAcquistoHTML() {
     if (PREMIUM.attivo && PREMIUM.origine === "nutrizionista") return "";
     if (PREMIUM.attivo && PREMIUM.origine === "abbonamento") {
-      const fino = PREMIUM.scadenza ? `Il periodo in corso termina ${formattaDataIt(new Date(PREMIUM.scadenza))}; se non lo disdici, si rinnova da solo.` : "";
+      const quando = PREMIUM.scadenza ? formattaDataIt(new Date(PREMIUM.scadenza)) : "";
+      const fino = !quando ? "" : PREMIUM.rinnovo === false
+        ? `Abbonamento disdetto: resta attivo fino a ${quando}, poi non si rinnova.`
+        : `Il periodo in corso termina ${quando}; se non lo disdici, si rinnova da solo.`;
       return `${fino ? `<p class="hint">${escapeHTML(fino)}</p>` : ""}
         ${pluginAcquisti() ? `<button type="button" class="btn btn--ghost" id="premium-gestisci">Gestisci o disdici su Google Play</button>` : `<p class="hint">Puoi gestire o disdire l'abbonamento dallo store da cui l'hai attivato.</p>`}`;
     }
@@ -804,7 +810,7 @@
   async function dopoAcquisto(messaggio) {
     try {
       const r = await window.cloud.chiamaFunzione("sincronizzaAbbonamento");
-      if (r && typeof r.attivo === "boolean") Object.assign(PREMIUM, r, { noto: true, errore: null });
+      if (r && typeof r.attivo === "boolean") Object.assign(PREMIUM, { rinnovo: undefined, abbonamentoTerminato: undefined }, r, { noto: true, errore: null });
     } catch (e) {
       mostraToast("Acquisto registrato: il Premium si attiva entro pochi minuti", 5000);
       setTimeout(() => aggiornaPremium(true), 60000);
@@ -843,9 +849,25 @@
     await dopoAcquisto("Abbonamento ripristinato");
   }
 
+  /** Alla fine di un abbonamento (disdetto o non rinnovato), una volta per scadenza. */
+  function avvisaFineAbbonamento() {
+    const chiave = `${LS_FINE_PROVA}:abbonamento:${UID}:${PREMIUM.abbonamentoTerminato}`;
+    try { if (localStorage.getItem(chiave)) return; localStorage.setItem(chiave, "1"); } catch (e) { return; }
+    apriSheet(`
+      <h2 class="sheet__titolo">Il tuo abbonamento Premium è terminato</h2>
+      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, consigli sui pasti, lista della settimana, meal prep e andamento completo richiedono Premium.</p>
+      <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
+      ${pluginAcquisti() ? `<button type="button" class="btn" id="fine-abbonamento-attiva">Riattiva Premium</button>` : `<p class="hint">Puoi riattivarlo dall'app Il mio Piano per Android, su Google Play.</p>`}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Continua con la versione gratuita</button>`);
+    const riattiva = document.getElementById("fine-abbonamento-attiva");
+    if (riattiva) riattiva.addEventListener("click", apriPremium);
+  }
+
   /** Alla scadenza della prova, una volta sola: cosa ha usato e cosa si perde. */
   function controllaFineProva() {
-    if (!AUTONOMO || !PREMIUM.noto || PREMIUM.attivo || !PREMIUM.provaUsata) return;
+    if (!AUTONOMO || !PREMIUM.noto || PREMIUM.attivo) return;
+    if (PREMIUM.abbonamentoTerminato) { avvisaFineAbbonamento(); return; }
+    if (!PREMIUM.provaUsata) return;
     const chiave = `${LS_FINE_PROVA}:${UID}`;
     if (localStorage.getItem(chiave)) return;
     localStorage.setItem(chiave, "1");
@@ -4146,6 +4168,7 @@
         <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
       </section>`}
       ${eliminaAccountSezioneHTML()}
+      <p class="stat-nota" style="text-align:center;margin:18px 0 8px;">Il mio Piano · versione ${VERSIONE_APP}</p>
     `;
     collegaPulsantiMioPiano(root, "impostazioni");
     collegaSezioneNutrizionista();
