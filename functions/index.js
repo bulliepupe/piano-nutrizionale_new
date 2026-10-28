@@ -695,7 +695,8 @@ exports.avviaProva = onCall(async (request) => {
 // ---------------------------------------------------------------------------
 const REVENUECAT_SECRET_KEY = defineSecret("REVENUECAT_SECRET_KEY");
 const REVENUECAT_WEBHOOK_AUTH = defineSecret("REVENUECAT_WEBHOOK_AUTH");
-const ENTITLEMENT_PREMIUM = "premium";
+// identificativo del diritto in RevenueCat (Product catalog → Entitlements)
+const ENTITLEMENT_PREMIUM = "il_mio_piano_premium";
 
 /**
  * Dai dati del cliente RevenueCat (GET /v1/subscribers/{uid}) allo stato da

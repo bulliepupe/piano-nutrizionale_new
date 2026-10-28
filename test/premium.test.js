@@ -46,7 +46,7 @@ assert.equal(T.codiceStudioValido("ABCDE"), false);
 // Abbonamento da RevenueCat (Google Play)
 const iso = (ms) => new Date(ms).toISOString();
 const sub = (scade, extra) => ({
-  entitlements: { premium: { expires_date: iso(scade), product_identifier: "premium:annuale" } },
+  entitlements: { il_mio_piano_premium: { expires_date: iso(scade), product_identifier: "premium:annuale" } },
   subscriptions: { "premium:annuale": Object.assign({ store: "play_store" }, extra || {}) },
 });
 let p = T.premiumDaRevenueCat(sub(ora + 300 * giorno), ora);
