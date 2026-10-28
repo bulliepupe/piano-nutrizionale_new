@@ -447,6 +447,18 @@
   }
 
   /**
+   * Vero se due allenamenti dello stesso giorno sono la stessa uscita registrata
+   * da fonti diverse (file e Health Connect): inizio entro 15 minuti e durata
+   * simile (scarto entro 5 minuti o il 25%).
+   */
+  function stessoAllenamento(a, b) {
+    const min = (x) => { const m = /^(\d{1,2}):(\d{2})/.exec((x && x.ora) || ""); return m ? Number(m[1]) * 60 + Number(m[2]) : NaN; };
+    const ia = min(a), ib = min(b), da = Number(a && a.durata) || 0, db = Number(b && b.durata) || 0;
+    if (isNaN(ia) || isNaN(ib) || !da || !db) return false;
+    return Math.abs(ia - ib) <= 15 && Math.abs(da - db) <= Math.max(5, 0.25 * Math.max(da, db));
+  }
+
+  /**
    * Sessione di Health Connect ({ workoutType, duration (s), startDate, endDate, sourceName })
    * nel formato degli allenamenti dell'app. null se la durata è sotto i 3 minuti.
    */
@@ -472,7 +484,7 @@
     return out;
   }
 
-  const api = { daHealthConnect, kcalDaCampioni, kcalTotaliDaCampioni, tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
+  const api = { stessoAllenamento, daHealthConnect, kcalDaCampioni, kcalTotaliDaCampioni, tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.allenamentoFile = api;
 })();

@@ -2508,7 +2508,9 @@
         : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
     } catch (e) { esistenti = []; }
     const giaImportato = esistenti.find((x) => x.fonte === "file" && x.ora === r.ora && Math.abs((x.durata || 0) - r.durata) <= 1);
-    const aMano = giaImportato ? null : esistenti.find((x) => x.fonte !== "file" && x.tipo === r.tipo);
+    const stesso = window.allenamentoFile.stessoAllenamento;
+    const aMano = giaImportato ? null : (esistenti.find((x) => x.fonte === "healthconnect" && stesso(x, r))
+      || esistenti.find((x) => x.fonte !== "file" && x.tipo === r.tipo));
     apriSheet(`
       <h2 class="sheet__titolo">Allenamento dal file</h2>
       <p class="sheet__nota">${r.giorno === oggi ? "Oggi" : escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}, alle ${escapeHTML(r.ora)} · file ${escapeHTML(r.formato)}</p>
@@ -2620,12 +2622,14 @@
     try { perGiorno = await window.cloud.leggiAttivitaPeriodo(UID, limite); } catch (e) { perGiorno = {}; }
     const importati = new Set();
     Object.values(perGiorno).forEach((g) => (g.allenamenti || []).forEach((a) => { if (a.hcId) importati.add(a.hcId); }));
+    const daFile = (r) => ((perGiorno[r.giorno] && perGiorno[r.giorno].allenamenti) || [])
+      .some((a) => a.fonte === "file" && window.allenamentoFile.stessoAllenamento(a, r));
     apriSheet(`
       <h2 class="sheet__titolo">Health Connect</h2>
       <p class="sheet__nota">Allenamenti degli ultimi 7 giorni. Di ciascuno salviamo solo tipo, giorno, orario, durata e calorie stimate dal dispositivo.</p>
       ${sessioni.length ? `<ul class="stat-note-pasti">${sessioni.map((r, i) => `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-hc="${i}">
           <span class="stat-nota-pasto__testa">${escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}</span>
-          <span>${escapeHTML(descriviAllenamento(r))}${r.kcal ? ` · ${numeroIt(r.kcal)} kcal` : ""}${importati.has(r.hcId) ? " · già importato" : ""}</span></button></li>`).join("")}</ul>`
+          <span>${escapeHTML(descriviAllenamento(r))}${r.kcal ? ` · ${numeroIt(r.kcal)} kcal` : ""}${daFile(r) ? " · già importato da file" : importati.has(r.hcId) ? " · già importato" : ""}</span></button></li>`).join("")}</ul>`
         : `<p class="sheet__nota">Nessun allenamento in Health Connect negli ultimi 7 giorni. Controlla che l'app del tuo orologio o del ciclocomputer sia collegata a Health Connect.</p>`}
       <p class="stat-nota">Se un allenamento non compare, apri l'app che lo ha registrato (es. Strava) e aggiorna, poi riprova: alcune app inviano i dati a Health Connect solo quando vengono aperte.</p>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet style="margin-top:12px;">Chiudi</button>`);
@@ -2637,6 +2641,8 @@
 
   function apriSalvaHealthConnect(r, esistenti) {
     const oggi = chiaveData(new Date());
+    const daFile = esistenti.find((x) => x.fonte === "file" && window.allenamentoFile.stessoAllenamento(x, r));
+    if (daFile) { apriDoppioneDaFile(r, daFile, esistenti); return; }
     const giaImportato = esistenti.find((x) => x.hcId && x.hcId === r.hcId);
     const aMano = giaImportato ? null : esistenti.find((x) => x.fonte === "manuale" && x.tipo === r.tipo);
     let intensita = (giaImportato && giaImportato.intensita) || "moderata";
@@ -2677,6 +2683,42 @@
         chiudiSheet();
         const quando = r.giorno === oggi ? "" : ` nel ${dataLunga(r.giorno)}`;
         mostraToast(giaImportato ? `Allenamento aggiornato${quando}` : `Allenamento importato${quando}`);
+      } catch (err) {
+        btn.disabled = false;
+        mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"), 4000);
+      }
+    });
+  }
+
+  /**
+   * L'allenamento c'è già, importato da file con dati più completi: non se ne
+   * crea un secondo. Si può togliere il doppione da Health Connect salvato in
+   * precedenza e, se al file mancano le calorie, aggiungerle.
+   */
+  function apriDoppioneDaFile(r, daFile, esistenti) {
+    const doppione = esistenti.find((x) => x.fonte === "healthconnect" && (x.hcId === r.hcId || window.allenamentoFile.stessoAllenamento(x, r)));
+    const aggiungiKcal = !(Number(daFile.kcal) > 0) && r.kcal > 0;
+    const azione = doppione ? (aggiungiKcal ? "Elimina il doppione e aggiungi le calorie" : "Elimina il doppione")
+      : aggiungiKcal ? `Aggiungi le calorie (${numeroIt(r.kcal)} kcal)` : "";
+    apriSheet(`
+      <h2 class="sheet__titolo">Già importato da file</h2>
+      <p class="sheet__nota">Questo allenamento c'è già, importato da file: ${escapeHTML(descriviAllenamento(daFile))}. Il file ha dati più completi (frequenza cardiaca, potenza, zone), quindi teniamo quello.</p>
+      ${doppione ? `<p class="avviso-doppione">C'è anche una copia importata da Health Connect: ${escapeHTML(descriviAllenamento(doppione))}.</p>` : ""}
+      ${azione ? `<button type="button" class="btn" id="btn-doppione" style="margin-top:12px;">${azione}</button>` : ""}
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    const btn = document.getElementById("btn-doppione");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const oggi = chiaveData(new Date());
+        const attuali = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
+          : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
+        const lista = attuali.filter((x) => !(doppione && x.id === doppione.id))
+          .map((x) => (aggiungiKcal && x.id === daFile.id ? Object.assign({}, x, { kcal: r.kcal }) : x));
+        await window.cloud.salvaAttivita(UID, r.giorno, { allenamenti: lista });
+        chiudiSheet();
+        mostraToast(doppione ? "Doppione eliminato" : "Calorie aggiunte");
       } catch (err) {
         btn.disabled = false;
         mostraToast(msgErroreScrittura(err, "Non salvato: controlla la connessione"), 4000);

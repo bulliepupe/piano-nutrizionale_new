@@ -79,4 +79,11 @@ ok(A.kcalTotaliDaCampioni([{ value: 467, startDate: "2026-10-27T17:09:00.000Z", 
 ok(A.kcalTotaliDaCampioni([{ value: 2099, startDate: "2026-10-26T23:00:00.000Z", endDate: "2026-10-27T23:00:00.000Z", sourceName: "com.strava" }], W) === null, "totali: il totale del giorno non conta");
 ok(A.kcalTotaliDaCampioni([{ value: 300, startDate: "2026-10-27T17:10:00.000Z", endDate: "2026-10-27T17:40:00.000Z", sourceName: "x" }, { value: 350, startDate: "2026-10-27T17:40:00.000Z", endDate: "2026-10-27T18:24:00.000Z", sourceName: "x" }], W) === 650, "totali: campioni a intervalli sommati");
 ok(A.kcalTotaliDaCampioni([], W) === null && A.kcalTotaliDaCampioni(null, {}) === null, "totali: nessun campione");
+// Stesso allenamento da fonti diverse (file e Health Connect)
+const S = A.stessoAllenamento;
+ok(S({ ora: "18:09", durata: 75 }, { ora: "18:10", durata: 76 }), "stesso: TCX e Health Connect della stessa uscita");
+ok(S({ ora: "16:23", durata: 70 }, { ora: "16:30", durata: 62 }), "stesso: piccoli scarti di inizio e durata");
+ok(!S({ ora: "07:00", durata: 60 }, { ora: "18:00", durata: 60 }), "diverso: mattina e sera");
+ok(!S({ ora: "18:00", durata: 30 }, { ora: "18:05", durata: 90 }), "diverso: durate molto diverse");
+ok(!S({ ora: "", durata: 60 }, { ora: "18:00", durata: 60 }), "diverso: orario mancante");
 console.log("OK: " + n + " verifiche superate");
