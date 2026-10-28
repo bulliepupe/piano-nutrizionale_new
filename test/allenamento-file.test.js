@@ -73,4 +73,10 @@ ok(hc.hcId === A.daHealthConnect({ workoutType: "cycling", duration: 3720, start
 ok(A.daHealthConnect({ workoutType: "running", duration: 120, startDate: "2026-10-20T07:00:00Z" }) === null, "hc: sotto i 3 minuti scartato");
 ok(A.daHealthConnect({ workoutType: "golf", duration: 3600, startDate: "2026-10-20T07:00:00Z" }).tipo === "Altro", "hc: tipo sconosciuto = Altro");
 ok(A.daHealthConnect({ workoutType: "swimmingOpenWater", duration: 1800, startDate: "2026-10-20T07:00:00Z" }).indoor === undefined, "hc: nuoto in acque libere non al chiuso");
+// Calorie totali (Strava): solo i campioni dentro l'allenamento
+const W = { startDate: "2026-10-27T17:09:00.000Z", endDate: "2026-10-27T18:25:00.000Z", sourceName: "com.strava" };
+ok(A.kcalTotaliDaCampioni([{ value: 467, startDate: "2026-10-27T17:09:00.000Z", endDate: "2026-10-27T18:25:00.000Z", sourceName: "com.strava" }], W) === 467, "totali: 467 kcal di Strava");
+ok(A.kcalTotaliDaCampioni([{ value: 2099, startDate: "2026-10-26T23:00:00.000Z", endDate: "2026-10-27T23:00:00.000Z", sourceName: "com.strava" }], W) === null, "totali: il totale del giorno non conta");
+ok(A.kcalTotaliDaCampioni([{ value: 300, startDate: "2026-10-27T17:10:00.000Z", endDate: "2026-10-27T17:40:00.000Z", sourceName: "x" }, { value: 350, startDate: "2026-10-27T17:40:00.000Z", endDate: "2026-10-27T18:24:00.000Z", sourceName: "x" }], W) === 650, "totali: campioni a intervalli sommati");
+ok(A.kcalTotaliDaCampioni([], W) === null && A.kcalTotaliDaCampioni(null, {}) === null, "totali: nessun campione");
 console.log("OK: " + n + " verifiche superate");

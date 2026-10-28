@@ -54,8 +54,9 @@
     <!-- Salvataggio dei PDF in Documenti: serve solo fino ad Android 10 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
-    <!-- Health Connect: si leggono SOLO gli allenamenti (READ_EXERCISE) e le calorie attive
-         (READ_ACTIVE_CALORIES_BURNED), dichiarati dal plugin @capgo/capacitor-health.
+    <!-- Health Connect: si leggono SOLO gli allenamenti (READ_EXERCISE) e le calorie, attive
+         (READ_ACTIVE_CALORIES_BURNED) o totali (READ_TOTAL_CALORIES_BURNED, quelle scritte da
+         Strava), dichiarati dal plugin @capgo/capacitor-health.
          Tutti gli altri permessi sanitari che il plugin
          dichiara di serie vengono tolti qui: Google Play chiede di giustificare ognuno. -->
     <uses-permission android:name="android.permission.health.READ_STEPS" tools:node="remove" />
@@ -93,7 +94,6 @@
     <uses-permission android:name="android.permission.health.WRITE_BASAL_BODY_TEMPERATURE" tools:node="remove" />
     <uses-permission android:name="android.permission.health.READ_BASAL_METABOLIC_RATE" tools:node="remove" />
     <uses-permission android:name="android.permission.health.WRITE_BASAL_METABOLIC_RATE" tools:node="remove" />
-    <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" tools:node="remove" />
     <uses-permission android:name="android.permission.health.WRITE_TOTAL_CALORIES_BURNED" tools:node="remove" />
     <uses-permission android:name="android.permission.health.READ_MINDFULNESS" tools:node="remove" />
     <uses-permission android:name="android.permission.health.WRITE_MINDFULNESS" tools:node="remove" />

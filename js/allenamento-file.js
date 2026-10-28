@@ -391,8 +391,9 @@
 
   // ---------------------------------------------------------------------
   // Health Connect (app Android): sessioni di allenamento (tipo, inizio, fine)
-  // e calorie attive del periodo. Distanza e frequenza non si leggono
-  // (permessi READ_EXERCISE e READ_ACTIVE_CALORIES_BURNED soltanto).
+  // e calorie del periodo, attive o, se mancano, totali (Strava scrive solo
+  // queste). Distanza e frequenza non si leggono (permessi READ_EXERCISE,
+  // READ_ACTIVE_CALORIES_BURNED e READ_TOTAL_CALORIES_BURNED soltanto).
   // ---------------------------------------------------------------------
   const TIPI_HC = {
     running: ["Corsa"], runningTreadmill: ["Corsa", true],
@@ -431,6 +432,21 @@
   }
 
   /**
+   * Calorie totali di un allenamento: solo i campioni registrati DENTRO la
+   * sessione (un minuto di tolleranza), per non contare un totale giornaliero
+   * o di altre ore. Poi come le calorie attive: una sola fonte.
+   */
+  function kcalTotaliDaCampioni(campioni, w) {
+    const ini = Date.parse(w && w.startDate), fine = Date.parse(w && w.endDate);
+    if (isNaN(ini) || isNaN(fine)) return null;
+    const dentro = (campioni || []).filter((c) => {
+      const a = Date.parse(c && c.startDate), b = Date.parse(c && c.endDate);
+      return !isNaN(a) && !isNaN(b) && a >= ini - 60000 && b <= fine + 60000;
+    });
+    return kcalDaCampioni(dentro, w.sourceName);
+  }
+
+  /**
    * Sessione di Health Connect ({ workoutType, duration (s), startDate, endDate, sourceName })
    * nel formato degli allenamenti dell'app. null se la durata è sotto i 3 minuti.
    */
@@ -456,7 +472,7 @@
     return out;
   }
 
-  const api = { daHealthConnect, kcalDaCampioni, tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
+  const api = { daHealthConnect, kcalDaCampioni, kcalTotaliDaCampioni, tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.allenamentoFile = api;
 })();

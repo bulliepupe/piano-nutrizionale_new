@@ -2559,8 +2559,9 @@
   // ---------------------------------------------------------------------
   // Health Connect (solo app Android): allenamenti degli ultimi 7 giorni,
   // letti solo quando il paziente tocca il pulsante. Si legge e si salva solo
-  // tipo, giorno, orario, durata e calorie attive stimate dal dispositivo
-  // (permessi READ_EXERCISE e READ_ACTIVE_CALORIES_BURNED).
+  // tipo, giorno, orario, durata e calorie stimate dal dispositivo: attive o,
+  // se mancano, totali registrate durante l'allenamento (permessi
+  // READ_EXERCISE, READ_ACTIVE_CALORIES_BURNED e READ_TOTAL_CALORIES_BURNED).
   // ---------------------------------------------------------------------
   function healthConnect() {
     return (RUOLO === "paziente" && window.cloud.nativo && window.allenamentoFile && window.allenamentoFile.daHealthConnect
@@ -2585,7 +2586,7 @@
         sheetHC("Health Connect non è disponibile su questo telefono. Da Android 14 è già incluso; sulle versioni precedenti si installa l'app «Health Connect» dal Play Store.");
         return;
       }
-      await H.requestAuthorization({ read: ["workouts", "calories"] });
+      await H.requestAuthorization({ read: ["workouts", "calories", "totalCalories"] });
     } catch (e) {
       sheetHC("Non riesco ad aprire Health Connect. Riprova, oppure segna l'allenamento a mano.");
       return;
@@ -2602,6 +2603,11 @@
         try {
           const c = await H.readSamples({ dataType: "calories", startDate: w.startDate, endDate: w.endDate, limit: 1000 });
           const kcal = window.allenamentoFile.kcalDaCampioni(c && c.samples, w.sourceName);
+          if (kcal) { w.totalEnergyBurned = kcal; continue; }
+        } catch (e) { /* calorie attive non disponibili */ }
+        try {
+          const t = await H.readSamples({ dataType: "totalCalories", startDate: w.startDate, endDate: w.endDate, limit: 1000 });
+          const kcal = window.allenamentoFile.kcalTotaliDaCampioni(t && t.samples, w);
           if (kcal) w.totalEnergyBurned = kcal;
         } catch (e) { /* senza calorie */ }
       }
@@ -2621,6 +2627,7 @@
           <span class="stat-nota-pasto__testa">${escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}</span>
           <span>${escapeHTML(descriviAllenamento(r))}${r.kcal ? ` · ${numeroIt(r.kcal)} kcal` : ""}${importati.has(r.hcId) ? " · già importato" : ""}</span></button></li>`).join("")}</ul>`
         : `<p class="sheet__nota">Nessun allenamento in Health Connect negli ultimi 7 giorni. Controlla che l'app del tuo orologio o del ciclocomputer sia collegata a Health Connect.</p>`}
+      <p class="stat-nota">Se un allenamento non compare, apri l'app che lo ha registrato (es. Strava) e aggiorna, poi riprova: alcune app inviano i dati a Health Connect solo quando vengono aperte.</p>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet style="margin-top:12px;">Chiudi</button>`);
     document.querySelectorAll("[data-hc]").forEach((b) => b.addEventListener("click", () => {
       const r = sessioni[Number(b.dataset.hc)];
