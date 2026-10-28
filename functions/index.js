@@ -679,6 +679,107 @@ exports.avviaProva = onCall(async (request) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Abbonamenti Premium da Google Play (e in futuro App Store) tramite RevenueCat.
+// L'app Android acquista con l'SDK RevenueCat usando come identificativo l'uid
+// Firebase del paziente; qui il server legge da RevenueCat lo stato vero
+// dell'abbonamento (mai quello dichiarato dal telefono) e lo scrive in
+// users/{uid}.premium. Si aggiorna in due modi:
+//  - sincronizzaAbbonamento: chiamata dall'app subito dopo un acquisto o un
+//    ripristino;
+//  - revenuecatWebhook: chiamata da RevenueCat a ogni rinnovo, disdetta,
+//    scadenza o rimborso.
+// Segreti (una volta, da terminale):
+//   firebase functions:secrets:set REVENUECAT_SECRET_KEY    (chiave segreta API v1, "sk_...")
+//   firebase functions:secrets:set REVENUECAT_WEBHOOK_AUTH  (valore dell'header Authorization del webhook)
+// ---------------------------------------------------------------------------
+const REVENUECAT_SECRET_KEY = defineSecret("REVENUECAT_SECRET_KEY");
+const REVENUECAT_WEBHOOK_AUTH = defineSecret("REVENUECAT_WEBHOOK_AUTH");
+const ENTITLEMENT_PREMIUM = "premium";
+
+/**
+ * Dai dati del cliente RevenueCat (GET /v1/subscribers/{uid}) allo stato da
+ * salvare. null se non c'è mai stato un abbonamento.
+ */
+function premiumDaRevenueCat(subscriber, adesso) {
+  const ent = subscriber && subscriber.entitlements && subscriber.entitlements[ENTITLEMENT_PREMIUM];
+  if (!ent) return null;
+  const scadenza = ent.expires_date ? Date.parse(ent.expires_date) : null;
+  if (ent.expires_date && isNaN(scadenza)) return null;
+  const prodotto = String(ent.product_identifier || "").slice(0, 100);
+  const sub = (subscriber.subscriptions && subscriber.subscriptions[prodotto]) || {};
+  const attivo = scadenza == null || scadenza > adesso;
+  return {
+    stato: attivo ? "attivo" : "scaduto",
+    origine: String(sub.store || "store").slice(0, 30),
+    prodotto,
+    scadenza: scadenza == null ? null : Timestamp.fromMillis(scadenza),
+    rinnovo: attivo && !sub.unsubscribe_detected_at && !sub.refunded_at,
+    problemaPagamento: !!sub.billing_issues_detected_at,
+  };
+}
+
+/** Legge l'abbonamento da RevenueCat e aggiorna users/{uid}.premium. */
+async function sincronizzaRevenueCat(uid, chiave) {
+  const utenteRef = db.collection("users").doc(uid);
+  const snap = await utenteRef.get();
+  if (!snap.exists || (snap.data() || {}).ruolo !== "paziente") return null;
+  const risposta = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(uid)}`, {
+    headers: { Authorization: `Bearer ${chiave}`, "Content-Type": "application/json" },
+  });
+  if (!risposta.ok) throw new Error(`RevenueCat ${risposta.status}`);
+  const dati = await risposta.json();
+  const adesso = Date.now();
+  const nuovo = premiumDaRevenueCat(dati && dati.subscriber, adesso);
+  const attuale = (snap.data() || {}).premium || {};
+  if (!nuovo) return statoPremiumServer(attuale, null, adesso);
+  // la prova già usata resta registrata; un abbonamento scaduto non cancella
+  // una prova ancora in corso
+  if (nuovo.stato === "scaduto" && attuale.stato === "prova") return statoPremiumServer(attuale, null, adesso);
+  const premium = Object.assign({}, nuovo, attuale.provaIniziata ? { provaIniziata: attuale.provaIniziata } : {}, { aggiornato: FieldValue.serverTimestamp() });
+  await utenteRef.update({ premium });
+  return statoPremiumServer(premium, null, adesso);
+}
+
+/** Dall'app, dopo un acquisto o un ripristino: stato aggiornato del Premium. */
+exports.sincronizzaAbbonamento = onCall({ secrets: [REVENUECAT_SECRET_KEY] }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  try {
+    await sincronizzaRevenueCat(uid, REVENUECAT_SECRET_KEY.value());
+  } catch (e) {
+    console.error("sincronizzaAbbonamento", e && e.message);
+    throw new HttpsError("unavailable", "Non riesco a verificare l'abbonamento, riprova tra poco.");
+  }
+  const utente = (await db.collection("users").doc(uid).get()).data() || {};
+  return statoPremiumPaziente(utente, Date.now());
+});
+
+function stessaStringa(a, b) {
+  const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
+  return x.length === y.length && require("crypto").timingSafeEqual(x, y);
+}
+
+/** Notifiche di RevenueCat: rinnovi, disdette, scadenze, rimborsi. */
+exports.revenuecatWebhook = onRequest(
+  { secrets: [REVENUECAT_SECRET_KEY, REVENUECAT_WEBHOOK_AUTH], cors: false },
+  async (req, res) => {
+    if (req.method !== "POST") { res.status(405).send("Metodo non consentito"); return; }
+    if (!stessaStringa(req.headers.authorization, REVENUECAT_WEBHOOK_AUTH.value())) { res.status(401).send("Non autorizzato"); return; }
+    const ev = (req.body && req.body.event) || {};
+    if (ev.type === "TEST") { res.status(200).send("ok"); return; }
+    const uids = new Set([ev.app_user_id, ev.original_app_user_id].concat(ev.aliases || [], ev.transferred_to || [], ev.transferred_from || [])
+      .filter((u) => typeof u === "string" && /^[A-Za-z0-9]{20,40}$/.test(u)));
+    try {
+      for (const uid of uids) await sincronizzaRevenueCat(uid, REVENUECAT_SECRET_KEY.value());
+      res.status(200).send("ok");
+    } catch (e) {
+      console.error("revenuecatWebhook", ev.type, e && e.message);
+      res.status(500).send("errore"); // RevenueCat riprova più tardi
+    }
+  }
+);
+
 /** Codice studio del professionista (lo crea la prima volta). */
 exports.codiceStudio = onCall(async (request) => {
   const uid = request.auth && request.auth.uid;
@@ -2043,5 +2144,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

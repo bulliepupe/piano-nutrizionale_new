@@ -10,6 +10,9 @@
   "overrideWeek": null,
   "_overrideWeek_spiegazione": "Se vuoi forzare manualmente una settimana specifica (1-5) per tutti i giorni, indipendentemente dalla data, scrivi il numero qui (es. 3). Altrimenti lascia null.",
 
+  "revenuecatAndroidKey": "goog_TAYGRFOgRVYmIqGBmhhBvkvdLyQ",
+  "_revenuecatAndroidKey_spiegazione": "Chiave pubblica dell'SDK RevenueCat per l'app Android (inizia con goog_): RevenueCat → Project settings → API keys. È pubblica per natura: può stare qui. Se è vuota o non inizia con goog_, l'app Android non mostra gli acquisti.",
+
   "linkAcquisto": "https://ilmiopiano.it/#prezzi",
   "linkPortaleClienti": "https://billing.stripe.com/p/login/7sY4gB7JU3iedrV2gXeME00",
   "linkPrivacy": "https://ilmiopiano.it/privacy.html",

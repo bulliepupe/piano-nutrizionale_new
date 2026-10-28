@@ -43,4 +43,21 @@ for (let i = 0; i < 200; i++) assert.ok(T.codiceStudioValido(T.nuovoCodiceStudio
 assert.equal(T.codiceStudioValido("ABC12O"), false);
 assert.equal(T.codiceStudioValido("abcdef"), false);
 assert.equal(T.codiceStudioValido("ABCDE"), false);
+// Abbonamento da RevenueCat (Google Play)
+const iso = (ms) => new Date(ms).toISOString();
+const sub = (scade, extra) => ({
+  entitlements: { premium: { expires_date: iso(scade), product_identifier: "premium:annuale" } },
+  subscriptions: { "premium:annuale": Object.assign({ store: "play_store" }, extra || {}) },
+});
+let p = T.premiumDaRevenueCat(sub(ora + 300 * giorno), ora);
+assert.equal(p.stato, "attivo"); assert.equal(p.origine, "play_store"); assert.equal(p.rinnovo, true);
+r = T.statoPremiumServer(p, null, ora); assert.equal(r.attivo, true); assert.equal(r.origine, "abbonamento");
+p = T.premiumDaRevenueCat(sub(ora + 300 * giorno, { unsubscribe_detected_at: iso(ora) }), ora);
+assert.equal(p.stato, "attivo"); assert.equal(p.rinnovo, false); // disdetto: attivo fino a scadenza
+p = T.premiumDaRevenueCat(sub(ora - giorno), ora);
+assert.equal(p.stato, "scaduto"); r = T.statoPremiumServer(p, null, ora); assert.equal(r.attivo, false);
+p = T.premiumDaRevenueCat(sub(ora + 3 * giorno, { billing_issues_detected_at: iso(ora) }), ora);
+assert.equal(p.problemaPagamento, true);
+assert.equal(T.premiumDaRevenueCat({ entitlements: {} }, ora), null);
+assert.equal(T.premiumDaRevenueCat(null, ora), null);
 console.log("Tutti i controlli superati");

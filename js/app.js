@@ -733,8 +733,114 @@
       <p class="sheet__nota">${escapeHTML(stato)}</p>
       <ul class="premium-elenco">${FUNZIONI_PREMIUM.map(([i, t, d]) => `<li><span>${i}</span><div><strong>${escapeHTML(t)}</strong><small>${escapeHTML(d)}</small></div></li>`).join("")}</ul>
       <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
-      ${PREMIUM.attivo && PREMIUM.origine !== "prova" ? "" : `<p class="hint">L'abbonamento si attiverà dall'app scaricata da Google Play o App Store, in arrivo a breve.</p>`}
+      ${zonaAcquistoHTML()}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>`);
+    if (document.getElementById("premium-acquisti")) caricaOfferte();
+    const gestisci = document.getElementById("premium-gestisci");
+    if (gestisci) gestisci.addEventListener("click", () => window.open(`https://play.google.com/store/account/subscriptions?package=${PACCHETTO_ANDROID}`, "_blank"));
+  }
+
+  // ---------------------------------------------------------------------
+  // Abbonamento Premium nell'app Android (Google Play tramite RevenueCat).
+  // L'acquisto lo fa Google Play; lo stato lo verifica sempre il server
+  // (sincronizzaAbbonamento), mai il telefono.
+  // ---------------------------------------------------------------------
+  const PACCHETTO_ANDROID = "it.ilmiopiano.app";
+  const ACQUISTI = { uid: null };
+
+  function pluginAcquisti() {
+    return (RUOLO === "paziente" && AUTONOMO && window.cloud.nativo && /^goog_/.test(CONFIG.revenuecatAndroidKey || "")
+      && window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android"
+      && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases) || null;
+  }
+
+  async function preparaAcquisti() {
+    const P = pluginAcquisti();
+    if (!P) throw new Error("acquisti-non-disponibili");
+    if (!ACQUISTI.uid) await P.configure({ apiKey: CONFIG.revenuecatAndroidKey, appUserID: UID });
+    else if (ACQUISTI.uid !== UID) await P.logIn({ appUserID: UID });
+    ACQUISTI.uid = UID;
+    return P;
+  }
+
+  function zonaAcquistoHTML() {
+    if (PREMIUM.attivo && PREMIUM.origine === "nutrizionista") return "";
+    if (PREMIUM.attivo && PREMIUM.origine === "abbonamento") {
+      const fino = PREMIUM.scadenza ? `Il periodo in corso termina ${formattaDataIt(new Date(PREMIUM.scadenza))}; se non lo disdici, si rinnova da solo.` : "";
+      return `${fino ? `<p class="hint">${escapeHTML(fino)}</p>` : ""}
+        ${pluginAcquisti() ? `<button type="button" class="btn btn--ghost" id="premium-gestisci">Gestisci o disdici su Google Play</button>` : `<p class="hint">Puoi gestire o disdire l'abbonamento dallo store da cui l'hai attivato.</p>`}`;
+    }
+    if (!pluginAcquisti()) return `<p class="hint">L'abbonamento si attiva dall'app Il mio Piano per Android, su Google Play; su iPhone arriverà a breve.</p>`;
+    return `<div id="premium-acquisti"><p class="hint">Carico le offerte…</p></div>`;
+  }
+
+  async function caricaOfferte() {
+    const box = document.getElementById("premium-acquisti");
+    let pacchetti = [];
+    try {
+      const P = await preparaAcquisti();
+      const o = await P.getOfferings();
+      pacchetti = ((o && o.current && o.current.availablePackages) || [])
+        .filter((p) => p && p.product && (p.packageType === "ANNUAL" || p.packageType === "MONTHLY"))
+        .sort((a, b) => (a.packageType === "ANNUAL" ? -1 : 1) - (b.packageType === "ANNUAL" ? -1 : 1));
+    } catch (e) { pacchetti = []; }
+    if (!box || !box.isConnected) return;
+    if (!pacchetti.length) {
+      box.innerHTML = `<p class="hint">Non riesco a caricare le offerte di Google Play: controlla la connessione e riprova.</p>`;
+      return;
+    }
+    box.innerHTML = `
+      ${pacchetti.map((p, i) => `<button type="button" class="btn${i ? " btn--ghost" : ""}" data-pacchetto="${i}" style="margin-top:8px;">${p.packageType === "ANNUAL" ? "Annuale" : "Mensile"} · ${escapeHTML(p.product.priceString || "")}</button>`).join("")}
+      <p class="hint">Il pagamento avviene con Google Play. L'abbonamento si rinnova da solo; puoi disdirlo quando vuoi da Google Play e resta attivo fino alla fine del periodo pagato.${CONFIG.linkTermini ? ` Acquistando accetti i <a href="${escapeHTML(CONFIG.linkTermini)}" target="_blank" rel="noopener">termini di servizio</a>.` : ""}</p>
+      <button type="button" class="btn btn--ghost" id="premium-ripristina">Ripristina acquisti</button>`;
+    box.querySelectorAll("[data-pacchetto]").forEach((b) => b.addEventListener("click", () => compraPremium(pacchetti[Number(b.dataset.pacchetto)], b)));
+    document.getElementById("premium-ripristina").addEventListener("click", (e) => ripristinaAcquisti(e.currentTarget));
+  }
+
+  function acquistoAnnullato(e) {
+    return !!(e && (e.userCancelled || (e.data && e.data.userCancelled) || String(e.code) === "1"));
+  }
+
+  async function dopoAcquisto(messaggio) {
+    try {
+      const r = await window.cloud.chiamaFunzione("sincronizzaAbbonamento");
+      if (r && typeof r.attivo === "boolean") Object.assign(PREMIUM, r, { noto: true, errore: null });
+    } catch (e) {
+      mostraToast("Acquisto registrato: il Premium si attiva entro pochi minuti", 5000);
+      setTimeout(() => aggiornaPremium(true), 60000);
+      chiudiSheet();
+      return;
+    }
+    chiudiSheet();
+    mostraToast(PREMIUM.attivo && PREMIUM.origine === "abbonamento" ? messaggio : "Nessun abbonamento attivo trovato", 4000);
+    try { render(); } catch (e) { console.warn(e); }
+    if (PREMIUM.attivo) richiediStimeRese();
+  }
+
+  async function compraPremium(pacchetto, btn) {
+    document.querySelectorAll("#premium-acquisti button").forEach((b) => { b.disabled = true; });
+    try {
+      const P = await preparaAcquisti();
+      await P.purchasePackage({ aPackage: pacchetto });
+    } catch (e) {
+      document.querySelectorAll("#premium-acquisti button").forEach((b) => { b.disabled = false; });
+      if (!acquistoAnnullato(e)) mostraToast("Acquisto non riuscito: riprova tra poco", 4000);
+      return;
+    }
+    await dopoAcquisto("Premium attivo: grazie!");
+  }
+
+  async function ripristinaAcquisti(btn) {
+    btn.disabled = true;
+    try {
+      const P = await preparaAcquisti();
+      await P.restorePurchases();
+    } catch (e) {
+      btn.disabled = false;
+      mostraToast("Non riesco a contattare Google Play: riprova tra poco", 4000);
+      return;
+    }
+    await dopoAcquisto("Abbonamento ripristinato");
   }
 
   /** Alla scadenza della prova, una volta sola: cosa ha usato e cosa si perde. */
@@ -756,8 +862,10 @@
       <ul class="premium-elenco premium-elenco--semplice">${usate.map((u) => `<li>✓ ${escapeHTML(u)}</li>`).join("")}</ul>
       <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, consigli sui pasti, lista della settimana, meal prep e andamento completo richiedono Premium.</p>
       <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
-      <p class="hint">L'abbonamento si attiverà dall'app scaricata da Google Play o App Store, in arrivo a breve.</p>
+      ${pluginAcquisti() ? `<button type="button" class="btn" id="fine-prova-attiva">Attiva Premium</button>` : `<p class="hint">L'abbonamento si attiva dall'app Il mio Piano per Android, su Google Play; su iPhone arriverà a breve.</p>`}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Continua con la versione gratuita</button>`);
+    const attiva = document.getElementById("fine-prova-attiva");
+    if (attiva) attiva.addEventListener("click", apriPremium);
   }
 
   // ---- Collegamento al nutrizionista con il codice studio ----
@@ -5570,7 +5678,7 @@
         const dati = a.fonte !== "file" ? (a.fonte === "healthconnect" ? ["Da Health Connect", a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ") : "Segnato a mano dal paziente") : [a.distanzaKm ? `${String(a.distanzaKm).replace(".", ",")} km` : "", a.dislivelloM ? `D+ ${a.dislivelloM} m` : "", a.fcMedia ? `FC ${a.fcMedia}` : "", a.potenzaNormalizzata || a.potenzaMedia ? `${a.potenzaNormalizzata || a.potenzaMedia} W` : "", zone, a.kcal ? `${numeroIt(a.kcal)} kcal disp.` : ""].filter(Boolean).join(" · ");
         return `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-allenamento-prof="${escapeHTML(a.giorno + "|" + a.id)}"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(nomeAllenamento(a))} · ${a.durata} min${a.intensita ? ` · ${escapeHTML(a.intensita)}` : ""}</span><span>${escapeHTML(dati)}</span><span class="allenamento-prof__apri" aria-hidden="true">Apri ›</span></button></li>`;
       }).join("");
-      box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente o importati dai file dei suoi dispositivi.</p>
+      box.innerHTML = `<h2>Allenamenti</h2><p class="hint">Ultimi 30 giorni, segnati dal paziente o importati dai file dei suoi dispositivi e da Health Connect.</p>
         <p class="stat-riga"><span>Totale</span><strong>${escapeHTML(t.riga)}</strong></p>
         ${t.dettaglio ? `<p class="stat-nota">${escapeHTML(t.dettaglio)}</p>` : ""}
         ${rigaFile ? `<p class="stat-nota">${escapeHTML(rigaFile)}</p>` : ""}
