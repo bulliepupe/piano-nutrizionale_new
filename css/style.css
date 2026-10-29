@@ -2307,6 +2307,11 @@ body.con-informativa { overflow: hidden; }
 
 /* Allenamenti di oggi */
 .allenamenti-oggi { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.acqua-oggi { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.acqua-oggi__testo { flex: 1; font-size: .95rem; color: var(--ink); }
+.acqua-oggi__btn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 1.2rem; line-height: 1; cursor: pointer; }
+.acqua-oggi__btn:disabled { opacity: .4; cursor: default; }
+.acqua-oggi.is-completo .acqua-oggi__testo { color: var(--accent); font-weight: 600; }
 .allenamento-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 6px 6px 6px 12px; font-size: 13px; font-weight: 600; }
 .allenamento-chip__via { border: none; background: transparent; color: inherit; width: 24px; height: 24px; border-radius: 12px; cursor: pointer; font-size: 12px; }
 .allenamento-aggiungi { border: 1px dashed var(--border); background: transparent; color: var(--ink-soft); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }

@@ -458,6 +458,7 @@
   async function avviaPaziente(utenteDati) {
     AUTONOMO = !!utenteDati.autonomo;
     PAUSE = Array.isArray(utenteDati.pause) ? utenteDati.pause : [];
+    ACQUA = Object.assign({}, utenteDati.acqua || {});
     PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
     // Senza una scelta registrata: sì per i pazienti del nutrizionista, no per
     // gli autonomi (iscritti prima del 20/10), come il controllo sul server.
@@ -671,9 +672,10 @@
   const PREMIUM = { noto: false, attivo: true, origine: null, scadenza: null, provaUsata: false };
   let AUTONOMO = false;
   let PAUSE = []; // pausa del percorso: [{ dal, al }]
+  let ACQUA = {}; // { mostra, obiettivo, promemoria, ogniOre }
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v106";
+  const VERSIONE_APP = "v107";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -2254,6 +2256,7 @@
           <span class="oggi-riepilogo__numero" aria-hidden="true"><b>${numFatti}</b>/${tot}</span>
         </div>
         ${allenamentiOggiHTML()}
+        ${acquaOggiHTML()}
         ${giorno.kcal != null || (PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.obiettivo) ? `<div class="oggi-riepilogo__pill">
           ${giorno.kcal != null ? `<span class="pill pill--kcal">${giorno.kcal} kcal circa</span>` : ""}
           ${PIANO_ATTIVO.paziente && PIANO_ATTIVO.paziente.obiettivo ? `<span class="pill">${escapeHTML(PIANO_ATTIVO.paziente.obiettivo)}</span>` : ""}
@@ -2309,6 +2312,7 @@
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));
     });
     collegaAllenamentiOggi();
+    collegaAcquaOggi();
     root.querySelectorAll("[data-meal-apri]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const art = btn.closest(".meal");
@@ -4172,11 +4176,13 @@
         ` : `<p class="hint">Nessun piano assegnato ancora.</p>`}
         <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
       </section>`}
+      ${acquaSezioneHTML()}
       ${pausaSezioneHTML()}
       ${eliminaAccountSezioneHTML()}
       <p class="stat-nota" style="text-align:center;margin:18px 0 8px;">Il mio Piano · versione ${VERSIONE_APP}</p>
     `;
     collegaPulsantiMioPiano(root, "impostazioni");
+    collegaAcquaImpostazioni();
     collegaSezioneNutrizionista();
     collegaEliminaAccount();
     collegaRiepilogoVisita();
@@ -4422,6 +4428,7 @@
     timersProgrammati = [];
     if (window.cloud.nativo) return; // nell'app Android i promemoria arrivano solo come notifiche native
     if (pausaInCorso()) return; // pausa del percorso: niente promemoria
+    pianificaAcquaOggi();
 
     const oggi = new Date();
     const { giorno } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
@@ -4657,6 +4664,94 @@
     } catch (e) {
       mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Acqua: contatore dei bicchieri (da 250 ml) nella giornata, obiettivo e
+  // promemoria facoltativi scelti dal paziente. Il conteggio sta nel
+  // documento attivita del giorno, che il nutrizionista può leggere.
+  // ---------------------------------------------------------------------
+  const ACQUA_OBIETTIVI = [6, 8, 10, 12];
+  const ACQUA_INTERVALLI = [2, 3];
+  function orariAcqua(ogniOre) {
+    const passo = ACQUA_INTERVALLI.includes(Number(ogniOre)) ? Number(ogniOre) : 2;
+    const out = [];
+    for (let h = 10; h <= 20; h += passo) out.push(String(h).padStart(2, "0") + ":00");
+    return out;
+  }
+  function bicchieriOggi() { return Math.max(0, Number(ATTIVITA_OGGI.acqua) || 0); }
+
+  function acquaOggiHTML() {
+    if (RUOLO !== "paziente" || ACQUA.mostra === false) return "";
+    const n = bicchieriOggi(), ob = Number(ACQUA.obiettivo) || 0;
+    return `
+      <div class="acqua-oggi${ob && n >= ob ? " is-completo" : ""}" role="group" aria-label="Acqua di oggi">
+        <span class="acqua-oggi__testo"><span aria-hidden="true">💧</span> ${ob ? `${n}/${ob}` : n} ${n === 1 && !ob ? "bicchiere" : "bicchieri"}</span>
+        <button type="button" class="acqua-oggi__btn" data-acqua="-1" aria-label="Togli un bicchiere" ${n ? "" : "disabled"}>−</button>
+        <button type="button" class="acqua-oggi__btn" data-acqua="1" aria-label="Aggiungi un bicchiere">+</button>
+      </div>`;
+  }
+
+  function collegaAcquaOggi() {
+    document.querySelectorAll(".acqua-oggi [data-acqua]").forEach((b) => b.addEventListener("click", async () => {
+      const nuovo = Math.max(0, Math.min(30, bicchieriOggi() + Number(b.dataset.acqua)));
+      ATTIVITA_OGGI = Object.assign({}, ATTIVITA_OGGI, { acqua: nuovo });
+      if (currentView === "oggi") renderOggi();
+      try { await window.cloud.salvaAttivita(UID, chiaveData(new Date()), { acqua: nuovo }); }
+      catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
+    }));
+  }
+
+  function acquaSezioneHTML() {
+    const ob = Number(ACQUA.obiettivo) || 0;
+    return `
+      <section class="settings-section" id="sezione-acqua">
+        <h2>Acqua</h2>
+        <label class="check-riga"><input type="checkbox" id="acqua-mostra"${ACQUA.mostra === false ? "" : " checked"}> <span>Mostra il contatore dei bicchieri in Oggi</span></label>
+        <label class="editor-campo"><span>Obiettivo del giorno (bicchieri da 250 ml)</span>
+          <select id="acqua-obiettivo"><option value="0"${ob ? "" : " selected"}>Nessun obiettivo</option>${ACQUA_OBIETTIVI.map((v) => `<option value="${v}"${v === ob ? " selected" : ""}>${v} bicchieri (${String(v / 4).replace(".", ",")} l)</option>`).join("")}</select></label>
+        <p class="stat-nota">Se il tuo nutrizionista ti ha indicato quanta acqua bere, usa quel valore.</p>
+        <label class="check-riga"><input type="checkbox" id="acqua-promemoria"${ACQUA.promemoria ? " checked" : ""}> <span>Promemoria tra le 10 e le 20</span></label>
+        <label class="editor-campo"><span>Ogni</span>
+          <select id="acqua-ogni">${ACQUA_INTERVALLI.map((v) => `<option value="${v}"${(Number(ACQUA.ogniOre) || 2) === v ? " selected" : ""}>${v} ore</option>`).join("")}</select></label>
+        <p class="stat-nota">I promemoria si fermano quando raggiungi l'obiettivo e durante una pausa dal piano; servono i promemoria dei pasti attivi su questo dispositivo.</p>
+      </section>`;
+  }
+
+  function collegaAcquaImpostazioni() {
+    const sez = document.getElementById("sezione-acqua");
+    if (!sez) return;
+    const salva = async () => {
+      const nuove = {
+        mostra: document.getElementById("acqua-mostra").checked,
+        obiettivo: Number(document.getElementById("acqua-obiettivo").value) || 0,
+        promemoria: document.getElementById("acqua-promemoria").checked,
+        ogniOre: Number(document.getElementById("acqua-ogni").value) || 2,
+      };
+      try {
+        await window.cloud.salvaAcqua(UID, nuove);
+        ACQUA = nuove;
+        pianificaNotificheOggi();
+        mostraToast("Impostazioni dell'acqua salvate");
+      } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
+    };
+    sez.querySelectorAll("input, select").forEach((el) => el.addEventListener("change", salva));
+  }
+
+  function pianificaAcquaOggi() {
+    if (!ACQUA.promemoria) return;
+    const oggi = new Date();
+    orariAcqua(ACQUA.ogniOre).forEach((orario) => {
+      const [h, m] = orario.split(":").map(Number);
+      const quando = new Date(oggi); quando.setHours(h, m, 0, 0);
+      const attesa = quando.getTime() - Date.now();
+      if (attesa <= 0) return;
+      timersProgrammati.push(setTimeout(() => {
+        const n = bicchieriOggi(), ob = Number(ACQUA.obiettivo) || 0;
+        if (ob && n >= ob) return;
+        mostraNotifica("Un bicchiere d'acqua?", ob ? `Oggi ${n} su ${ob}` : `Oggi ${n} ${n === 1 ? "bicchiere" : "bicchieri"}`);
+      }, attesa));
+    });
   }
 
   function renderBannerRiattivaHTML() {
@@ -5788,6 +5883,7 @@
     try {
       const da = chiaveData(new Date(Date.now() - 29 * 86400000));
       const perGiorno = await window.cloud.leggiAttivitaPeriodo(piano.pazienteUid, da);
+      mostraAcquaProf(perGiorno, piano);
       const t = testoSintesiAllenamenti(sintesiAllenamenti(perGiorno, da));
       if (!t || pazienteSelezionatoId !== piano.id) return;
       // allenamenti importati da file: totali e ultimi 8 con i dati
@@ -5813,6 +5909,22 @@
       }));
       box.hidden = false;
     } catch (e) { /* sezione facoltativa */ }
+  }
+
+  /** Acqua segnata dal paziente: media sui giorni in cui l'ha registrata. */
+  function mostraAcquaProf(perGiorno, piano) {
+    const box = document.getElementById("sezione-acqua-prof");
+    if (!box || pazienteSelezionatoId !== piano.id) return;
+    const lim7 = chiaveData(new Date(Date.now() - 6 * 86400000));
+    const valori = Object.keys(perGiorno).filter((g) => Number(perGiorno[g].acqua) > 0).map((g) => ({ g, n: Number(perGiorno[g].acqua) }));
+    if (!valori.length) { box.hidden = true; return; }
+    const media = (l) => (l.length ? Math.round((l.reduce((s, x) => s + x.n, 0) / l.length) * 10) / 10 : null);
+    const m7 = media(valori.filter((x) => x.g >= lim7)), m30 = media(valori);
+    const fmt = (v) => String(v).replace(".", ",");
+    box.innerHTML = `<h2>Acqua</h2><p class="hint">Bicchieri da 250 ml segnati dal paziente, media sui giorni in cui li ha registrati.</p>
+      ${m7 != null ? `<p class="stat-riga"><span>Ultimi 7 giorni</span><strong>${fmt(m7)} al giorno</strong></p>` : ""}
+      <p class="stat-riga"><span>Ultimi 30 giorni</span><strong>${fmt(m30)} al giorno · ${valori.length} ${valori.length === 1 ? "giorno" : "giorni"} registrati</strong></p>`;
+    box.hidden = false;
   }
 
   // ---- Professionista: consigli AI dati al paziente ----
@@ -7204,6 +7316,7 @@
 
       ${imprevistiHTML(r)}
       <section class="settings-section" id="sezione-attivita" hidden></section>
+      <section class="settings-section" id="sezione-acqua-prof" hidden></section>
 
       <section class="settings-section">
         <h2>Uso dell'app</h2>

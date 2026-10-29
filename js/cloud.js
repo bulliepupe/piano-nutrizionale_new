@@ -779,6 +779,10 @@
       await db.collection("users").doc(uid).update({ parametriAllenamento: parametri });
     },
 
+    async salvaAcqua(uid, acqua) {
+      await db.collection("users").doc(uid).update({ acqua });
+    },
+
     async salvaPause(uid, pause) {
       await db.collection("users").doc(uid).update({ pause });
     },

@@ -150,6 +150,31 @@ exports.applicaPianiProgrammati = onSchedule(
   }
 );
 
+// Promemoria dell'acqua: orari fissi tra le 10 e le 20, ogni 2 o 3 ore.
+const ACQUA_INTERVALLI = [2, 3];
+function orariAcqua(ogniOre) {
+  const passo = ACQUA_INTERVALLI.includes(Number(ogniOre)) ? Number(ogniOre) : 2;
+  const out = [];
+  for (let h = 10; h <= 20; h += passo) out.push(String(h).padStart(2, "0") + ":00");
+  return out;
+}
+
+/** Invia una notifica a tutti i dispositivi del paziente e ripulisce i token non più validi. */
+async function inviaNotificaPaziente(utenteRef, tokens, titolo, corpo, tag) {
+  const risultato = await messaging.sendEachForMulticast({
+    tokens,
+    notification: { title: titolo, body: corpo },
+    android: { priority: "high", ttl: 1800 * 1000, notification: { channelId: "promemoria", tag, icon: "ic_stat_notifica", color: "#2F5142" } },
+    webpush: { headers: { Urgency: "high", TTL: "1800" }, notification: { icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag } },
+  });
+  const via = [];
+  risultato.responses.forEach((r, i) => {
+    const codice = r.error && r.error.code;
+    if (!r.success && (codice === "messaging/registration-token-not-registered" || codice === "messaging/invalid-registration-token")) via.push(tokens[i]);
+  });
+  if (via.length) await utenteRef.update({ fcmTokens: FieldValue.arrayRemove(...via) });
+}
+
 /** Vero se il giorno "YYYY-MM-DD" cade in una pausa del percorso del paziente. */
 function inPausaServer(pause, giorno) {
   return (Array.isArray(pause) ? pause : []).some((p) => p && typeof p.dal === "string" && typeof p.al === "string" && giorno >= p.dal && giorno <= p.al);
@@ -255,6 +280,28 @@ exports.controllaPromemoria = onSchedule(
           { pasti: FieldValue.arrayUnion(key), aggiornato: FieldValue.serverTimestamp() },
           { merge: true }
         );
+      }
+
+      // Acqua: promemoria facoltativo, saltato se l'obiettivo è già raggiunto
+      const acqua = utente.acqua || {};
+      if (acqua.promemoria) {
+        for (const orario of orariAcqua(acqua.ogniOre)) {
+          const chiaveAcqua = "acqua-" + orario;
+          if (giaInviate.includes(chiaveAcqua)) continue;
+          if (!pastoDaNotificareOra(ora, orario, 0, FINESTRA_MINUTI)) continue;
+          const attDoc = await utenteRef.collection("attivita").doc(dateKey).get();
+          const bevuti = attDoc.exists ? Number((attDoc.data() || {}).acqua) || 0 : 0;
+          const obiettivo = Number(acqua.obiettivo) || 0;
+          if (obiettivo && bevuti >= obiettivo) break;
+          try {
+            await inviaNotificaPaziente(utenteRef, tokens, "Un bicchiere d'acqua?",
+              obiettivo ? `Oggi ${bevuti} su ${obiettivo}` : `Oggi ${bevuti} ${bevuti === 1 ? "bicchiere" : "bicchieri"}`, "acqua");
+          } catch (e) {
+            console.error("Errore invio promemoria acqua a", pazienteUid, e);
+            continue;
+          }
+          await trackingRef.set({ pasti: FieldValue.arrayUnion(chiaveAcqua), aggiornato: FieldValue.serverTimestamp() }, { merge: true });
+        }
       }
     }
   }
@@ -2156,5 +2203,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
