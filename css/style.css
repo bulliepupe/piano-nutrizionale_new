@@ -1237,6 +1237,7 @@ p.stat-motivi { padding-left: 0; }
 .contatto-nutri__nome { display: block; font-family: var(--font-display); font-weight: 500; font-size: 18px; line-height: 1.2; }
 .contatto-nutri__qualifica { display: block; font-size: 13.5px; color: var(--ink-soft); }
 .contatto-nutri__riga { margin: 0; font-size: 14px; color: var(--ink-soft); }
+.contatto-nutri__riga--albo { font-size: 12.5px; color: var(--ink-faint); }
 .contatto-nutri__riga--nota { font-style: italic; }
 
 .azioni-contatto { display: flex; flex-direction: column; gap: 10px; }

@@ -679,7 +679,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v109";
+  const VERSIONE_APP = "v110";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -4925,7 +4925,14 @@
       email: c.email || "",
       telefono: c.telefono || "",
       whatsapp: c.whatsapp !== false && !!c.telefono,
+      albo: c.albo && c.albo.numero && c.albo.dichiarato ? c.albo : null,
     };
+  }
+
+  /** "Iscrizione n. 12345 · Ordine dei Biologi (dichiarata dal professionista)". */
+  function testoAlbo(albo) {
+    if (!albo) return "";
+    return `Iscrizione n. ${albo.numero}${albo.ordine ? ` · ${albo.ordine}` : ""} (dichiarata dal professionista)`;
   }
 
   function renderContattoNutrizionistaHTML() {
@@ -4945,6 +4952,7 @@
           </div>
         </div>
         ${c.studio ? `<p class="contatto-nutri__riga">${escapeHTML(c.studio)}</p>` : ""}
+        ${c.albo ? `<p class="contatto-nutri__riga contatto-nutri__riga--albo">${escapeHTML(testoAlbo(c.albo))}</p>` : ""}
         ${c.note ? `<p class="contatto-nutri__riga contatto-nutri__riga--nota">${escapeHTML(c.note)}</p>` : ""}
         ${haCanali ? `<button type="button" class="btn" data-contatta-nutrizionista>Contatta</button>` : ""}
       </section>`;
@@ -8862,6 +8870,10 @@
           <label class="editor-campo"><span>Nome e cognome</span><input type="text" data-campo="nome" value="${escapeHTML(nome)}" placeholder="Dott.ssa Maria Rossi" autocomplete="name"></label>
           <label class="editor-campo"><span>Qualifica</span><input type="text" data-campo="qualifica" value="${escapeHTML(c.qualifica || "")}" placeholder="Biologa nutrizionista"></label>
           <label class="editor-campo"><span>Studio e indirizzo</span><input type="text" data-campo="studio" value="${escapeHTML(c.studio || "")}" placeholder="Studio Nutrizione, Via Roma 10, Milano"></label>
+          <label class="editor-campo"><span>Ordine o albo di iscrizione</span><input type="text" data-albo="ordine" value="${escapeHTML((c.albo && c.albo.ordine) || "")}" placeholder="Ordine dei Biologi della Lombardia"></label>
+          <label class="editor-campo"><span>Numero di iscrizione</span><input type="text" data-albo="numero" value="${escapeHTML((c.albo && c.albo.numero) || "")}" placeholder="AA_012345"></label>
+          <label class="check-riga"><input type="checkbox" data-albo="dichiaro" ${c.albo && c.albo.dichiarato ? "checked" : ""}> <span>Dichiaro sotto la mia responsabilità di essere iscritto/a all'ordine o albo indicato e di essere abilitato/a all'esercizio della professione</span></label>
+          <p class="stat-nota">Ordine e numero compaiono ai tuoi pazienti con la dicitura «dichiarata dal professionista».</p>
           <label class="editor-campo"><span>Email</span><input type="email" data-campo="email" value="${escapeHTML(c.email || "")}" autocomplete="email" inputmode="email"></label>
           <label class="editor-campo"><span>Telefono (con prefisso, es. +39 333 1234567)</span><input type="tel" data-campo="telefono" value="${escapeHTML(c.telefono || "")}" autocomplete="tel" inputmode="tel"></label>
           <label class="check-riga"><input type="checkbox" data-campo="whatsapp" ${whatsapp ? "checked" : ""}> <span>Uso WhatsApp su questo numero</span></label>
@@ -8932,7 +8944,17 @@
       mostraToast("Il numero di telefono sembra incompleto", 3500);
       return;
     }
+    const albo = {
+      ordine: (document.querySelector('#form-profilo [data-albo="ordine"]').value || "").trim().slice(0, 120),
+      numero: (document.querySelector('#form-profilo [data-albo="numero"]').value || "").trim().slice(0, 40),
+    };
+    const dichiaro = document.querySelector('#form-profilo [data-albo="dichiaro"]').checked;
+    if (albo.numero && !albo.ordine) { mostraToast("Indica anche l'ordine o albo di iscrizione", 3500); return; }
+    if (albo.numero && !dichiaro) { mostraToast("Per mostrare l'iscrizione ai pazienti spunta la dichiarazione", 4000); return; }
+    const precedente = (PROFILO_PROF.contatti && PROFILO_PROF.contatti.albo) || {};
+    const stessa = precedente.numero === albo.numero && precedente.ordine === albo.ordine && precedente.dichiarato;
     const contatti = {
+      albo: albo.numero ? Object.assign(albo, { dichiarato: stessa ? precedente.dichiarato : new Date().toISOString() }) : null,
       nome: campi.nome,
       qualifica: campi.qualifica,
       studio: campi.studio,
