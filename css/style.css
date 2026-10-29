@@ -1028,6 +1028,8 @@ p.stat-motivi { padding-left: 0; }
 .stat-giorno--medio { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); color: var(--ink); }
 .stat-giorno--basso { background: color-mix(in srgb, var(--gold) 35%, var(--surface)); color: var(--ink); }
 .stat-giorno--zero { background: color-mix(in srgb, var(--stato-rosso) 22%, var(--surface)); color: var(--ink); }
+.stat-giorno--pausa { background: repeating-linear-gradient(45deg, var(--surface), var(--surface) 4px, color-mix(in srgb, var(--ink-faint) 25%, var(--surface)) 4px, color-mix(in srgb, var(--ink-faint) 25%, var(--surface)) 8px); color: var(--ink-soft, var(--ink)); }
+.stato-badge--pausa .stato-punto { background: var(--ink-faint); }
 .stat-giorno--vuoto { background: transparent; border: 1px dashed var(--border); color: var(--ink-faint); }
 .stat-giorno.is-oggi { outline: 2px solid var(--ink); outline-offset: 1px; }
 .stat-legenda { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--ink-soft); margin: 10px 0 0; }

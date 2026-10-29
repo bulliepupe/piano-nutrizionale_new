@@ -150,6 +150,11 @@ exports.applicaPianiProgrammati = onSchedule(
   }
 );
 
+/** Vero se il giorno "YYYY-MM-DD" cade in una pausa del percorso del paziente. */
+function inPausaServer(pause, giorno) {
+  return (Array.isArray(pause) ? pause : []).some((p) => p && typeof p.dal === "string" && typeof p.al === "string" && giorno >= p.dal && giorno <= p.al);
+}
+
 exports.controllaPromemoria = onSchedule(
   { schedule: "every 5 minutes", timeZone: "Europe/Rome" },
   async () => {
@@ -169,6 +174,7 @@ exports.controllaPromemoria = onSchedule(
       const utente = utenteDoc.data();
 
       if (!utente.notificheAttive) continue;
+      if (inPausaServer(utente.pause, dateKey)) continue; // pausa del percorso: niente promemoria
       const tokens = Array.isArray(utente.fcmTokens) ? utente.fcmTokens.filter(Boolean) : [];
       if (!tokens.length) continue;
 
@@ -2150,5 +2156,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

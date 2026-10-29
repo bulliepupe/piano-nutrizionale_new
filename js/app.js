@@ -457,6 +457,7 @@
 
   async function avviaPaziente(utenteDati) {
     AUTONOMO = !!utenteDati.autonomo;
+    PAUSE = Array.isArray(utenteDati.pause) ? utenteDati.pause : [];
     PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
     // Senza una scelta registrata: sì per i pazienti del nutrizionista, no per
     // gli autonomi (iscritti prima del 20/10), come il controllo sul server.
@@ -468,6 +469,8 @@
       avviaPaziente.collegato = true;
       document.addEventListener("click", (e) => {
         if (e.target.closest("[data-premium]")) { apriPremium(); return; }
+        if (e.target.closest("[data-pausa-riprendi]")) { riprendiDallaPausa(); return; }
+        if (e.target.closest("[data-pausa-apri]")) { apriPausa(); return; }
         const cotto = e.target.closest("[data-cotto]");
         if (cotto) apriPesoCotto(cotto.dataset.cotto, cotto.dataset.cottoPasto);
       });
@@ -667,9 +670,10 @@
   // blocca nulla; i limiti veri li applica comunque il server.
   const PREMIUM = { noto: false, attivo: true, origine: null, scadenza: null, provaUsata: false };
   let AUTONOMO = false;
+  let PAUSE = []; // pausa del percorso: [{ dal, al }]
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v105";
+  const VERSIONE_APP = "v106";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -1439,7 +1443,7 @@
     const piano = PIANO_ATTIVO;
     const creato = utente && utente.creato && typeof utente.creato.toDate === "function" ? S.chiave(utente.creato.toDate()) : null;
     const inizio = [piano.dataInizio || null, creato].filter(Boolean).sort().pop() || null;
-    const r = S.calcola({ spunte, inizio });
+    const r = S.calcola({ spunte, inizio, pause: (utente && utente.pause) || [] });
     const nome = (utente && utente.nome) || piano.pazienteNome || "";
     const dalGiorno = new Date(oggi); dalGiorno.setDate(dalGiorno.getDate() - 30);
     const data = (d) => `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
@@ -2283,6 +2287,7 @@
     const numDiversi = MEAL_KEYS.filter((k) => statoDi(k) === "diverso").length;
 
     root.innerHTML = `
+      ${bannerPausaHTML()}
       ${bannerPremiumHTML()}
       ${avvisoProgrammatoHTML(PIANO_GREZZO, false)}
       ${renderBannerRiattivaHTML()}
@@ -4167,6 +4172,7 @@
         ` : `<p class="hint">Nessun piano assegnato ancora.</p>`}
         <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
       </section>`}
+      ${pausaSezioneHTML()}
       ${eliminaAccountSezioneHTML()}
       <p class="stat-nota" style="text-align:center;margin:18px 0 8px;">Il mio Piano · versione ${VERSIONE_APP}</p>
     `;
@@ -4415,6 +4421,7 @@
     timersProgrammati.forEach((t) => clearTimeout(t));
     timersProgrammati = [];
     if (window.cloud.nativo) return; // nell'app Android i promemoria arrivano solo come notifiche native
+    if (pausaInCorso()) return; // pausa del percorso: niente promemoria
 
     const oggi = new Date();
     const { giorno } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
@@ -4556,6 +4563,100 @@
         if (currentView === "oggi") render();
       }
     }).catch((e) => console.warn("Migrazione notifiche al nuovo indirizzo non riuscita:", e));
+  }
+
+  // ---------------------------------------------------------------------
+  // Pausa del percorso: per un periodo i promemoria si fermano e i giorni non
+  // contano nell'aderenza né come inattività. Il nutrizionista lo vede.
+  // ---------------------------------------------------------------------
+  const DURATE_PAUSA = [3, 7, 14, 30];
+
+  function pausaInCorso() {
+    return window.statistiche.pausaDel(PAUSE, chiaveData(new Date()));
+  }
+
+  function fineDellaPausa(p) {
+    const [a, m, g] = p.al.split("-").map(Number);
+    return new Date(a, m - 1, g).toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+  }
+
+  function bannerPausaHTML() {
+    const p = pausaInCorso();
+    if (!p) return "";
+    return `
+      <div class="banner-ios banner-pausa">
+        <div class="banner-ios__testo">
+          <strong>Sei in pausa fino a ${escapeHTML(fineDellaPausa(p))}</strong>
+          <span>I promemoria sono fermi e questi giorni non contano nell'andamento. Il piano resta qui quando vuoi.</span>
+        </div>
+        <button type="button" class="banner-ios__azione" data-pausa-riprendi>Riprendi</button>
+      </div>`;
+  }
+
+  function pausaSezioneHTML() {
+    const p = pausaInCorso();
+    return `
+      <section class="settings-section" id="sezione-pausa">
+        <h2>Pausa dal piano</h2>
+        ${p ? `<p class="hint">Sei in pausa fino a ${escapeHTML(fineDellaPausa(p))}.</p>
+          <button type="button" class="btn" data-pausa-riprendi>Riprendi da oggi</button>`
+        : `<p class="hint">Per vacanze o periodi impegnativi: i promemoria si fermano e i giorni di pausa non contano nell'andamento. Se sei seguito da un nutrizionista, vede che sei in pausa e fino a quando.</p>
+          <button type="button" class="btn btn--ghost" data-pausa-apri>Metti in pausa</button>`}
+      </section>`;
+  }
+
+  function apriPausa() {
+    apriSheet(`
+      <h2 class="sheet__titolo">Pausa dal piano</h2>
+      <p class="sheet__nota">Da oggi, per quanti giorni? Puoi riprendere prima quando vuoi.</p>
+      <div class="segmento" id="pausa-durate">${DURATE_PAUSA.map((n) => `<button type="button" class="segmento__voce" data-giorni="${n}" aria-pressed="false">${n} giorni</button>`).join("")}</div>
+      <p class="stat-nota">Durante la pausa i promemoria dei pasti sono fermi e i giorni non contano nell'aderenza. Puoi comunque aprire il piano e segnare i pasti.</p>
+      <button type="button" class="btn" id="btn-conferma-pausa" style="margin-top:12px;" disabled>Metti in pausa</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    let giorni = 0;
+    const conferma = document.getElementById("btn-conferma-pausa");
+    document.querySelectorAll("#pausa-durate [data-giorni]").forEach((b) => b.addEventListener("click", () => {
+      giorni = Number(b.dataset.giorni);
+      document.querySelectorAll("#pausa-durate [data-giorni]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      conferma.disabled = false;
+    }));
+    conferma.addEventListener("click", async () => {
+      if (!giorni) return;
+      conferma.disabled = true;
+      const oggi = new Date();
+      const fine = new Date(oggi); fine.setDate(fine.getDate() + giorni - 1);
+      const limite = chiaveData(new Date(Date.now() - 120 * 86400000));
+      const nuove = PAUSE.filter((x) => x && x.al >= limite && !(x.al >= chiaveData(oggi)))
+        .concat([{ dal: chiaveData(oggi), al: chiaveData(fine) }]).slice(-20);
+      try {
+        await window.cloud.salvaPause(UID, nuove);
+        PAUSE = nuove;
+        chiudiSheet();
+        mostraToast(`Pausa fino a ${fineDellaPausa(nuove[nuove.length - 1])}`, 4000);
+        pianificaNotificheOggi();
+        render();
+      } catch (e) {
+        conferma.disabled = false;
+        mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
+      }
+    });
+  }
+
+  async function riprendiDallaPausa() {
+    const p = pausaInCorso();
+    if (!p) return;
+    const oggi = chiaveData(new Date());
+    const ieri = chiaveData(new Date(Date.now() - 86400000));
+    const nuove = PAUSE.map((x) => (x === p ? (x.dal >= oggi ? null : { dal: x.dal, al: ieri }) : x)).filter(Boolean);
+    try {
+      await window.cloud.salvaPause(UID, nuove);
+      PAUSE = nuove;
+      mostraToast("Bentornato: si riparte da oggi", 3000);
+      pianificaNotificheOggi();
+      render();
+    } catch (e) {
+      mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
+    }
   }
 
   function renderBannerRiattivaHTML() {
@@ -6777,6 +6878,7 @@
     giallo: "Segnali da verificare",
     verde: "Usa l'app regolarmente",
     attesa: "Piano non iniziato",
+    pausa: "In pausa",
   };
 
   function azzeraStatistiche() {
@@ -6824,6 +6926,7 @@
             notificheAttive: !!u.notificheAttive,
             dispositiviNotifiche: Array.isArray(u.fcmTokens) ? u.fcmTokens.length : 0,
             prossimaVisita: (p.appuntamento && p.appuntamento.data) || p.prossimaVisita || null,
+            pause: Array.isArray(u.pause) ? u.pause : [],
           }),
           accessoRilevato: !!u.ultimoAccesso,
         };
@@ -6855,6 +6958,7 @@
     if (!x || x.errore) return "";
     const r = x.r;
     const testo = r.stato === "attesa" ? ETICHETTE_STATO.attesa
+      : r.stato === "pausa" && r.pausa ? `In pausa fino al ${Number(r.pausa.al.slice(8))}/${Number(r.pausa.al.slice(5, 7))}`
       : `${ETICHETTE_STATO[r.stato]} · 7 giorni ${perc(r.aderenza7)}`;
     return `<span class="stato-badge stato-badge--${r.stato}"><span class="stato-punto" aria-hidden="true"></span>${escapeHTML(testo)}</span>`;
   }
@@ -6869,7 +6973,7 @@
     document.getElementById("prof-header-titolo").textContent = "Andamento dei pazienti";
 
     const pronti = PAZIENTI_PROF.filter((p) => STAT.risultati[p.id] && !STAT.risultati[p.id].errore);
-    const conteggi = { rosso: 0, giallo: 0, verde: 0, attesa: 0 };
+    const conteggi = { rosso: 0, giallo: 0, verde: 0, pausa: 0, attesa: 0 };
     pronti.forEach((p) => { conteggi[STAT.risultati[p.id].r.stato]++; });
     const valutabili = pronti.map((p) => STAT.risultati[p.id].r.aderenza7).filter((v) => v != null);
     const media7 = valutabili.length ? valutabili.reduce((a, b) => a + b, 0) / valutabili.length : null;
@@ -6900,6 +7004,7 @@
             <span class="stato-badge stato-badge--rosso"><span class="stato-punto"></span>${conteggi.rosso} da ricontattare</span>
             <span class="stato-badge stato-badge--giallo"><span class="stato-punto"></span>${conteggi.giallo} da seguire</span>
             <span class="stato-badge stato-badge--verde"><span class="stato-punto"></span>${conteggi.verde} in linea</span>
+            ${conteggi.pausa ? `<span class="stato-badge stato-badge--pausa"><span class="stato-punto"></span>${conteggi.pausa} in pausa</span>` : ""}
             ${conteggi.attesa ? `<span class="stato-badge stato-badge--attesa"><span class="stato-punto"></span>${conteggi.attesa} non iniziati</span>` : ""}
           </div>
         </section>
@@ -7054,13 +7159,14 @@
         <h2>Ultime 4 settimane</h2>
         <div class="stat-calendario" role="img" aria-label="Pasti segnati giorno per giorno nelle ultime 4 settimane">
           ${GIORNI_BREVI.map((g) => `<span class="stat-calendario__intestazione">${g}</span>`).join("")}
-          ${r.calendario.map((c) => `<span class="stat-giorno stat-giorno--${livello(c.fatti)} ${c.oggi ? "is-oggi" : ""}" title="${c.chiave}: ${c.fatti == null ? "non valutato" : String(c.fatti).replace(".", ",") + " punti su 5"}">${c.giorno}</span>`).join("")}
+          ${r.calendario.map((c) => `<span class="stat-giorno stat-giorno--${c.pausa ? "pausa" : livello(c.fatti)} ${c.oggi ? "is-oggi" : ""}" title="${c.chiave}: ${c.pausa ? "in pausa" : c.fatti == null ? "non valutato" : String(c.fatti).replace(".", ",") + " punti su 5"}">${c.giorno}</span>`).join("")}
         </div>
         <p class="stat-legenda">
           <span class="stat-giorno stat-giorno--alto"></span> 4–5 punti
           <span class="stat-giorno stat-giorno--medio"></span> 2–3,5
           <span class="stat-giorno stat-giorno--basso"></span> meno di 2
           <span class="stat-giorno stat-giorno--zero"></span> nessuno
+          ${r.calendario.some((c) => c.pausa) ? `<span class="stat-giorno stat-giorno--pausa"></span> in pausa` : ""}
         </p>
       </section>
 

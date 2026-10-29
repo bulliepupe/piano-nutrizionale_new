@@ -78,6 +78,13 @@
   function registratiNelGiorno(stato) { return stato ? PASTI.filter((k) => statoPasto(stato, k)).length : 0; }
 
   /** Primo giorno da cui ha senso chiedere le spunte (per la lettura da Firestore). */
+  // Pausa del percorso: elenco di periodi { dal, al } ("YYYY-MM-DD", estremi
+  // inclusi). I giorni in pausa non contano nell'aderenza e non sono inattività.
+  function pausaDel(pause, k) {
+    return (Array.isArray(pause) ? pause : []).find((p) => p && p.dal && p.al && k >= p.dal && k <= p.al) || null;
+  }
+  function inPausa(pause, k) { return !!pausaDel(pause, k); }
+
   function primoGiornoStorico(oggi) {
     return chiave(aggiungiGiorni(mezzanotte(oggi || new Date()), -GIORNI_STORICO));
   }
@@ -90,6 +97,7 @@
    *  - ultimoAccesso: Date | null
    *  - notificheAttive: boolean, dispositiviNotifiche: number
    *  - prossimaVisita: "YYYY-MM-DD" | null
+   *  - pause: [{ dal, al }] periodi di pausa del percorso
    */
   function calcola(p) {
     const oggi = mezzanotte(p.oggi || new Date());
@@ -97,12 +105,16 @@
     const spunte = p.spunte || {};
     const inizio = p.inizio ? mezzanotte(daChiave(p.inizio)) : aggiungiGiorni(oggi, -GIORNI_STORICO);
     const pianoIniziato = inizio <= oggi;
+    const pause = Array.isArray(p.pause) ? p.pause : [];
+    const pausaOggi = pausaDel(pause, chiave(oggi));
+    let giorniPausa30 = 0;
 
     // Giorni conclusi e valutabili (dal più vecchio a ieri), al massimo 8 settimane
     const giorni = [];
     for (let i = GIORNI_STORICO; i >= 1; i--) {
       const d = aggiungiGiorni(oggi, -i);
       if (d < inizio) continue;
+      if (inPausa(pause, chiave(d))) { if (i <= 30) giorniPausa30++; continue; }
       const fatti = fattiNelGiorno(spunte[chiave(d)]);
       giorni.push({ data: d, chiave: chiave(d), fatti, weekend: d.getDay() === 0 || d.getDay() === 6 });
     }
@@ -162,7 +174,7 @@
     const fattiOggi = fattiNelGiorno(spunte[chiave(oggi)]);
     let serie = 0;
     for (let i = giorni.length - 1; i >= 0 && giorni[i].fatti >= SOGLIA_GIORNO_OK; i--) serie++;
-    if (pianoIniziato && fattiOggi >= SOGLIA_GIORNO_OK) serie++;
+    if (pianoIniziato && !pausaOggi && fattiOggi >= SOGLIA_GIORNO_OK) serie++;
     let record = 0, corrente = 0;
     giorni.forEach((g) => { corrente = g.fatti >= SOGLIA_GIORNO_OK ? corrente + 1 : 0; record = Math.max(record, corrente); });
     record = Math.max(record, serie);
@@ -174,17 +186,20 @@
       const d = aggiungiGiorni(partenza, i);
       const futuro = d > oggi;
       const primaInizio = d < inizio;
+      const pausa = inPausa(pause, chiave(d));
       calendario.push({
         chiave: chiave(d), giorno: d.getDate(),
-        fatti: futuro || primaInizio ? null : fattiNelGiorno(spunte[chiave(d)]),
-        oggi: +d === +oggi, futuro, primaInizio,
+        fatti: futuro || primaInizio || pausa ? null : fattiNelGiorno(spunte[chiave(d)]),
+        oggi: +d === +oggi, futuro, primaInizio, pausa,
       });
     }
 
     // Ultima interazione: apertura dell'app o spunta, la più recente
     const giorniConSpunte = Object.keys(spunte).filter((k) => registratiNelGiorno(spunte[k]) > 0).sort();
     const ultimaSpunta = giorniConSpunte.length ? daChiave(giorniConSpunte[giorniConSpunte.length - 1]) : null;
-    const candidati = [ultimaSpunta, p.ultimoAccesso || null].filter(Boolean).map(mezzanotte);
+    // la fine di una pausa (o la pausa in corso) vale come ultima attività
+    const finePausa = pausaOggi ? oggi : pause.filter((x) => x && x.al && x.al < chiave(oggi)).map((x) => daChiave(x.al)).sort((a, b) => b - a)[0] || null;
+    const candidati = [ultimaSpunta, p.ultimoAccesso || null, finePausa].filter(Boolean).map(mezzanotte);
     const ultimaInterazione = candidati.length ? new Date(Math.max.apply(null, candidati)) : null;
     const riferimento = ultimaInterazione || (pianoIniziato ? inizio : null);
     const giorniInattivo = riferimento ? Math.max(0, differenzaGiorni(oggi, riferimento)) : null;
@@ -205,6 +220,10 @@
     if (!pianoIniziato) {
       stato = "attesa";
       motivi.push("Il piano non è ancora iniziato");
+    } else if (pausaOggi) {
+      stato = "pausa";
+      const al = daChiave(pausaOggi.al);
+      motivi.push(`In pausa fino al ${al.getDate()}/${al.getMonth() + 1}: promemoria fermi, giorni non contati nell'aderenza`);
     } else {
       if (giorniInattivo != null && giorniInattivo > GIORNI_ALLARME) {
         motivi.push(ultimaInterazione
@@ -228,16 +247,17 @@
       ultimaSpunta: ultimaSpunta ? chiave(ultimaSpunta) : null,
       ultimaInterazione: ultimaInterazione ? chiave(ultimaInterazione) : null,
       giorniInattivo,
+      pausa: pausaOggi, giorniPausa30,
       notifiche,
       prossimoControllo,
     };
   }
 
-  const ORDINE_STATO = { rosso: 0, giallo: 1, verde: 2, attesa: 3 };
+  const ORDINE_STATO = { rosso: 0, giallo: 1, verde: 2, pausa: 3, attesa: 4 };
 
   const api = {
     PASTI, SOGLIA_GIORNO_OK, MOTIVI, MOTIVI_DIVERSO, MOTIVI_PARZIALE, MOTIVI_SALTATO, SUGGERIMENTI_NOTA, MAX_NOTA, statoPasto, GIORNI_ALLARME, SOGLIA_ADERENZA_BASSA, GIORNI_STORICO, ORDINE_STATO,
-    calcola, primoGiornoStorico, chiave, daChiave, differenzaGiorni,
+    calcola, primoGiornoStorico, chiave, daChiave, differenzaGiorni, pausaDel, inPausa,
   };
   if (typeof window !== "undefined") window.statistiche = api;
   if (typeof module !== "undefined") module.exports = api;
