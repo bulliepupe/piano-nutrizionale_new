@@ -134,6 +134,8 @@ function pianoEffettivo(piano, date) {
     dataInizio: pr.dataInizio,
     settimanaIniziale: pr.settimanaIniziale || 1,
     prossimo: null,
+    // nuovo piano entrato in vigore: il paziente ne prende visione
+    pianoNuovo: { id: String(pr.caricato || pr.dataInizio), dal: pr.dataInizio },
   });
 }
 

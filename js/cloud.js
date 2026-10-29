@@ -783,6 +783,10 @@
       await db.collection("users").doc(uid).update({ acqua });
     },
 
+    async segnaPianoVisto(uid, id) {
+      await db.collection("users").doc(uid).update({ pianoVisto: { id: String(id), il: FieldValue.serverTimestamp() } });
+    },
+
     async salvaPause(uid, pause) {
       await db.collection("users").doc(uid).update({ pause });
     },

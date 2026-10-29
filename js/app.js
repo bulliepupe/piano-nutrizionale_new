@@ -459,6 +459,7 @@
     AUTONOMO = !!utenteDati.autonomo;
     PAUSE = Array.isArray(utenteDati.pause) ? utenteDati.pause : [];
     ACQUA = Object.assign({}, utenteDati.acqua || {});
+    PIANO_VISTO = utenteDati.pianoVisto || null;
     PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
     // Senza una scelta registrata: sì per i pazienti del nutrizionista, no per
     // gli autonomi (iscritti prima del 20/10), come il controllo sul server.
@@ -472,6 +473,8 @@
         if (e.target.closest("[data-premium]")) { apriPremium(); return; }
         if (e.target.closest("[data-pausa-riprendi]")) { riprendiDallaPausa(); return; }
         if (e.target.closest("[data-pausa-apri]")) { apriPausa(); return; }
+        if (e.target.closest("[data-piano-visto]")) { segnaNuovoPianoVisto(false); return; }
+        if (e.target.closest("[data-piano-guarda]")) { segnaNuovoPianoVisto(true); return; }
         const cotto = e.target.closest("[data-cotto]");
         if (cotto) apriPesoCotto(cotto.dataset.cotto, cotto.dataset.cottoPasto);
       });
@@ -673,9 +676,10 @@
   let AUTONOMO = false;
   let PAUSE = []; // pausa del percorso: [{ dal, al }]
   let ACQUA = {}; // { mostra, obiettivo, promemoria, ogniOre }
+  let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v107";
+  const VERSIONE_APP = "v108";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -2291,6 +2295,7 @@
 
     root.innerHTML = `
       ${bannerPausaHTML()}
+      ${bannerNuovoPianoHTML()}
       ${bannerPremiumHTML()}
       ${avvisoProgrammatoHTML(PIANO_GREZZO, false)}
       ${renderBannerRiattivaHTML()}
@@ -4754,6 +4759,44 @@
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Nuovo piano dal nutrizionista: avviso al paziente con presa visione
+  // (il piano è già in vigore); il nutrizionista vede se e quando l'ha visto.
+  // ---------------------------------------------------------------------
+  function nuovoPianoDaVedere() {
+    if (RUOLO !== "paziente" || !PIANO_ATTIVO || PIANO_ATTIVO.gestore === "paziente") return null;
+    const pn = PIANO_ATTIVO.pianoNuovo;
+    if (!pn || !pn.id || (pn.dal && pn.dal > chiaveData(new Date()))) return null;
+    if (PIANO_VISTO && String(PIANO_VISTO.id) === String(pn.id)) return null;
+    return pn;
+  }
+
+  function bannerNuovoPianoHTML() {
+    const pn = nuovoPianoDaVedere();
+    if (!pn) return "";
+    return `
+      <div class="banner-ios banner-nuovo-piano">
+        <div class="banner-ios__testo">
+          <strong>Il tuo nutrizionista ha preparato un nuovo piano</strong>
+          <span>È in vigore${pn.dal ? ` da ${escapeHTML(dataLunga(pn.dal))}` : ""}: i pasti di oggi qui sotto sono già quelli nuovi.</span>
+        </div>
+        <div class="banner-nuovo-piano__azioni">
+          <button type="button" class="banner-ios__azione" data-piano-guarda>Guarda la settimana</button>
+          <button type="button" class="banner-ios__azione banner-ios__azione--sec" data-piano-visto>Ho visto</button>
+        </div>
+      </div>`;
+  }
+
+  async function segnaNuovoPianoVisto(apriSettimana) {
+    const pn = nuovoPianoDaVedere();
+    if (pn) {
+      PIANO_VISTO = { id: String(pn.id) };
+      try { await window.cloud.segnaPianoVisto(UID, pn.id); } catch (e) { /* riproverà alla prossima apertura */ PIANO_VISTO = null; }
+    }
+    if (apriSettimana) attivaTab("settimana");
+    render();
+  }
+
   function renderBannerRiattivaHTML() {
     if (localStorage.getItem(LS_KEYS.invitoRiattivaNotifiche) !== "1") return "";
     if (notificheAttive()) { localStorage.removeItem(LS_KEYS.invitoRiattivaNotifiche); return ""; }
@@ -5911,6 +5954,17 @@
     } catch (e) { /* sezione facoltativa */ }
   }
 
+  /** Presa visione dell'ultimo piano caricato dal nutrizionista. */
+  function rigaNuovoPianoProf(piano, x) {
+    const pn = (window.weekLogic.pianoEffettivo(piano, new Date()) || {}).pianoNuovo;
+    if (!pn || !pn.id || (pn.dal && pn.dal > chiaveData(new Date()))) return "";
+    const v = x && x.pianoVisto;
+    const visto = v && String(v.id) === String(pn.id);
+    const il = visto ? dataDaTimestamp(v.il) : null;
+    const dal = pn.dal ? ` del ${Number(pn.dal.slice(8))}/${Number(pn.dal.slice(5, 7))}` : "";
+    return `<p class="stat-nota">📋 Nuovo piano${dal}: ${visto ? `visto dal paziente${il ? ` il ${il.getDate()}/${il.getMonth() + 1}` : ""}` : "non ancora visto dal paziente"}</p>`;
+  }
+
   /** Acqua segnata dal paziente: media sui giorni in cui l'ha registrata. */
   function mostraAcquaProf(perGiorno, piano) {
     const box = document.getElementById("sezione-acqua-prof");
@@ -6782,7 +6836,9 @@
         if (IMPORTA.ctx.paziente) PIANO_ATTIVO.prossimo = prossimo;
         mostraToast(`Nuovo piano programmato: parte ${dataLunga(inizio.dataInizio)}`, 4000);
       } else {
-        const campi = Object.assign({}, esito.piano, inizio, IMPORTA.ctx.extra ? IMPORTA.ctx.extra(piano) : {}, { prossimo: null });
+        const campi = Object.assign({}, esito.piano, inizio, IMPORTA.ctx.extra ? IMPORTA.ctx.extra(piano) : {}, { prossimo: null },
+          // caricato dal nutrizionista: il paziente ne prende visione
+          IMPORTA.ctx.paziente ? {} : { pianoNuovo: { id: String(Date.now()), dal: inizio.dataInizio } });
         await window.cloud.salvaPiano(piano.id, campi);
         if (IMPORTA.ctx.paziente) Object.assign(PIANO_ATTIVO, campi);
         mostraToast(IMPORTA.ctx.toastOk, 3500);
@@ -7040,6 +7096,7 @@
             prossimaVisita: (p.appuntamento && p.appuntamento.data) || p.prossimaVisita || null,
             pause: Array.isArray(u.pause) ? u.pause : [],
           }),
+          pianoVisto: u.pianoVisto || null,
           accessoRilevato: !!u.ultimoAccesso,
         };
       } catch (e) {
@@ -7258,6 +7315,7 @@
       <section class="stat-testata stat-card--${r.stato}">
         <span class="stato-badge stato-badge--${r.stato}"><span class="stato-punto"></span>${ETICHETTE_STATO[r.stato]}</span>
         ${r.motivi.length ? `<ul class="stat-motivi">${r.motivi.map((m) => `<li>${escapeHTML(m)}</li>`).join("")}</ul>` : `<p class="stat-motivi">Segue il piano con regolarità e ha i promemoria attivi.</p>`}
+        ${rigaNuovoPianoProf(piano, x)}
       </section>
 
       <div class="stat-riquadri">

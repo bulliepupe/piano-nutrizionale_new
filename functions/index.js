@@ -142,6 +142,8 @@ exports.applicaPianiProgrammati = onSchedule(
         sostituzioni: pr.sostituzioni || p.sostituzioni || [],
         dataInizio: pr.dataInizio,
         settimanaIniziale: pr.settimanaIniziale || 1,
+        // stesso identificativo calcolato dall'app (weekLogic.pianoEffettivo)
+        pianoNuovo: { id: String(pr.caricato || pr.dataInizio), dal: pr.dataInizio },
         prossimo: FieldValue.delete(),
         aggiornato: FieldValue.serverTimestamp(),
       });
