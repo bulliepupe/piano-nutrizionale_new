@@ -679,7 +679,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v108";
+  const VERSIONE_APP = "v109";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -5864,8 +5864,11 @@
       const m = String((err && err.message) || "");
       box.innerHTML = `
         <div class="analisi-ai__testa"><span class="analisi-ai__icona" aria-hidden="true">✨</span><div><h2>Analisi AI dell'andamento</h2>
-        <p>${m === "limite-giornaliero" ? "Per oggi le analisi disponibili sono esaurite." : m === "licenza-non-attiva" ? "Serve una licenza attiva." : "Analisi non disponibile in questo momento."}</p></div></div>
-        <button type="button" class="btn btn--ghost" id="analisi-riprova">Riprova</button>`;
+        <p>${m === "limite-giornaliero" ? "Per oggi le analisi disponibili sono esaurite."
+          : m === "licenza-non-attiva" ? "Serve una licenza attiva."
+          : m === "consenso-ai-negato" ? "Il paziente non ha dato il consenso alle funzioni AI: può attivarlo dall'app, in Impostazioni → Privacy. Le statistiche qui sotto restano disponibili."
+          : "Analisi non disponibile in questo momento."}</p></div></div>
+        ${m === "consenso-ai-negato" ? "" : `<button type="button" class="btn btn--ghost" id="analisi-riprova">Riprova</button>`}`;
       const b = document.getElementById("analisi-riprova");
       if (b) b.addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
     }
