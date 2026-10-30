@@ -679,7 +679,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v110";
+  const VERSIONE_APP = "v111";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -2972,7 +2972,11 @@
       mostraToast("Impossibile salvare: controlla la connessione");
     }
   }
-  const DETTATURA_DISPONIBILE = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  // Nell'app Android il riconoscimento vocale del browser esiste ma non funziona
+  // (la WebView non ha accesso al microfono né al servizio di Google): lì si usa
+  // il microfono della tastiera.
+  const APP_NATIVA = typeof window !== "undefined" && !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
+  const DETTATURA_DISPONIBILE = typeof window !== "undefined" && !APP_NATIVA && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   // ---------------------------------------------------------------------
   // Riscontro AI sui pasti non come da piano
@@ -3116,7 +3120,7 @@
         <div class="ricette-filtri">${elenco.map((m) => `<button type="button" class="chip-filtro" data-motivo="${m}" aria-pressed="${motivo === m}">${escapeHTML(S.MOTIVI[m])}</button>`).join("")}</div>
         <label class="editor-campo stato-pasto__nota">Vuoi aggiungere un dettaglio? <span>(facoltativo)</span>
           <textarea id="stato-pasto-nota" rows="2" maxlength="${S.MAX_NOTA}" placeholder="${escapeHTML(S.SUGGERIMENTI_NOTA[motivo] || (scelta === "diverso" ? "Cosa hai mangiato al posto del pasto previsto?" : "Es. riso al posto della pasta, ho lasciato metà del secondo…"))}">${escapeHTML(nota)}</textarea>
-          <span class="stato-pasto__sotto">${DETTATURA_DISPONIBILE ? `<button type="button" class="btn-detta" id="stato-pasto-detta" aria-label="Detta la nota a voce">🎤 Detta</button>` : ""}<small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small></span>
+          <span class="stato-pasto__sotto">${DETTATURA_DISPONIBILE ? `<button type="button" class="btn-detta" id="stato-pasto-detta" aria-label="Detta la nota a voce">🎤 Detta</button>` : APP_NATIVA ? `<span class="stato-pasto__aiuto">Per dettare usa il 🎤 della tastiera</span>` : ""}<small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small></span>
           <small class="stato-pasto__avviso">Scrivi solo cosa hai mangiato e perché: niente nomi, telefoni o indirizzi.${CONSENSO_AI ? " La nota può essere letta dall'intelligenza artificiale per il riscontro." : ""}</small>
         </label>` : "";
       box.querySelectorAll("[data-motivo]").forEach((b) => b.addEventListener("click", () => {
@@ -3153,8 +3157,16 @@
             : e === "network" ? "La dettatura richiede la connessione a internet"
             : "Dettatura non disponibile: puoi usare il microfono della tastiera", 4500);
         };
-        rec.onend = () => { dettatura = null; bDetta.classList.remove("is-ascolto"); bDetta.textContent = "🎤 Detta"; };
-        try { rec.start(); } catch (e) { dettatura = null; bDetta.classList.remove("is-ascolto"); bDetta.textContent = "🎤 Detta"; }
+        const sblocca = () => { clearTimeout(scadenza); dettatura = null; bDetta.classList.remove("is-ascolto"); bDetta.textContent = "🎤 Detta"; };
+        // se il servizio non risponde entro 20 secondi, il pulsante si sblocca da solo
+        const scadenza = setTimeout(() => {
+          if (dettatura !== rec) return;
+          try { rec.abort(); } catch (e) { /* già ferma */ }
+          sblocca();
+          if (!nuovoCampo.value.trim() || nuovoCampo.value.trim() === base) mostraToast("Dettatura non disponibile: puoi usare il microfono della tastiera", 4500);
+        }, 20000);
+        rec.onend = sblocca;
+        try { rec.start(); } catch (e) { sblocca(); }
       });
       overlay.querySelector("#stato-pasto-salva").disabled = !scelta;
     };
