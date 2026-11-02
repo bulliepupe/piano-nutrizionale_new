@@ -47,6 +47,16 @@
         <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="promemoria" />
     </application>
 
+    <!-- Fotocamera per la tabella di dichiarazione nutrizionale: da Android 11 l'app deve
+         dichiarare di voler aprire l'app Fotocamera, altrimenti il pulsante della pagina
+         (input file con capture) ripiega sulla galleria. Nessun permesso CAMERA: lo scatto
+         lo fa l'app Fotocamera del telefono. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+    </queries>
+
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
