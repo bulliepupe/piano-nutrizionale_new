@@ -1374,6 +1374,7 @@ COSA FARE
 - suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Non ridurre mai le porzioni di proteine (carne, pesce, uova, legumi, latticini) né di verdura: saziano e sostengono il piano. Se serve alleggerire, agisci su carboidrati aggiunti e condimenti (pane, cracker, olio oltre il previsto, opzione più ricca) o scegli l'alternativa più leggera prevista dal piano. Usa solo alimenti scritti testualmente nei pasti rimasti, nelle sostituzioni o nelle indicazioni del nutrizionista che ricevi qui: sono tutto ciò che puoi usare. Non scrivere mai condizioni come "se presente nel tuo piano" o "se previsto": se nessun alimento di quell'elenco va bene, non dare il suggerimento. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
 - messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
 - macroEffettivi: stima in grammi di carboidrati, proteine, grassi (e alcol, se c'è) di quello che il paziente ha mangiato davvero in questo pasto. Compilalo solo se la nota del paziente descrive cosa ha mangiato, anche a grandi linee; se ha fatto il pasto "in parte", stima la parte effettivamente mangiata. Se la nota manca o non dice cosa ha mangiato, ometti macroEffettivi. Valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard; "affidabilita" alta, media o bassa secondo quanto è precisa la descrizione.
+- macroAltri: solo se nel messaggio ci sono "Prodotti confezionati con valori dall'etichetta". Quei valori li calcola l'app dalla tabella della confezione e sono esatti: non ristimarli e non compilare macroEffettivi. In macroAltri metti la stima dei soli ALTRI alimenti descritti nella nota, esclusi i prodotti con etichetta; se la nota non descrive altro, metti carboidrati, proteine e grassi a 0 con affidabilita "alta". Nella spiegazione puoi citare i prodotti con etichetta per nome.
 - Non nominare mai i pasti di domani o di altri giorni (non li conosci): se oggi non ci sono altri pasti, al massimo ricorda che domani si riparte dal piano, senza dire cosa mangiare.
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
 - Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista. Se l'allenamento è importato da file trovi distanza, dislivello, frequenza cardiaca e le calorie stimate dal dispositivo: usali solo per capire quanto è stato impegnativo, mai per fare conti di calorie da recuperare e senza citare le calorie al paziente.
@@ -1405,6 +1406,15 @@ const STRUMENTO_RISCONTRO = {
       macroEffettivi: {
         type: "object",
         description: "Macronutrienti stimati di quanto mangiato davvero (solo se la nota lo descrive)",
+        properties: {
+          carboidrati: { type: "number" }, proteine: { type: "number" }, grassi: { type: "number" }, alcol: { type: "number" },
+          affidabilita: { type: "string", enum: ["alta", "media", "bassa"] },
+        },
+        required: ["carboidrati", "proteine", "grassi", "affidabilita"],
+      },
+      macroAltri: {
+        type: "object",
+        description: "Solo con prodotti con etichetta: macronutrienti stimati degli altri alimenti della nota, esclusi quei prodotti",
         properties: {
           carboidrati: { type: "number" }, proteine: { type: "number" }, grassi: { type: "number" }, alcol: { type: "number" },
           affidabilita: { type: "string", enum: ["alta", "media", "bassa"] },
@@ -1533,11 +1543,19 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   } catch (e) { macroPrevisti = null; }
   const sostituzioni = (Array.isArray(piano.sostituzioni) ? piano.sostituzioni : []).slice(0, 12)
     .map((g) => `${g.nome}: ${(g.opzioni || []).join(", ")}`).join("\n");
+  // Prodotti confezionati con i valori letti dall'etichetta: li calcola l'app
+  const prodotti = stato === "saltato" ? [] : vociEtichettaPasto(fatti, pasto);
+  const macroProdotti = prodotti.length ? macroLogic.macroDaEtichette(prodotti) : null;
+  const testoProdotti = prodotti.length ? "Prodotti confezionati con valori dall'etichetta (calcolati dall'app, esatti):\n" + prodotti.map((v) => {
+    const x = macroLogic.valoriVoceEtichetta(v);
+    return `- ${v.nome}, ${Math.round(v.grammi)} ${v.unita}: carboidrati ${Math.round(x.carboidrati)} g, proteine ${Math.round(x.proteine)} g, grassi ${Math.round(x.grassi)} g (circa ${x.kcal} kcal)`;
+  }).join("\n") + "\nCompila macroAltri con i soli altri alimenti della nota (tutto a 0 se non ce ne sono) e non compilare macroEffettivi." : "";
   const testo = [
     `Pasto: ${MEAL_LABELS[pasto]}`,
     `Previsto dal piano: ${String(giorno[pasto]).slice(0, 800)}`,
     macroPrevisti ? `Macronutrienti stimati del pasto previsto: carboidrati ${Math.round(macroPrevisti.carboidrati)} g, proteine ${Math.round(macroPrevisti.proteine)} g, grassi ${Math.round(macroPrevisti.grassi)} g (circa ${macroPrevisti.kcal} kcal). Se compili macroEffettivi, le differenze che citi devono essere coerenti con questi valori.` : "",
     `Com'è andato: ${STATI_NON_COME_PIANO[stato]}${motivo ? ` (motivo: ${motivo})` : ""}${nota ? `. Il paziente scrive: "${nota}"` : ""}`,
+    testoProdotti,
     "",
     rimanenti.length ? "Pasti rimasti di oggi:\n" + rimanenti.map((k) => `- ${MEAL_LABELS[k]} [${k}]: ${String(giorno[k]).slice(0, 600)}`).join("\n") : "Non ci sono altri pasti oggi: niente suggerimenti per oggi, solo il riscontro e il ritorno al piano da domani.",
     giorno.kcal ? `Calorie previste per la giornata: circa ${giorno.kcal} kcal.` : "",
@@ -1571,12 +1589,152 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "riscontro_pasto");
   if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
   const riscontro = Object.assign(normalizzaRiscontro(blocco.input, rimanenti, conSuggerimenti), { data: dateKey, pasto, stato, frequente });
+  if (macroProdotti) {
+    const altri = blocco.input.macroAltri && typeof blocco.input.macroAltri === "object"
+      ? macroLogic.pulisciStima(Object.assign({}, blocco.input.macroAltri, { libero: false })) : null;
+    riscontro.macroEffettivi = macroLogic.sommaStime(macroProdotti, altri);
+    riscontro.etichette = prodotti.length;
+  }
   // La stima mostrata al paziente si ricalcola dai numeri, così non può
   // contraddire il riquadro dei macronutrienti dell'app.
   const stimaNumerica = stimaDaMacro(macroPrevisti, riscontro.macroEffettivi);
   if (stimaNumerica) { riscontro.stima = stimaNumerica; riscontro.macroPrevisti = macroPrevisti; }
   await riscontriRef.doc(`${dateKey}_${pasto}`).set(Object.assign({}, riscontro, { creato: FieldValue.serverTimestamp() }));
   return riscontro;
+});
+
+/** Prodotti con etichetta segnati dal paziente per un pasto (ripuliti, massimo 6). */
+function vociEtichettaPasto(fatti, pasto) {
+  const elenco = fatti && fatti.etichette && Array.isArray(fatti.etichette[pasto]) ? fatti.etichette[pasto] : [];
+  return elenco.slice(0, macroLogic.MAX_ETICHETTE).map(macroLogic.pulisciVoceEtichetta).filter((v) => v.grammi > 0);
+}
+
+// =========================================================================
+// LETTURA DELLA TABELLA NUTRIZIONALE DA UNA FOTO (AI)
+// =========================================================================
+// Il paziente fotografa l'etichetta di un prodotto confezionato mangiato al
+// posto del pasto previsto. Il modello legge solo i numeri della tabella;
+// la foto non viene salvata né registrata. I grammi mangiati li indica il
+// paziente e il calcolo lo fa l'app (macroLogic.valoriVoceEtichetta).
+const LIMITE_ETICHETTE_GIORNO = 20;
+const ISTRUZIONI_ETICHETTA = `Leggi la tabella delle informazioni nutrizionali nella foto di una confezione alimentare e chiama lo strumento etichetta_nutrizionale.
+
+REGOLE
+- Trascrivi solo i numeri stampati nella tabella. Non stimare e non completare valori che non leggi: se un valore manca o non è leggibile, omettilo.
+- "riferimento": la colonna che trascrivi. Preferisci quella per 100 g o 100 ml; usa "porzione" solo se la tabella non ha valori per 100 g o 100 ml, e allora indica i grammi della porzione in grammiPorzione.
+- Energia: usa le kcal, non i kJ. Usa il punto come separatore decimale. Per "<0,5 g" o "tracce" scrivi 0.
+- carboidrati sono i carboidrati totali; zuccheri è la voce "di cui zuccheri"; grassi sono i grassi totali.
+- "porzione": se la confezione indica una porzione consigliata (es. "una porzione = 30 g" o "2 biscotti, 25 g"), riporta grammi e descrizione breve.
+- "confezione": se è leggibile il peso netto della confezione o della singola monoporzione, riportalo in grammi.
+- "nome": il nome del prodotto se è visibile sulla confezione (massimo 60 caratteri), altrimenti stringa vuota.
+- Ignora tutto ciò che non è stampato sulla confezione e non trascrivere altri testi.
+- leggibile = false se nella foto non c'è una tabella nutrizionale o non si leggono almeno le kcal o i macronutrienti.`;
+const STRUMENTO_ETICHETTA = {
+  name: "etichetta_nutrizionale",
+  description: "Valori letti dalla tabella nutrizionale della confezione.",
+  input_schema: {
+    type: "object",
+    properties: {
+      leggibile: { type: "boolean" },
+      nome: { type: "string" },
+      riferimento: { type: "string", enum: ["100g", "100ml", "porzione"] },
+      grammiPorzione: { type: "number" },
+      valori: {
+        type: "object",
+        properties: {
+          kcal: { type: "number" }, carboidrati: { type: "number" }, zuccheri: { type: "number" },
+          proteine: { type: "number" }, grassi: { type: "number" }, fibre: { type: "number" }, sale: { type: "number" },
+        },
+      },
+      porzione: { type: "object", properties: { grammi: { type: "number" }, descrizione: { type: "string" } } },
+      confezione: { type: "object", properties: { grammi: { type: "number" } } },
+    },
+    required: ["leggibile"],
+  },
+};
+
+/** Risposta del modello → valori per 100 g ripuliti, con porzione e confezione. */
+function normalizzaEtichetta(x) {
+  x = x || {};
+  if (x.leggibile === false || !x.valori || typeof x.valori !== "object") return null;
+  const v = {};
+  ["kcal", "carboidrati", "zuccheri", "proteine", "grassi", "fibre", "sale"].forEach((k) => {
+    const n = Number(x.valori[k]);
+    if (Number.isFinite(n) && n >= 0) v[k] = n;
+  });
+  if (v.kcal == null && v.carboidrati == null && v.proteine == null && v.grassi == null) return null;
+  let fattore = 1;
+  if (x.riferimento === "porzione") {
+    const g = Number(x.grammiPorzione);
+    if (!(g > 0 && g <= 2000)) return null;
+    fattore = 100 / g;
+  }
+  Object.keys(v).forEach((k) => { v[k] = Math.round(v[k] * fattore * 10) / 10; });
+  // kcal mancanti: si ricavano dai macronutrienti
+  if (v.kcal == null) v.kcal = Math.round((v.carboidrati || 0) * 4 + (v.proteine || 0) * 4 + (v.grassi || 0) * 9 + (v.fibre || 0) * 2);
+  const per100 = macroLogic.pulisciPer100(v);
+  if (per100.carboidrati + per100.proteine + per100.grassi > 105) return null;
+  const grammiValidi = (g) => { const n = Number(g); return n > 0 && n <= 2000 ? Math.round(n) : null; };
+  const pGr = x.porzione && grammiValidi(x.porzione.grammi);
+  return {
+    nome: String(x.nome || "").replace(/\s+/g, " ").trim().slice(0, 60),
+    unita: x.riferimento === "100ml" ? "ml" : "g",
+    per100,
+    porzione: pGr ? { grammi: pGr, descrizione: String((x.porzione && x.porzione.descrizione) || "").replace(/\s+/g, " ").trim().slice(0, 60) } : null,
+    confezione: (x.confezione && grammiValidi(x.confezione.grammi)) || null,
+    coerente: macroLogic.etichettaCoerente(per100),
+  };
+}
+
+exports.leggiEtichetta = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const immagine = String((request.data && request.data.immagine) || "");
+  if (!immagine || immagine.length > 3500000 || !/^[A-Za-z0-9+/]+$/.test(immagine.slice(0, 2000))) {
+    throw new HttpsError("invalid-argument", "immagine-non-valida");
+  }
+
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (consensoAINegato(utente)) throw new HttpsError("failed-precondition", "consenso-ai-negato");
+  if (!(await statoPremiumPaziente(utente, Date.now())).attivo) throw new HttpsError("failed-precondition", "premium-richiesto");
+  const pianoDoc = await pianoDelPaziente(uid);
+  const modo = pianoDoc && pianoDoc.data().feedbackAI && pianoDoc.data().feedbackAI.modo;
+  if (modo === "spento") throw new HttpsError("failed-precondition", "riscontro-spento");
+
+  const oggi = chiaveData(oraItaliana(new Date()));
+  const usate = utente.lettureEtichette && utente.lettureEtichette.giorno === oggi ? Number(utente.lettureEtichette.n) || 0 : 0;
+  if (usate >= LIMITE_ETICHETTE_GIORNO) throw new HttpsError("resource-exhausted", "limite-giornaliero");
+  await utenteRef.set({ lettureEtichette: { giorno: oggi, n: usate + 1 } }, { merge: true });
+
+  let risposta;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        inference_geo: AREA_INFERENZA, model: MODELLO_RISCONTRO, max_tokens: 600, system: ISTRUZIONI_ETICHETTA,
+        tools: [STRUMENTO_ETICHETTA], tool_choice: { type: "tool", name: "etichetta_nutrizionale" },
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: immagine } },
+          { type: "text", text: "Leggi la tabella nutrizionale di questa confezione." },
+        ] }],
+      }),
+    });
+    risposta = await r.json();
+    if (!r.ok) {
+      console.error("Lettura etichetta: errore API", r.status, risposta && risposta.error && risposta.error.type);
+      throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+    }
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
+  }
+  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "etichetta_nutrizionale");
+  const etichetta = normalizzaEtichetta(blocco && blocco.input);
+  if (!etichetta) throw new HttpsError("failed-precondition", "etichetta-non-leggibile");
+  return etichetta;
 });
 
 // =========================================================================
@@ -2205,5 +2363,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

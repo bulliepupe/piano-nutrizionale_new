@@ -2378,3 +2378,19 @@ body.con-informativa { overflow: hidden; }
 /* Nei pannelli lunghi (che scorrono) nessun elemento deve schiacciarsi: la barra delle zone, senza testo, arrivava a 0 px */
 .sheet > * { flex-shrink: 0; }
 .stato-pasto__avviso { display: block; margin-top: 4px; font-size: 12px; line-height: 1.4; color: var(--ink-faint); font-weight: 400; }
+
+/* ---- Prodotti confezionati letti dall'etichetta (scheda del pasto) ---- */
+.etichette-pasto { margin: 4px 0 12px; padding: 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-s, 10px); background: var(--surface); }
+.etichette-pasto .stato-pasto__domanda { margin-top: 0; }
+.etichette-pasto__aiuto { margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: var(--ink-soft, var(--ink)); }
+.etichette-pasto > .btn { width: 100%; }
+.etichette-elenco { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.etichette-elenco li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 13.5px; }
+.etichette-elenco .link-btn { width: auto; flex-shrink: 0; padding: 0 4px; }
+.etichette-griglia { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.etichette-griglia .editor-campo span { font-weight: 400; color: var(--ink-faint); }
+.etichette-pasto__attenzione { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, #D9B13B 18%, var(--surface)); font-size: 13px; line-height: 1.4; }
+.etichette-pasto__calcolo { margin: 8px 0 10px; font-size: 13.5px; font-weight: 600; }
+.etichette-pasto__azioni { display: flex; gap: 8px; }
+.etichette-pasto__azioni .btn { flex: 1; margin: 0; }
+.stat-nota-pasto__prodotti { font-size: 12.5px; color: var(--ink-faint); }

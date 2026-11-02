@@ -156,7 +156,12 @@
         const motivo = stato.motivi && MOTIVI[stato.motivi[k]] ? stato.motivi[k] : null;
         if (motivo) gruppo.motivi[motivo] = (gruppo.motivi[motivo] || 0) + 1;
         const nota = stato.note && typeof stato.note[k] === "string" ? stato.note[k].trim() : "";
-        if (nota) imprevisti.note.push({ giorno: g.chiave, pasto: k, stato: st, motivo, nota });
+        // prodotti confezionati segnati con la foto dell'etichetta
+        const prodotti = st !== "saltato" && stato.etichette && Array.isArray(stato.etichette[k])
+          ? stato.etichette[k].slice(0, 6).filter((v) => v && Number(v.grammi) > 0)
+            .map((v) => `${String(v.nome || "Prodotto confezionato").slice(0, 60)} (${Math.round(Number(v.grammi))} ${v.unita === "ml" ? "ml" : "g"})`).join(", ")
+          : "";
+        if (nota || prodotti) imprevisti.note.push(Object.assign({ giorno: g.chiave, pasto: k, stato: st, motivo, nota }, prodotti ? { prodotti } : {}));
       });
     });
 

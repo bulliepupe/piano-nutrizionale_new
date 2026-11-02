@@ -679,7 +679,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v111";
+  const VERSIONE_APP = "v112";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -1156,7 +1156,9 @@
     }).join("");
     const nota = [
       "Stima indicativa calcolata con l'intelligenza artificiale sui pasti del tuo piano" + (g.fattore !== 1 ? ", proporzionata alle calorie indicate dal nutrizionista." : "."),
-      Object.keys(effettivi).length ? "Per i pasti fatti diversamente o in parte uso la stima del riscontro." : "",
+      Object.keys(effettivi).length ? (M.CAMPI_PASTO.some((k) => effettivi[k] && RISCONTRI.perPasto[k] && RISCONTRI.perPasto[k].etichette)
+        ? "Per i pasti fatti diversamente o in parte uso la stima del riscontro e, per i prodotti confezionati, i valori dell'etichetta."
+        : "Per i pasti fatti diversamente o in parte uso la stima del riscontro.") : "",
     ].filter(Boolean).join(" ");
     const escluso = pastoLibero ? `<span class="macro-oggi__escluso">${pastoLibero === "cena" ? "esclusa la cena libera" : pastoLibero === "pranzo" ? "escluso il pranzo libero" : "escluso il pasto libero"}</span>` : "";
     return `<section class="macro-oggi" aria-label="Macronutrienti di oggi">
@@ -1571,7 +1573,7 @@
     if (!im.note.length) riga("Nessuna nota scritta.");
     else im.note.forEach((n) => {
       const d = S.daChiave(n.giorno);
-      riga(`${d.getDate()}/${d.getMonth() + 1} - ${MEAL_META[n.pasto].label}: "${n.nota}"`, { size: 10 });
+      riga(`${d.getDate()}/${d.getMonth() + 1} - ${MEAL_META[n.pasto].label}: ${[n.nota ? `"${n.nota}"` : "", n.prodotti ? `dall'etichetta ${n.prodotti}` : ""].filter(Boolean).join("; ")}`, { size: 10 });
     });
 
     // Piè di pagina
@@ -2951,11 +2953,17 @@
   }
 
   /** Salva lo stato di un pasto di oggi: true (fatto), "diverso", "parziale", "saltato" oppure null (non segnato). */
-  async function salvaStatoPasto(key, valore, motivo, nota) {
+  async function salvaStatoPasto(key, valore, motivo, nota, prodotti) {
     const dateKey = chiaveData(new Date());
     const nuovoStato = Object.assign({}, PASTI_FATTI_OGGI);
     const motivi = Object.assign({}, nuovoStato.motivi || {});
     const note = Object.assign({}, nuovoStato.note || {});
+    const etichette = Object.assign({}, nuovoStato.etichette || {});
+    // prodotti con etichetta: solo per i pasti fatti diversamente o in parte
+    const voci = (valore === "diverso" || valore === "parziale") && Array.isArray(prodotti)
+      ? prodotti.slice(0, window.macro.MAX_ETICHETTE).map(window.macro.pulisciVoceEtichetta).filter((v) => v.grammi > 0) : [];
+    if (voci.length) etichette[key] = voci; else delete etichette[key];
+    if (Object.keys(etichette).length) nuovoStato.etichette = etichette; else delete nuovoStato.etichette;
     const conDettagli = valore === "diverso" || valore === "parziale" || valore === "saltato";
     if (valore === null) delete nuovoStato[key]; else nuovoStato[key] = valore;
     if (motivo && conDettagli) motivi[key] = motivo; else delete motivi[key];
@@ -3082,6 +3090,31 @@
     salvaStatoPasto(key, giaFatto ? null : true, null, null);
   }
 
+  /** Lettura delle etichette: con il riscontro attivo e il consenso AI (Premium richiesto dal server). */
+  function etichetteDisponibili() {
+    return RUOLO === "paziente" && riscontroAttivo() && CONSENSO_AI && !!window.cloud.leggiEtichetta && !!window.macro;
+  }
+
+  /** Foto → JPEG ridotto (lato lungo al massimo 1600 px), in base64 senza intestazione. */
+  function fotoInBase64(file, lato, qualita) {
+    lato = lato || 1600; qualita = qualita || 0.85;
+    return new Promise((ok, ko) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const f = Math.min(1, lato / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.naturalWidth * f));
+        c.height = Math.max(1, Math.round(img.naturalHeight * f));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        ok(c.toDataURL("image/jpeg", qualita).split(",")[1]);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); ko(new Error("immagine-non-valida")); };
+      img.src = url;
+    });
+  }
+
   /** Scheda per dire com'è andato un pasto: fatto, in parte o saltato, con un motivo facoltativo. */
   function apriStatoPasto(key) {
     const S = window.statistiche;
@@ -3090,6 +3123,10 @@
     let scelta = attuale || null;
     let motivo = motivoAttuale;
     let nota = (PASTI_FATTI_OGGI.note || {})[key] || "";
+    // prodotti confezionati con i valori dell'etichetta (foto della tabella nutrizionale)
+    let prodotti = ((PASTI_FATTI_OGGI.etichette || {})[key] || []).map((v) => window.macro.pulisciVoceEtichetta(v));
+    let letta = null;        // etichetta appena letta, in attesa di conferma
+    let leggendo = false;
     const nomePasto = MEAL_META[key].label;
     const overlay = apriSheet(`
       <h2 class="sheet__titolo">${escapeHTML(nomePasto)} di oggi</h2>
@@ -3101,6 +3138,7 @@
         <button type="button" class="stato-pasto__opzione" data-scelta="saltato" role="radio">✕ <span>Saltato</span></button>
       </div>
       <div id="stato-pasto-motivi" class="stato-pasto__motivi"></div>
+      <div id="stato-pasto-etichette"></div>
       <button type="button" class="btn" id="stato-pasto-salva">Salva</button>
       ${attuale ? `<button type="button" class="btn btn--ghost" id="stato-pasto-togli">Togli la segnatura</button>` : ""}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>
@@ -3168,14 +3206,141 @@
         rec.onend = sblocca;
         try { rec.start(); } catch (e) { sblocca(); }
       });
-      overlay.querySelector("#stato-pasto-salva").disabled = !scelta;
+      // durante la revisione di un'etichetta non si ridisegna il modulo (si perderebbero le correzioni)
+      if (letta && (scelta === "diverso" || scelta === "parziale")) bloccaSalva(); else renderEtichette();
     };
+
+    // --- Prodotti con etichetta ---
+    const n1 = (x) => String(Math.round((Number(x) || 0) * 10) / 10).replace(".", ",");
+    const numero = (el) => { const v = parseFloat(String((el && el.value) || "").replace(",", ".")); return Number.isFinite(v) && v >= 0 ? v : 0; };
+    const bloccaSalva = () => { overlay.querySelector("#stato-pasto-salva").disabled = !scelta || leggendo || !!letta; };
+    const erroreEtichetta = (err) => {
+      const m = String((err && err.message) || "");
+      if (/premium-richiesto/.test(m)) { aggiornaPremium(); return "Le etichette si leggono con Premium."; }
+      if (/non-leggibile/.test(m)) return "Non riesco a leggere la tabella: riprova con una foto più nitida, dritta e senza riflessi.";
+      if (/limite/.test(m)) return "Per oggi le letture delle etichette sono finite.";
+      if (/consenso/.test(m)) return "Serve il consenso alle funzioni AI (Impostazioni → Privacy).";
+      if (/riscontro-spento/.test(m)) return "Il tuo nutrizionista ha disattivato il riscontro sui pasti.";
+      return "Lettura non riuscita: controlla la connessione e riprova.";
+    };
+    const renderEtichette = () => {
+      const box = overlay.querySelector("#stato-pasto-etichette");
+      if (!(scelta === "diverso" || scelta === "parziale")) letta = null;
+      bloccaSalva();
+      if (!box) return;
+      if (!(scelta === "diverso" || scelta === "parziale") || !etichetteDisponibili()) { box.innerHTML = ""; return; }
+      if (premiumLimitato()) {
+        box.innerHTML = `<div class="etichette-pasto">
+            <p class="stato-pasto__domanda">Hai mangiato un prodotto confezionato?</p>
+            <button type="button" class="btn btn--ghost" data-premium>📷 Fotografa l'etichetta, con Premium</button>
+          </div>`;
+        return;
+      }
+      const M = window.macro;
+      const vedeMacro = macroDisponibile();
+      if (letta) {
+        const u = letta.unita;
+        const campo = (id, nome, val) => `<label class="editor-campo">${nome} <span>per 100 ${u}</span>
+            <input type="number" inputmode="decimal" step="0.1" min="0" id="${id}" value="${val != null ? Math.round(val * 10) / 10 : ""}"></label>`;
+        const scelte = [];
+        if (letta.porzione) scelte.push({ g: letta.porzione.grammi, t: `1 porzione (${letta.porzione.grammi} ${u}${letta.porzione.descrizione ? ", " + letta.porzione.descrizione : ""})` });
+        if (letta.confezione && (!letta.porzione || letta.confezione !== letta.porzione.grammi)) scelte.push({ g: letta.confezione, t: `1 confezione (${letta.confezione} ${u})` });
+        if (letta.confezione) scelte.push({ g: Math.round(letta.confezione / 2), t: `mezza confezione (${Math.round(letta.confezione / 2)} ${u})` });
+        const iniziale = letta.grammi || (letta.porzione && letta.porzione.grammi) || letta.confezione || "";
+        box.innerHTML = `<div class="etichette-pasto etichette-pasto--revisione">
+            <p class="stato-pasto__domanda">Controlla i valori letti dall'etichetta</p>
+            ${letta.coerente ? "" : `<p class="etichette-pasto__attenzione">Alcuni valori non tornano tra loro: confrontali con la confezione e correggili se serve.</p>`}
+            <label class="editor-campo">Prodotto <input type="text" id="et-nome" maxlength="60" value="${escapeHTML(letta.nome || "")}" placeholder="Es. cracker integrali"></label>
+            <div class="etichette-griglia">
+              ${campo("et-kcal", "Energia (kcal)", letta.per100.kcal)}
+              ${campo("et-carboidrati", "Carboidrati (g)", letta.per100.carboidrati)}
+              ${campo("et-proteine", "Proteine (g)", letta.per100.proteine)}
+              ${campo("et-grassi", "Grassi (g)", letta.per100.grassi)}
+            </div>
+            <label class="editor-campo">Quanto ne hai mangiato? <span>(${u})</span>
+              <input type="number" inputmode="decimal" step="1" min="1" max="2000" id="et-grammi" value="${iniziale}"></label>
+            ${scelte.length ? `<div class="ricette-filtri">${scelte.map((x) => `<button type="button" class="chip-filtro" data-grammi="${x.g}">${escapeHTML(x.t)}</button>`).join("")}</div>` : ""}
+            ${vedeMacro ? `<p class="etichette-pasto__calcolo" id="et-calcolo" aria-live="polite"></p>` : ""}
+            <div class="etichette-pasto__azioni">
+              <button type="button" class="btn" id="et-aggiungi">Aggiungi</button>
+              <button type="button" class="btn btn--ghost" id="et-annulla">Annulla</button>
+            </div>
+          </div>`;
+        const voceDaCampi = () => ({
+          nome: box.querySelector("#et-nome").value,
+          unita: u,
+          per100: Object.assign({}, letta.per100, {
+            kcal: numero(box.querySelector("#et-kcal")), carboidrati: numero(box.querySelector("#et-carboidrati")),
+            proteine: numero(box.querySelector("#et-proteine")), grassi: numero(box.querySelector("#et-grassi")),
+          }),
+          grammi: numero(box.querySelector("#et-grammi")),
+        });
+        const ricalcola = () => {
+          const v = voceDaCampi();
+          const calcolo = box.querySelector("#et-calcolo");
+          if (calcolo) {
+            const x = M.valoriVoceEtichetta(v);
+            calcolo.textContent = v.grammi > 0 ? `Per ${n1(v.grammi)} ${u}: circa ${x.kcal} kcal, carboidrati ${n1(x.carboidrati)} g, proteine ${n1(x.proteine)} g, grassi ${n1(x.grassi)} g.` : "Indica quanto ne hai mangiato.";
+          }
+          box.querySelector("#et-aggiungi").disabled = !(v.grammi > 0);
+        };
+        box.querySelectorAll("input").forEach((i) => i.addEventListener("input", ricalcola));
+        box.querySelectorAll("[data-grammi]").forEach((b) => b.addEventListener("click", () => { box.querySelector("#et-grammi").value = b.dataset.grammi; ricalcola(); }));
+        box.querySelector("#et-aggiungi").addEventListener("click", () => {
+          const v = M.pulisciVoceEtichetta(voceDaCampi());
+          if (!(v.grammi > 0)) return;
+          prodotti = prodotti.concat(v).slice(0, M.MAX_ETICHETTE);
+          letta = null;
+          renderEtichette();
+        });
+        box.querySelector("#et-annulla").addEventListener("click", () => { letta = null; renderEtichette(); });
+        ricalcola();
+        return;
+      }
+      box.innerHTML = `<div class="etichette-pasto">
+          <p class="stato-pasto__domanda">Hai mangiato un prodotto confezionato? <span>(facoltativo)</span></p>
+          <p class="etichette-pasto__aiuto">Fotografa la tabella dei valori nutrizionali e indica quanto ne hai mangiato: il riscontro userà i valori della confezione.</p>
+          ${prodotti.length ? `<ul class="etichette-elenco">${prodotti.map((v, i) => {
+            const x = M.valoriVoceEtichetta(v);
+            return `<li><span><strong>${escapeHTML(v.nome)}</strong>, ${n1(v.grammi)} ${v.unita}${vedeMacro ? ` · circa ${x.kcal} kcal` : ""}</span>
+              <button type="button" class="link-btn" data-togli-etichetta="${i}">Togli</button></li>`;
+          }).join("")}</ul>` : ""}
+          ${prodotti.length < M.MAX_ETICHETTE ? `
+            <button type="button" class="btn btn--ghost" id="etichetta-foto"${leggendo ? " disabled" : ""}>${leggendo ? `<span class="import-attesa"></span> Sto leggendo l'etichetta…` : prodotti.length ? "📷 Aggiungi un'altra etichetta" : "📷 Fotografa l'etichetta"}</button>
+            <input type="file" id="etichetta-file" accept="image/*" hidden>` : ""}
+          <small class="stato-pasto__avviso">Inquadra solo la tabella: la foto viene letta dall'intelligenza artificiale e non viene conservata.</small>
+        </div>`;
+      box.querySelectorAll("[data-togli-etichetta]").forEach((b) => b.addEventListener("click", () => {
+        prodotti = prodotti.filter((_, i) => i !== Number(b.dataset.togliEtichetta));
+        renderEtichette();
+      }));
+      const bFoto = box.querySelector("#etichetta-foto");
+      const inFile = box.querySelector("#etichetta-file");
+      if (bFoto && inFile) {
+        bFoto.addEventListener("click", () => inFile.click());
+        inFile.addEventListener("change", async () => {
+          const file = inFile.files && inFile.files[0];
+          if (!file) return;
+          leggendo = true; renderEtichette();
+          try {
+            const immagine = await fotoInBase64(file);
+            const r = await window.cloud.leggiEtichetta(immagine);
+            letta = Object.assign({}, r, { per100: M.pulisciPer100(r.per100), unita: r.unita === "ml" ? "ml" : "g" });
+          } catch (err) {
+            mostraToast(erroreEtichetta(err), 5000);
+          }
+          leggendo = false;
+          if (overlay.isConnected) renderEtichette();
+        });
+      }
+    };
+
     overlay.querySelectorAll("[data-scelta]").forEach((b) => b.addEventListener("click", () => { scelta = b.dataset.scelta; aggiorna(); }));
     overlay.querySelector("#stato-pasto-salva").addEventListener("click", () => {
       fermaDettatura();
       chiudiSheet();
       const campo = overlay.querySelector("#stato-pasto-nota");
-      salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo, campo ? campo.value : "");
+      salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo, campo ? campo.value : "", prodotti);
     });
     const togli = overlay.querySelector("#stato-pasto-togli");
     if (togli) togli.addEventListener("click", () => { chiudiSheet(); salvaStatoPasto(key, null, null, null); });
@@ -5855,7 +6020,7 @@
       aderenzaPerSettimana: (r.settimane || []).map((x) => ({ settimanaDal: x.lunedi, aderenza: x.valore == null ? null : Math.round(x.valore * 100) })),
       pastiUltimi30giorni: (r.perPasto || []).map((x) => ({ pasto: lbl(x.pasto), ...x.conta })),
       pastiNonComeDaPiano: { fattiDiversamente: grp(im.diverso), fattiInParte: grp(im.parziale), saltati: grp(im.saltato) },
-      noteDelPaziente: (im.note || []).map((n) => ({ giorno: n.giorno, pasto: lbl(n.pasto), stato: n.stato, motivo: motivo(n.motivo), nota: n.nota })),
+      noteDelPaziente: (im.note || []).filter((n) => n.nota).map((n) => ({ giorno: n.giorno, pasto: lbl(n.pasto), stato: n.stato, motivo: motivo(n.motivo), nota: n.nota })),
       riscontriAI: { attivo: !(piano.feedbackAI && piano.feedbackAI.modo === "spento"), conteggioImpatti30giorni: conteggio, ultimi: riscontri.slice(0, 10).map((x) => ({ giorno: x.data, pasto: lbl(x.pasto), impatto: x.impatto, stima: x.stima })) },
       peso: rp ? { ultimoKg: rp.ultimo.peso, ultimoIl: rp.ultimo.data, variazioneDallInizioKg: rp.variazioneInizio == null ? null : Math.round(rp.variazioneInizio * 10) / 10, variazioneUltimoControlloKg: rp.variazioneControllo == null ? null : Math.round(rp.variazioneControllo * 10) / 10, obiettivoKg: rp.obiettivo, misurazioni: rp.conPeso.length } : null,
       usoApp: { ultimaInterazione: r.ultimaInterazione, giorniInattivo: r.giorniInattivo, promemoria: r.notifiche },
@@ -7283,7 +7448,7 @@
     const GIORNI_SETT = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"];
     const d = S.daChiave(n.giorno);
     const quando = `${GIORNI_SETT[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
-    return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${quando} · ${escapeHTML(MEAL_META[n.pasto].label)} · ${n.stato === "diverso" ? "fatto diversamente" : n.stato === "parziale" ? "in parte" : "saltato"}${n.motivo ? ` · ${escapeHTML(S.MOTIVI[n.motivo].toLowerCase())}` : ""}</span><span>“${escapeHTML(n.nota)}”</span></li>`;
+    return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${quando} · ${escapeHTML(MEAL_META[n.pasto].label)} · ${n.stato === "diverso" ? "fatto diversamente" : n.stato === "parziale" ? "in parte" : "saltato"}${n.motivo ? ` · ${escapeHTML(S.MOTIVI[n.motivo].toLowerCase())}` : ""}</span>${n.nota ? `<span>“${escapeHTML(n.nota)}”</span>` : ""}${n.prodotti ? `<span class="stat-nota-pasto__prodotti">Dall'etichetta: ${escapeHTML(n.prodotti)}</span>` : ""}</li>`;
   }
 
   /** Riepilogo dei pasti fatti in parte o saltati, con i motivi indicati dal paziente. */

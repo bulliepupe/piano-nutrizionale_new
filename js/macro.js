@@ -121,7 +121,78 @@
     return tot;
   }
 
-  const api = { CAMPI_PASTO, normalizzaPasto, daStimare, pulisciStima, macroGiorno, macroAssunti };
+  // ---------------------------------------------------------------------
+  // Prodotti confezionati letti dall'etichetta (foto della tabella nutrizionale)
+  // ---------------------------------------------------------------------
+  // I valori per 100 g li legge l'AI dalla foto e il paziente li conferma;
+  // i grammi mangiati li indica lui. Il calcolo lo fa l'app, non l'AI.
+  const MAX_ETICHETTE = 6;
+  const VOCI_ETICHETTA = { kcal: 950, carboidrati: 100, zuccheri: 100, proteine: 100, grassi: 100, fibre: 100, sale: 100 };
+
+  /** Valori per 100 g (o 100 ml) ripuliti: numeri tra 0 e il massimo possibile. */
+  function pulisciPer100(p) {
+    p = p || {};
+    const out = {};
+    Object.keys(VOCI_ETICHETTA).forEach((k) => { out[k] = num(p[k], VOCI_ETICHETTA[k]); });
+    if (out.zuccheri > out.carboidrati) out.zuccheri = out.carboidrati;
+    return out;
+  }
+
+  /** Vero se le calorie della tabella tornano con i macronutrienti (tolleranza del 15% o 25 kcal). */
+  function etichettaCoerente(p) {
+    p = pulisciPer100(p);
+    const calcolate = p.carboidrati * 4 + p.proteine * 4 + p.grassi * 9 + p.fibre * 2;
+    if (!p.kcal && !calcolate) return false;
+    return Math.abs(calcolate - p.kcal) <= Math.max(25, p.kcal * 0.15);
+  }
+
+  /** Prodotto ripulito: { nome, per100, grammi, unita }. */
+  function pulisciVoceEtichetta(v) {
+    v = v || {};
+    return {
+      nome: String(v.nome || "").replace(/\s+/g, " ").trim().slice(0, 60) || "Prodotto confezionato",
+      per100: pulisciPer100(v.per100),
+      grammi: num(v.grammi, 2000),
+      unita: v.unita === "ml" ? "ml" : "g",
+    };
+  }
+
+  /** Valori di quanto mangiato di un prodotto: per 100 g × grammi / 100. */
+  function valoriVoceEtichetta(v) {
+    v = pulisciVoceEtichetta(v);
+    const f = v.grammi / 100;
+    const r = (x) => Math.round(x * f * 10) / 10;
+    return { kcal: Math.round(v.per100.kcal * f), carboidrati: r(v.per100.carboidrati), proteine: r(v.per100.proteine), grassi: r(v.per100.grassi) };
+  }
+
+  /** Somma dei prodotti con etichetta di un pasto, come stima pulita (affidabilità alta). */
+  function macroDaEtichette(voci) {
+    const tot = { carboidrati: 0, proteine: 0, grassi: 0, alcol: 0 };
+    (Array.isArray(voci) ? voci : []).slice(0, MAX_ETICHETTE).forEach((v) => {
+      const x = valoriVoceEtichetta(v);
+      tot.carboidrati += x.carboidrati; tot.proteine += x.proteine; tot.grassi += x.grassi;
+    });
+    return pulisciStima(Object.assign(tot, { affidabilita: "alta" }));
+  }
+
+  /** Somma di due stime pulite (prodotti con etichetta + resto del pasto stimato dall'AI). */
+  function sommaStime(a, b) {
+    if (!b) return pulisciStima(a);
+    if (!a) return pulisciStima(b);
+    const restoVuoto = !(b.carboidrati || b.proteine || b.grassi || b.alcol);
+    return pulisciStima({
+      carboidrati: (a.carboidrati || 0) + (b.carboidrati || 0),
+      proteine: (a.proteine || 0) + (b.proteine || 0),
+      grassi: (a.grassi || 0) + (b.grassi || 0),
+      alcol: (a.alcol || 0) + (b.alcol || 0),
+      affidabilita: restoVuoto ? a.affidabilita : b.affidabilita === "bassa" ? "media" : (b.affidabilita || "media"),
+    });
+  }
+
+  const api = {
+    CAMPI_PASTO, normalizzaPasto, daStimare, pulisciStima, macroGiorno, macroAssunti,
+    MAX_ETICHETTE, pulisciPer100, etichettaCoerente, pulisciVoceEtichetta, valoriVoceEtichetta, macroDaEtichette, sommaStime,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.macro = api;
 })();

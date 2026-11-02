@@ -198,6 +198,13 @@
       return r.data;
     },
 
+    /** Lettura con l'AI della tabella nutrizionale fotografata (la foto non viene salvata). */
+    async leggiEtichetta(immagine) {
+      if (!funzioni) throw { code: "functions/unavailable" };
+      const r = await funzioni.httpsCallable("leggiEtichetta", { timeout: 60000 })({ immagine });
+      return r.data;
+    },
+
     ascoltaRiscontriOggi(uid, dateKey, cb) {
       return db.collection("users").doc(uid).collection("riscontri").where("data", "==", dateKey).onSnapshot(
         (snap) => cb(snap.docs.map((d) => d.data())),
