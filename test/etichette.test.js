@@ -57,4 +57,24 @@ const voci = T.vociEtichettaPasto({ etichette: { pranzo: [cracker, { nome: "zero
 ok(voci.length === 5 && voci.every((v) => v.grammi === 30), "massimo 6 voci, senza quelle a 0 g: " + voci.length);
 ok(T.vociEtichettaPasto({}, "pranzo").length === 0, "pasto senza prodotti");
 
+// valori effettivi del pasto calcolati dal server (caso del 2/11: pranzo "in parte" con cioccolato aggiunto)
+const previsti = M.pulisciStima({ carboidrati: 30, proteine: 23, grassi: 24, affidabilita: "media" });
+const cioccolato = M.macroDaEtichette([{ nome: "Cioccolato fondente 70%", per100: { kcal: 570, carboidrati: 33, proteine: 8, grassi: 42, fibre: 11 }, grammi: 20 }]);
+const zero = { carboidrati: 0, proteine: 0, grassi: 0, affidabilita: "alta" };
+const conAggiunta = T.macroEffettiviDaRisposta({ quotaPiano: 1, macroAggiunti: zero }, previsti, cioccolato, "parziale");
+ok(conAggiunta.carboidrati > previsti.carboidrati && conAggiunta.grassi > previsti.grassi && conAggiunta.kcal > previsti.kcal, "tutto il previsto + cioccolato = più del previsto: " + JSON.stringify(conAggiunta));
+const meta = T.macroEffettiviDaRisposta({ quotaPiano: 0.5, macroAggiunti: zero }, previsti, null, "parziale");
+ok(meta.carboidrati === 15 && meta.proteine === 11.5, "metà del pasto: " + JSON.stringify(meta));
+const sostituito = T.macroEffettiviDaRisposta({ quotaPiano: 0, macroAggiunti: { carboidrati: 60, proteine: 10, grassi: 15, affidabilita: "media" } }, previsti, null, "diverso");
+ok(sostituito.carboidrati === 60 && sostituito.affidabilita === "media", "pasto sostituito: " + JSON.stringify(sostituito));
+const fuoriScala = T.macroEffettiviDaRisposta({ quotaPiano: 3 }, previsti, null, "diverso");
+ok(fuoriScala.carboidrati === 30, "quota limitata a 1");
+const saltato = T.macroEffettiviDaRisposta({ quotaPiano: 1 }, previsti, null, "saltato");
+ok(saltato.kcal === 0, "saltato: zero");
+const senzaPrevisti = T.macroEffettiviDaRisposta({ macroEffettivi: { carboidrati: 40, proteine: 20, grassi: 10, affidabilita: "bassa" } }, null, null, "diverso");
+ok(senzaPrevisti.carboidrati === 40, "senza previsti: stima dell'AI");
+const soloProdotti = T.macroEffettiviDaRisposta({ macroAggiunti: zero }, null, cioccolato, "diverso");
+ok(soloProdotti.kcal === cioccolato.kcal, "senza previsti, con prodotti");
+ok(T.macroEffettiviDaRisposta({}, null, null, "diverso") === null, "nessun dato: nessuna stima");
+
 console.log("OK: " + n + " verifiche superate");

@@ -1374,7 +1374,8 @@ COSA FARE
 - suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Non ridurre mai le porzioni di proteine (carne, pesce, uova, legumi, latticini) né di verdura: saziano e sostengono il piano. Se serve alleggerire, agisci su carboidrati aggiunti e condimenti (pane, cracker, olio oltre il previsto, opzione più ricca) o scegli l'alternativa più leggera prevista dal piano. Usa solo alimenti scritti testualmente nei pasti rimasti, nelle sostituzioni o nelle indicazioni del nutrizionista che ricevi qui: sono tutto ciò che puoi usare. Non scrivere mai condizioni come "se presente nel tuo piano" o "se previsto": se nessun alimento di quell'elenco va bene, non dare il suggerimento. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
 - messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
 - macroEffettivi: stima in grammi di carboidrati, proteine, grassi (e alcol, se c'è) di quello che il paziente ha mangiato davvero in questo pasto. Compilalo solo se la nota del paziente descrive cosa ha mangiato, anche a grandi linee; se ha fatto il pasto "in parte", stima la parte effettivamente mangiata. Se la nota manca o non dice cosa ha mangiato, ometti macroEffettivi. Valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard; "affidabilita" alta, media o bassa secondo quanto è precisa la descrizione.
-- macroAltri: solo se nel messaggio ci sono "Prodotti confezionati con valori dall'etichetta". Quei valori li calcola l'app dalla tabella della confezione e sono esatti: non ristimarli e non compilare macroEffettivi. In macroAltri metti la stima dei soli ALTRI alimenti descritti nella nota, esclusi i prodotti con etichetta; se la nota non descrive altro, metti carboidrati, proteine e grassi a 0 con affidabilita "alta". Nella spiegazione puoi citare i prodotti con etichetta per nome.
+- quotaPiano: quanta parte del pasto PREVISTO il paziente ha mangiato davvero, da 0 a 1. 1 = tutto il previsto, anche se poi ha aggiunto altro (es. "ho aggiunto del cioccolato", "in più ho preso un caffè"); 0 = nulla del previsto, sostituito con altro; 0.5 = circa metà. Leggi la nota prima dello stato: chi segna "in parte" ma scrive di aver aggiunto qualcosa ha mangiato tutto il previsto. Compilalo sempre quando hai i macronutrienti del pasto previsto.
+- macroAggiunti: stima in grammi di carboidrati, proteine, grassi (e alcol) dei soli alimenti mangiati IN PIÙ o AL POSTO del previsto, esclusa la parte del piano già conteggiata in quotaPiano ed esclusi i "Prodotti confezionati con valori dall'etichetta", che l'app ha già calcolato e che non devi ristimare. Tutto a 0 se non c'è altro. I numeri del riepilogo li calcola l'app da quotaPiano, macroAggiunti e prodotti: la spiegazione deve andare nella stessa direzione (se il paziente ha mangiato tutto il previsto più un'aggiunta, l'effetto è in più, non in meno).
 - Non nominare mai i pasti di domani o di altri giorni (non li conosci): se oggi non ci sono altri pasti, al massimo ricorda che domani si riparte dal piano, senza dire cosa mangiare.
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
 - Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista. Se l'allenamento è importato da file trovi distanza, dislivello, frequenza cardiaca e le calorie stimate dal dispositivo: usali solo per capire quanto è stato impegnativo, mai per fare conti di calorie da recuperare e senza citare le calorie al paziente.
@@ -1412,9 +1413,10 @@ const STRUMENTO_RISCONTRO = {
         },
         required: ["carboidrati", "proteine", "grassi", "affidabilita"],
       },
-      macroAltri: {
+      quotaPiano: { type: "number", description: "Parte del pasto previsto mangiata davvero, da 0 a 1 (1 anche se ha aggiunto altro)" },
+      macroAggiunti: {
         type: "object",
-        description: "Solo con prodotti con etichetta: macronutrienti stimati degli altri alimenti della nota, esclusi quei prodotti",
+        description: "Macronutrienti dei soli alimenti in più o al posto del previsto, esclusi i prodotti con etichetta",
         properties: {
           carboidrati: { type: "number" }, proteine: { type: "number" }, grassi: { type: "number" }, alcol: { type: "number" },
           affidabilita: { type: "string", enum: ["alta", "media", "bassa"] },
@@ -1549,7 +1551,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   const testoProdotti = prodotti.length ? "Prodotti confezionati con valori dall'etichetta (calcolati dall'app, esatti):\n" + prodotti.map((v) => {
     const x = macroLogic.valoriVoceEtichetta(v);
     return `- ${v.nome}, ${Math.round(v.grammi)} ${v.unita}: carboidrati ${Math.round(x.carboidrati)} g, proteine ${Math.round(x.proteine)} g, grassi ${Math.round(x.grassi)} g (circa ${x.kcal} kcal)`;
-  }).join("\n") + "\nCompila macroAltri con i soli altri alimenti della nota (tutto a 0 se non ce ne sono) e non compilare macroEffettivi." : "";
+  }).join("\n") + "\nNon ristimare questi prodotti: in macroAggiunti metti solo gli altri alimenti in più o al posto del previsto." : "";
   const testo = [
     `Pasto: ${MEAL_LABELS[pasto]}`,
     `Previsto dal piano: ${String(giorno[pasto]).slice(0, 800)}`,
@@ -1589,12 +1591,9 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "riscontro_pasto");
   if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
   const riscontro = Object.assign(normalizzaRiscontro(blocco.input, rimanenti, conSuggerimenti), { data: dateKey, pasto, stato, frequente });
-  if (macroProdotti) {
-    const altri = blocco.input.macroAltri && typeof blocco.input.macroAltri === "object"
-      ? macroLogic.pulisciStima(Object.assign({}, blocco.input.macroAltri, { libero: false })) : null;
-    riscontro.macroEffettivi = macroLogic.sommaStime(macroProdotti, altri);
-    riscontro.etichette = prodotti.length;
-  }
+  const effettivi = macroEffettiviDaRisposta(blocco.input, macroPrevisti, macroProdotti, stato);
+  if (effettivi) riscontro.macroEffettivi = effettivi;
+  if (macroProdotti) riscontro.etichette = prodotti.length;
   // La stima mostrata al paziente si ricalcola dai numeri, così non può
   // contraddire il riquadro dei macronutrienti dell'app.
   const stimaNumerica = stimaDaMacro(macroPrevisti, riscontro.macroEffettivi);
@@ -1602,6 +1601,34 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   await riscontriRef.doc(`${dateKey}_${pasto}`).set(Object.assign({}, riscontro, { creato: FieldValue.serverTimestamp() }));
   return riscontro;
 });
+
+/**
+ * Macronutrienti di quanto mangiato davvero, calcolati dal server:
+ * parte del pasto previsto (quotaPiano × previsti) + alimenti in più o al
+ * posto del previsto (macroAggiunti, stima AI) + prodotti con etichetta
+ * (calcolati dall'app). Senza i previsti si usa la stima complessiva
+ * dell'AI (macroEffettivi), a cui si sommano i prodotti con etichetta.
+ */
+function macroEffettiviDaRisposta(input, previsti, prodotti, stato) {
+  input = input || {};
+  const pulita = (x) => (x && typeof x === "object" ? macroLogic.pulisciStima(Object.assign({}, x, { libero: false })) : null);
+  const aggiunti = pulita(input.macroAggiunti);
+  let quota = Number(input.quotaPiano);
+  if (stato === "saltato") quota = 0;
+  if (previsti && Number.isFinite(quota)) {
+    quota = Math.min(1, Math.max(0, quota));
+    const parte = macroLogic.pulisciStima({
+      carboidrati: previsti.carboidrati * quota, proteine: previsti.proteine * quota,
+      grassi: previsti.grassi * quota, alcol: (previsti.alcol || 0) * quota, affidabilita: previsti.affidabilita,
+    });
+    let tot = aggiunti ? macroLogic.sommaStime(parte, aggiunti) : parte;
+    if (prodotti) tot = macroLogic.sommaStime(prodotti, tot);
+    return tot.kcal > 0 || quota === 0 ? tot : null;
+  }
+  if (prodotti) return macroLogic.sommaStime(prodotti, aggiunti);
+  const stima = pulita(input.macroEffettivi);
+  return stima && stima.kcal > 0 ? stima : null;
+}
 
 /** Prodotti con etichetta segnati dal paziente per un pasto (ripuliti, massimo 6). */
 function vociEtichettaPasto(fatti, pasto) {
@@ -2363,5 +2390,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
