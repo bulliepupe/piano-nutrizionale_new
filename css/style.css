@@ -2394,3 +2394,4 @@ body.con-informativa { overflow: hidden; }
 .etichette-pasto__azioni { display: flex; gap: 8px; }
 .etichette-pasto__azioni .btn { flex: 1; margin: 0; }
 .stat-nota-pasto__prodotti { font-size: 12.5px; color: var(--ink-faint); }
+.etichette-pasto__galleria { display: block; width: 100%; margin: 6px 0 2px; text-align: center; font-size: 13px; }

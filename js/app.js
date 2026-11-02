@@ -679,7 +679,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v112";
+  const VERSIONE_APP = "v113";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -3232,7 +3232,7 @@
       if (premiumLimitato()) {
         box.innerHTML = `<div class="etichette-pasto">
             <p class="stato-pasto__domanda">Hai mangiato un prodotto confezionato?</p>
-            <button type="button" class="btn btn--ghost" data-premium>📷 Fotografa l'etichetta, con Premium</button>
+            <button type="button" class="btn btn--ghost" data-premium>📷 Fotografa la tabella di dichiarazione nutrizionale, con Premium</button>
           </div>`;
         return;
       }
@@ -3248,7 +3248,7 @@
         if (letta.confezione) scelte.push({ g: Math.round(letta.confezione / 2), t: `mezza confezione (${Math.round(letta.confezione / 2)} ${u})` });
         const iniziale = letta.grammi || (letta.porzione && letta.porzione.grammi) || letta.confezione || "";
         box.innerHTML = `<div class="etichette-pasto etichette-pasto--revisione">
-            <p class="stato-pasto__domanda">Controlla i valori letti dall'etichetta</p>
+            <p class="stato-pasto__domanda">Controlla i valori letti dalla tabella</p>
             ${letta.coerente ? "" : `<p class="etichette-pasto__attenzione">Alcuni valori non tornano tra loro: confrontali con la confezione e correggili se serve.</p>`}
             <label class="editor-campo">Prodotto <input type="text" id="et-nome" maxlength="60" value="${escapeHTML(letta.nome || "")}" placeholder="Es. cracker integrali"></label>
             <div class="etichette-griglia">
@@ -3299,15 +3299,17 @@
       }
       box.innerHTML = `<div class="etichette-pasto">
           <p class="stato-pasto__domanda">Hai mangiato un prodotto confezionato? <span>(facoltativo)</span></p>
-          <p class="etichette-pasto__aiuto">Fotografa la tabella dei valori nutrizionali e indica quanto ne hai mangiato: il riscontro userà i valori della confezione.</p>
+          <p class="etichette-pasto__aiuto">Fotografa la tabella di dichiarazione nutrizionale e indica quanto ne hai mangiato: il riscontro userà i valori della confezione.</p>
           ${prodotti.length ? `<ul class="etichette-elenco">${prodotti.map((v, i) => {
             const x = M.valoriVoceEtichetta(v);
             return `<li><span><strong>${escapeHTML(v.nome)}</strong>, ${n1(v.grammi)} ${v.unita}${vedeMacro ? ` · circa ${x.kcal} kcal` : ""}</span>
               <button type="button" class="link-btn" data-togli-etichetta="${i}">Togli</button></li>`;
           }).join("")}</ul>` : ""}
           ${prodotti.length < M.MAX_ETICHETTE ? `
-            <button type="button" class="btn btn--ghost" id="etichetta-foto"${leggendo ? " disabled" : ""}>${leggendo ? `<span class="import-attesa"></span> Sto leggendo l'etichetta…` : prodotti.length ? "📷 Aggiungi un'altra etichetta" : "📷 Fotografa l'etichetta"}</button>
-            <input type="file" id="etichetta-file" accept="image/*" hidden>` : ""}
+            <button type="button" class="btn btn--ghost" id="etichetta-foto"${leggendo ? " disabled" : ""}>${leggendo ? `<span class="import-attesa"></span> Sto leggendo la tabella…` : prodotti.length ? "📷 Fotografa un'altra tabella" : "📷 Fotografa la tabella di dichiarazione nutrizionale"}</button>
+            ${leggendo ? "" : `<button type="button" class="link-btn etichette-pasto__galleria" id="etichetta-galleria">oppure scegli una foto dalla galleria</button>`}
+            <input type="file" id="etichetta-file" accept="image/*" capture="environment" hidden>
+            <input type="file" id="etichetta-file-galleria" accept="image/*" hidden>` : ""}
           <small class="stato-pasto__avviso">Inquadra solo la tabella: la foto viene letta dall'intelligenza artificiale e non viene conservata.</small>
         </div>`;
       box.querySelectorAll("[data-togli-etichetta]").forEach((b) => b.addEventListener("click", () => {
@@ -3316,8 +3318,12 @@
       }));
       const bFoto = box.querySelector("#etichetta-foto");
       const inFile = box.querySelector("#etichetta-file");
-      if (bFoto && inFile) {
-        bFoto.addEventListener("click", () => inFile.click());
+      const bGalleria = box.querySelector("#etichetta-galleria");
+      const inGalleria = box.querySelector("#etichetta-file-galleria");
+      if (bGalleria && inGalleria) bGalleria.addEventListener("click", () => inGalleria.click());
+      // fotocamera (capture) o galleria: stessa lettura
+      if (bFoto && inFile) bFoto.addEventListener("click", () => inFile.click());
+      [inFile, inGalleria].filter(Boolean).forEach((inFile) => {
         inFile.addEventListener("change", async () => {
           const file = inFile.files && inFile.files[0];
           if (!file) return;
@@ -3332,7 +3338,7 @@
           leggendo = false;
           if (overlay.isConnected) renderEtichette();
         });
-      }
+      });
     };
 
     overlay.querySelectorAll("[data-scelta]").forEach((b) => b.addEventListener("click", () => { scelta = b.dataset.scelta; aggiorna(); }));
