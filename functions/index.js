@@ -409,13 +409,209 @@ async function cancellaRegistroNotifiche(uid) {
   }
 }
 
-/** Il paziente autonomo torna a gestire da solo il proprio piano. */
+/**
+ * Il paziente autonomo torna a gestire da solo il proprio piano. Note
+ * riservate, analisi e registro dei report del nutrizionista restano
+ * inaccessibili e vengono cancellati dopo 60 giorni (custodiaDati), salvo
+ * che il paziente si ricolleghi allo stesso nutrizionista.
+ */
 async function scollegaPazienteDalProfessionista(pazienteUid, pianoRef) {
   await db.runTransaction(async (t) => {
+    const piano = await t.get(pianoRef);
+    const ex = piano.exists ? piano.data().professionistaUid : null;
     t.update(db.collection("users").doc(pazienteUid), { professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp() });
-    t.update(pianoRef, { professionistaUid: null, gestore: "paziente", contattiNutrizionista: FieldValue.delete(), aggiornato: FieldValue.serverTimestamp() });
+    t.update(pianoRef, {
+      professionistaUid: null, gestore: "paziente", contattiNutrizionista: FieldValue.delete(), aggiornato: FieldValue.serverTimestamp(),
+      exProfessionistaUid: ex || null,
+      datiProfessionistaEntro: Timestamp.fromMillis(Date.now() + GIORNI_DATI_DOPO_SCOLLEGAMENTO * GIORNO_MS),
+    });
   });
 }
+
+// =========================================================================
+// CUSTODIA DEI DATI TRATTATI PER CONTO DEL NUTRIZIONISTA (accordo, sez. 8)
+// =========================================================================
+// - Scollegamento del paziente: entro 60 giorni si cancellano note riservate,
+//   analisi e registro dei report del nutrizionista (e le sue impostazioni
+//   del riscontro). Al paziente restano piano, diario, peso e misure.
+// - Licenza cessata: avviso al nutrizionista subito e dopo 30 giorni, avviso
+//   ai pazienti dopo 60; dopo 90 i pazienti vengono scollegati come sopra.
+//   Chi era stato creato dal nutrizionista tiene l'account, ma per continuare
+//   deve accettare termini, informativa e consensi (confermaContinuaDaSolo)
+//   entro 90 giorni; altrimenti l'account viene cancellato.
+// - Se la licenza torna attiva prima dei 90 giorni non si cancella nulla.
+const GIORNO_MS = 86400000;
+const GIORNI_DATI_DOPO_SCOLLEGAMENTO = 60;
+const GIORNI_CHIUSURA_LICENZA = 90;
+const GIORNI_CONFERMA_PAZIENTE = 90;
+const SOTTORACCOLTE_PROFESSIONISTA = ["noteMisure", "analisi", "condivisioni"];
+
+/** Cancella dal piano i dati del nutrizionista (non piano, diario, misure). */
+async function cancellaDatiProfessionistaDalPiano(pianoRef) {
+  for (const nome of SOTTORACCOLTE_PROFESSIONISTA) await db.recursiveDelete(pianoRef.collection(nome));
+  await pianoRef.update({ feedbackAI: FieldValue.delete(), datiProfessionistaEntro: FieldValue.delete(), exProfessionistaUid: FieldValue.delete() });
+}
+
+const dataIt = (ms) => new Date(ms).toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Rome" });
+const msDi = (t) => (t && typeof t.toMillis === "function" ? t.toMillis() : null);
+
+/**
+ * Fase della licenza cessata in base ai giorni trascorsi dal primo avviso:
+ * avviso (0), promemoria (30), pazienti (60), chiusura (90).
+ */
+function fasiDaEseguire(custodia, giorni) {
+  const c = custodia || {};
+  const fasi = [];
+  if (!c.avviso) fasi.push("avviso");
+  if (giorni >= 30 && c.avviso && !c.promemoria) fasi.push("promemoria");
+  if (giorni >= 60 && !c.pazienti) fasi.push("pazienti");
+  if (giorni >= GIORNI_CHIUSURA_LICENZA && c.pazienti && !c.chiusa) fasi.push("chiusura");
+  return fasi;
+}
+
+/** Chiude il rapporto tra un nutrizionista e un suo paziente a fine licenza. */
+async function chiudiPazienteFineLicenza(pianoDoc, profUid, adesso) {
+  const p = pianoDoc.data() || {};
+  if (!p.pazienteUid) { await db.recursiveDelete(pianoDoc.ref); return; }
+  const utenteRef = db.collection("users").doc(p.pazienteUid);
+  const utente = (await utenteRef.get()).data();
+  if (!utente) { await db.recursiveDelete(pianoDoc.ref); return; }
+  await cancellaDatiProfessionistaDalPiano(pianoDoc.ref);
+  await pianoDoc.ref.update({ professionistaUid: null, gestore: "paziente", contattiNutrizionista: FieldValue.delete(), aggiornato: FieldValue.serverTimestamp() });
+  const agg = { professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp(), datiProfessionistaCancellati: FieldValue.serverTimestamp() };
+  if (!utente.autonomo) agg.confermaRichiesta = { motivo: "fine-licenza", da: profUid, entro: Timestamp.fromMillis(adesso + GIORNI_CONFERMA_PAZIENTE * GIORNO_MS) };
+  await utenteRef.update(agg);
+}
+
+/** Testi delle email della custodia. */
+function emailCustodia(tipo, d) {
+  const firma = "\n\nIl mio Piano - Bulli e Pupe S.r.l.\ninfo@ilmiopiano.it";
+  if (tipo === "avviso" || tipo === "promemoria") {
+    return {
+      subject: tipo === "avviso" ? "Il mio Piano: la tua licenza non è più attiva" : "Il mio Piano: promemoria sui dati dei tuoi pazienti",
+      text: `Buongiorno ${d.nome || ""},\n\n${tipo === "avviso" ? "la tua licenza di Il mio Piano non è più attiva." : "ti ricordiamo che la tua licenza di Il mio Piano non è più attiva."} ` +
+        `I dati dei tuoi ${d.pazienti} pazienti restano conservati fino al ${d.chiusura}. In quella data:\n` +
+        "- note riservate, analisi dell'andamento e registro dei report verranno cancellati;\n" +
+        "- i pazienti verranno scollegati: chi si era registrato da solo continua con il proprio account, chi era stato creato da te potrà continuare da solo accettando le nostre condizioni, altrimenti il suo account verrà cancellato.\n\n" +
+        `Se rinnovi la licenza prima del ${d.chiusura}, non cambia nulla. Se ti serve una copia dei dati, scrivi a info@ilmiopiano.it entro quella data: te la inviamo entro 15 giorni.` + firma,
+    };
+  }
+  return {
+    subject: "Il mio Piano: il tuo nutrizionista non userà più l'app",
+    text: `Buongiorno ${d.nome || ""},\n\nil tuo nutrizionista non usa più Il mio Piano. Dal ${d.chiusura} non sarà più collegato al tuo account e non vedrà più il tuo andamento.\n\n` +
+      (d.autonomo
+        ? "Il tuo account e il tuo piano restano tuoi e puoi continuare a usare l'app come prima."
+        : `Potrai continuare a usare l'app da solo, con il tuo piano e il tuo diario: al primo accesso dopo il ${d.chiusura} ti chiederemo di accettare i Termini di servizio e l'informativa privacy di Bulli e Pupe S.r.l., che da quel momento gestirà i tuoi dati. Se non lo fai entro 90 giorni, il tuo account verrà cancellato.`) +
+      "\n\nPer domande scrivi a info@ilmiopiano.it." + firma,
+  };
+}
+
+/** Eseguita ogni notte: scollegamenti, licenze cessate, conferme scadute. */
+async function eseguiCustodia(adesso) {
+  adesso = adesso || Date.now();
+  const esito = { datiCancellati: 0, avvisi: 0, chiusi: 0, accountCancellati: 0 };
+
+  // 1) Scollegati prima di questa versione: si programma la cancellazione
+  const scollegati = await db.collection("users").where("scollegato", "<=", Timestamp.fromMillis(adesso)).get();
+  for (const u of scollegati.docs) {
+    const d = u.data() || {};
+    if (d.ruolo !== "paziente" || d.professionistaUid) continue;
+    const quando = msDi(d.scollegato);
+    if (!quando || (msDi(d.datiProfessionistaCancellati) || 0) >= quando) continue;
+    const piano = await pianoDelPaziente(u.id);
+    if (!piano || piano.data().professionistaUid || piano.data().datiProfessionistaEntro) continue;
+    await piano.ref.update({ datiProfessionistaEntro: Timestamp.fromMillis(quando + GIORNI_DATI_DOPO_SCOLLEGAMENTO * GIORNO_MS) });
+  }
+
+  // 2) Dati del nutrizionista da cancellare (60 giorni dallo scollegamento)
+  const daCancellare = await db.collection("piani").where("datiProfessionistaEntro", "<=", Timestamp.fromMillis(adesso)).get();
+  for (const piano of daCancellare.docs) {
+    if (piano.data().professionistaUid) continue;
+    await cancellaDatiProfessionistaDalPiano(piano.ref);
+    if (piano.data().pazienteUid) await db.collection("users").doc(piano.data().pazienteUid).update({ datiProfessionistaCancellati: FieldValue.serverTimestamp() }).catch(() => {});
+    esito.datiCancellati++;
+  }
+
+  // 3) Licenze cessate
+  const professionisti = await db.collection("users").where("ruolo", "==", "professionista").get();
+  for (const prof of professionisti.docs) {
+    const p = prof.data() || {};
+    const c = p.custodia || null;
+    if (!p.licenza) continue;
+    if (statoLicenzaServer(p.licenza, adesso).attiva) {
+      if (c) await prof.ref.update({ custodia: FieldValue.delete() });
+      continue;
+    }
+    if (c && c.chiusa) continue;
+    const piani = await db.collection("piani").where("professionistaUid", "==", prof.id).get();
+    if (piani.empty && !c) continue;
+    // I termini decorrono dal primo avviso (mai prima della cessazione reale)
+    const inizio = (c && msDi(c.cessata)) || adesso;
+    const giorni = Math.floor((adesso - inizio) / GIORNO_MS);
+    const chiusura = dataIt(inizio + GIORNI_CHIUSURA_LICENZA * GIORNO_MS);
+    const agg = Object.assign({}, c || {}, { cessata: Timestamp.fromMillis(inizio) });
+    if (!c && p.licenza.scadenza) agg.scadenzaLicenza = p.licenza.scadenza;
+    for (const fase of fasiDaEseguire(c, giorni)) {
+      if ((fase === "avviso" || fase === "promemoria") && p.email) {
+        await accodaEmail(Object.assign({ to: p.email }, emailCustodia(fase, { nome: p.nome, pazienti: piani.size, chiusura })));
+        esito.avvisi++;
+      }
+      if (fase === "pazienti") {
+        for (const piano of piani.docs) {
+          const pz = piano.data();
+          const u = pz.pazienteUid ? (await db.collection("users").doc(pz.pazienteUid).get()).data() : null;
+          const email = (u && u.email) || pz.pazienteEmail;
+          if (email) await accodaEmail(Object.assign({ to: email }, emailCustodia("paziente", { nome: (u && u.nome) || pz.pazienteNome, autonomo: !!(u && u.autonomo), chiusura })));
+          esito.avvisi++;
+        }
+      }
+      if (fase === "chiusura") {
+        for (const piano of piani.docs) { await chiudiPazienteFineLicenza(piano, prof.id, adesso); esito.chiusi++; }
+      }
+      agg[fase] = Timestamp.fromMillis(adesso);
+    }
+    await prof.ref.update({ custodia: agg });
+  }
+
+  // 4) Pazienti che non hanno confermato di voler continuare da soli
+  const scadute = await db.collection("users").where("confermaRichiesta.entro", "<=", Timestamp.fromMillis(adesso)).get();
+  for (const u of scadute.docs) {
+    if ((u.data() || {}).ruolo !== "paziente") continue;
+    const piano = await pianoDelPaziente(u.id);
+    await cancellaDatiPaziente(u.id, piano ? piano.ref : null);
+    esito.accountCancellati++;
+  }
+  console.log("Custodia dei dati:", JSON.stringify(esito));
+  return esito;
+}
+
+exports.custodiaDati = onSchedule({ schedule: "30 3 * * *", timeZone: "Europe/Rome" }, async () => { await eseguiCustodia(Date.now()); });
+
+/**
+ * Paziente creato dal nutrizionista, a licenza cessata: accetta termini,
+ * informativa e consensi di Bulli e Pupe e continua da solo con il suo piano.
+ */
+exports.confermaContinuaDaSolo = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const c = (request.data && request.data.consensi) || {};
+  const utenteRef = db.collection("users").doc(uid);
+  const utente = (await utenteRef.get()).data() || {};
+  if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  if (!utente.confermaRichiesta) return { ok: true };
+  if (c.maggiorenne !== true || c.salute !== true) throw new HttpsError("invalid-argument", "consensi-mancanti");
+  const ora = FieldValue.serverTimestamp();
+  const batch = db.batch();
+  batch.update(utenteRef, {
+    autonomo: true, confermaRichiesta: FieldValue.delete(), continuaDaSolo: ora,
+    consensi: { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, data: ora } },
+  });
+  ["maggiorenne", "salute", "ai"].forEach((tipo) => batch.set(utenteRef.collection("consensiStorico").doc(), {
+    tipo, si: tipo === "ai" ? c.ai === true : true, versione: VERSIONE_CONSENSI, data: ora, da: "continua da solo",
+  }));
+  await batch.commit();
+  return { ok: true };
+});
 
 // =========================================================================
 // CREAZIONE DI UN PAZIENTE (con controllo del limite della licenza)
@@ -636,18 +832,18 @@ const VERSIONE_CONSENSI = "2026-10-20";
 /**
  * Vero se le funzioni AI vanno bloccate per questo paziente:
  * - consenso AI revocato o negato;
- * - paziente autonomo senza una scelta registrata (iscritto prima del
- *   20/10/2026, quando i consensi non si salvavano): resta bloccato finché
- *   non dà il consenso (Impostazioni → Privacy o richiesta al momento).
- * I pazienti creati dal nutrizionista senza scelta registrata restano come
- * prima: la loro base giuridica è un punto aperto della DPIA.
+ * - nessuna scelta registrata (autonomi iscritti prima del 20/10/2026 e,
+ *   dalla v114, anche i pazienti creati dal nutrizionista): bloccato finché
+ *   non dà il consenso (richiesta all'avvio, Impostazioni → Privacy);
+ * - paziente che deve confermare di continuare da solo (fine licenza).
  */
 function consensoAINegato(utente) {
   if (!utente) return false;
+  if (utente.confermaRichiesta) return true;
   const ai = utente.consensi && utente.consensi.ai;
-  if (ai && ai.si === false) return true;
-  if (utente.autonomo === true && !(ai && ai.si === true)) return true;
-  return false;
+  // Dal 3/11/2026 (v114) anche i pazienti creati dal nutrizionista: senza una
+  // scelta registrata le funzioni AI restano bloccate (l'app la chiede all'avvio).
+  return !(ai && ai.si === true);
 }
 
 exports.aggiornaConsensoAI = onCall(async (request) => {
@@ -881,6 +1077,16 @@ exports.collegaNutrizionista = onCall(async (request) => {
   const codiceSnap = await db.collection("codiciStudio").doc(codice).get();
   if (!codiceSnap.exists) throw new HttpsError("not-found", "codice-non-trovato");
   const profUid = codiceSnap.data().professionistaUid;
+  // I dati lasciati da un nutrizionista precedente non passano al nuovo:
+  // si cancellano subito (si tengono solo se torna dallo stesso).
+  const pianoPrima = await pianoDelPaziente(uid);
+  if (pianoPrima && !pianoPrima.data().professionistaUid) {
+    if (pianoPrima.data().exProfessionistaUid && pianoPrima.data().exProfessionistaUid === profUid) {
+      await pianoPrima.ref.update({ datiProfessionistaEntro: FieldValue.delete(), exProfessionistaUid: FieldValue.delete() });
+    } else {
+      await cancellaDatiProfessionistaDalPiano(pianoPrima.ref);
+    }
+  }
   const profRef = db.collection("users").doc(profUid);
   const utenteRef = db.collection("users").doc(uid);
   const queryPazienti = db.collection("piani").where("professionistaUid", "==", profUid);
@@ -2390,5 +2596,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

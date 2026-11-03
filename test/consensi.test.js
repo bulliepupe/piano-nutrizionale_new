@@ -50,9 +50,11 @@ let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; };
   await f.aggiornaConsensoAI({ auth: { uid: "v" }, data: { si: true } });
   await f.stimaMacro({ auth: { uid: "v" }, data: { testi: ["Riso 80g"] } });
   ok(chiamateAI === prima + 1, "dopo il consenso l'AI funziona");
-  // Paziente creato dal nutrizionista senza scelta registrata: comportamento invariato
+  // Paziente creato dal nutrizionista senza scelta registrata: dalla v114 bloccato
   const t = f._test.consensoAINegato;
-  ok(t({ ruolo: "paziente" }) === false, "paziente seguito senza scelta: non bloccato");
+  ok(t({ ruolo: "paziente" }) === true, "paziente seguito senza scelta: bloccato (v114)");
+  ok(t({ ruolo: "paziente", consensi: { ai: { si: true } } }) === false, "paziente seguito con consenso: non bloccato");
+  ok(t({ ruolo: "paziente", autonomo: true, consensi: { ai: { si: true } }, confermaRichiesta: { motivo: "fine-licenza" } }) === true, "in attesa di conferma: bloccato");
   ok(t({ ruolo: "paziente", consensi: { ai: { si: false } } }) === true, "paziente seguito con revoca: bloccato");
   ok(t({ ruolo: "paziente", autonomo: true, consensi: { ai: { si: true } } }) === false, "autonomo con consenso: non bloccato");
   console.log("OK: " + n + " verifiche superate");

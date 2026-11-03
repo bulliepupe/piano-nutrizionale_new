@@ -75,7 +75,7 @@ service cloud.firestore {
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato", "stimeRese", "stimeMacro", "lettureEtichette", "consensi"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato", "stimeRese", "stimeMacro", "lettureEtichette", "consensi", "confermaRichiesta", "continuaDaSolo", "datiProfessionistaCancellati", "custodia"]);
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
@@ -133,7 +133,7 @@ service cloud.firestore {
           && request.resource.data.get("gestore", "professionista") == resource.data.get("gestore", "professionista"))
         || (isSignedIn() && resource.data.get("gestore", "professionista") == "paziente"
           && resource.data.pazienteUid == request.auth.uid
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["professionistaUid", "pazienteUid", "gestore", "pazienteEmail", "creato"]));
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["professionistaUid", "pazienteUid", "gestore", "pazienteEmail", "creato", "datiProfessionistaEntro", "exProfessionistaUid"]));
       // Eliminare un paziente è sempre possibile (anche a licenza scaduta).
       allow delete: if isProfessionista() && resource.data.professionistaUid == request.auth.uid;
 

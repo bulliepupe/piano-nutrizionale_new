@@ -417,7 +417,8 @@
   const URL_INFORMATIVA = "https://ilmiopiano.it/privacy.html";
 
   function mostraInformativaPrimoAccesso(utenteDati, ruolo) {
-    if (!utenteDati || utenteDati.informativaVersione === VERSIONE_INFORMATIVA) return;
+    if (!utenteDati || utenteDati.confermaRichiesta) return;
+    if (utenteDati.informativaVersione === VERSIONE_INFORMATIVA) { if (ruolo === "paziente") setTimeout(chiediSceltaAIAvvio, 1500); return; }
     if (document.getElementById("informativa-primo-accesso")) return;
     const familiare = ruolo === "familiare";
     const autonomo = !familiare && !!utenteDati.autonomo && !utenteDati.professionistaUid;
@@ -452,6 +453,115 @@
       try { await window.cloud.segnaInformativaVista(UID, VERSIONE_INFORMATIVA); } catch (err) { /* si riproporrà al prossimo accesso */ }
       box.remove();
       document.body.classList.remove("con-informativa");
+      if (ruolo === "paziente") setTimeout(chiediSceltaAIAvvio, 400);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Scelta sulle funzioni AI per chi non l'ha mai registrata (dalla v114
+  // anche i pazienti creati dal nutrizionista): finché non sceglie, il
+  // server blocca le funzioni AI. Si chiede una volta per avvio.
+  // ---------------------------------------------------------------------
+  let SCELTA_AI_REGISTRATA = true;
+  let SCELTA_AI_CHIESTA = false;
+  function chiediSceltaAIAvvio() {
+    if (RUOLO !== "paziente" || SCELTA_AI_REGISTRATA || SCELTA_AI_CHIESTA) return;
+    if (document.getElementById("informativa-primo-accesso") || document.getElementById("continua-da-solo")) return;
+    if (document.querySelector("#sheet-overlay:not([hidden])")) { setTimeout(chiediSceltaAIAvvio, 3000); return; }
+    SCELTA_AI_CHIESTA = true;
+    apriSheet(`
+      <h2 class="sheet__titolo">Funzioni di intelligenza artificiale</h2>
+      <p class="sheet__nota">Alcune funzioni dell'app usano l'intelligenza artificiale di Anthropic negli Stati Uniti: il riscontro sui pasti non come da piano, la lettura della tabella nutrizionale, i macronutrienti e le stime. Ricevono i testi del piano e dei pasti e le foto che scegli di scattare, senza nome né email. Senza il tuo consenso l'app funziona, senza queste funzioni. Puoi cambiare idea quando vuoi da Impostazioni → Privacy.</p>
+      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-ai"> <span>Acconsento all'invio dei testi del mio piano e dei pasti, senza nome né email, ad Anthropic negli Stati Uniti per le funzioni di intelligenza artificiale (riscontri, macronutrienti, stime). Senza questo consenso l'app funziona, senza le funzioni AI.</span></label>
+      <button type="button" class="btn" id="btn-avvio-ai-si" disabled>Attiva le funzioni AI</button>
+      <button type="button" class="btn btn--ghost" id="btn-avvio-ai-no">No, grazie</button>`);
+    const casella = document.getElementById("avvio-consenso-ai");
+    const si = document.getElementById("btn-avvio-ai-si");
+    const no = document.getElementById("btn-avvio-ai-no");
+    casella.addEventListener("change", () => { si.disabled = !casella.checked; });
+    const registra = async (valore, bottone, testo) => {
+      si.disabled = true; no.disabled = true; bottone.textContent = "Salvo…";
+      try {
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: valore, da: "richiesta" });
+        CONSENSO_AI = valore;
+        SCELTA_AI_REGISTRATA = true;
+        chiudiSheet();
+        mostraToast(valore ? "Funzioni AI attivate" : "Va bene: le funzioni AI restano spente. Puoi attivarle da Impostazioni → Privacy.", 4000);
+        if (valore && typeof render === "function") render();
+      } catch (e) {
+        bottone.textContent = testo; no.disabled = false; si.disabled = !casella.checked;
+        mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
+      }
+    };
+    si.addEventListener("click", () => registra(true, si, "Attiva le funzioni AI"));
+    no.addEventListener("click", () => registra(false, no, "No, grazie"));
+  }
+
+  // ---------------------------------------------------------------------
+  // Fine della licenza del nutrizionista: il paziente che lui aveva creato
+  // può continuare da solo accettando termini, informativa e consensi di
+  // Bulli e Pupe, oppure eliminare l'account. Senza conferma entro la data
+  // indicata, il server cancella l'account.
+  // ---------------------------------------------------------------------
+  function mostraContinuaDaSolo(utenteDati) {
+    if (!utenteDati || !utenteDati.confermaRichiesta || document.getElementById("continua-da-solo")) return;
+    const entro = utenteDati.confermaRichiesta.entro && typeof utenteDati.confermaRichiesta.entro.toDate === "function"
+      ? utenteDati.confermaRichiesta.entro.toDate().toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" }) : "";
+    const box = document.createElement("div");
+    box.id = "continua-da-solo";
+    box.className = "informativa-primo";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    box.setAttribute("aria-labelledby", "continua-titolo");
+    box.innerHTML = `
+      <div class="informativa-primo__carta">
+        <h2 id="continua-titolo">Il tuo nutrizionista non usa più Il mio Piano</h2>
+        <p class="informativa-primo__intro">Puoi continuare a usare l'app da solo: il tuo piano, i pasti segnati, il peso e le misure restano qui. Le note e le analisi del nutrizionista sono state cancellate.</p>
+        <ul>
+          <li>Da ora i tuoi dati sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app ed è titolare di questi dati.</li>
+          <li>Per continuare servono i consensi qui sotto${entro ? `, entro il <strong>${escapeHTML(entro)}</strong>` : ""}. Se non continui, il tuo account verrà cancellato.</li>
+        </ul>
+        <label class="auth-check"><input type="checkbox" id="cds-maggiorenne"> <span>Ho almeno 18 anni, accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" class="link-inline">Termini di servizio</a> e ho letto l'<a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa privacy</a></span></label>
+        <label class="auth-check"><input type="checkbox" id="cds-salute"> <span>Acconsento al trattamento dei miei dati relativi alla salute (piano alimentare, pasti, peso, misure, allenamenti) per usare Il mio Piano. Posso revocare il consenso in qualsiasi momento.</span></label>
+        <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> Acconsento all'invio dei testi del mio piano e dei pasti, senza nome né email, ad Anthropic negli Stati Uniti per le funzioni di intelligenza artificiale (riscontri, macronutrienti, stime). Senza questo consenso l'app funziona, senza le funzioni AI.</span></label>
+        <p class="auth-error" id="cds-errore" hidden></p>
+        <button type="button" class="btn" id="cds-continua" disabled>Continuo da solo</button>
+        <button type="button" class="btn btn--ghost btn--pericolo" id="cds-elimina">Elimina il mio account</button>
+      </div>`;
+    document.body.appendChild(box);
+    document.body.classList.add("con-informativa");
+    const m = box.querySelector("#cds-maggiorenne");
+    const s = box.querySelector("#cds-salute");
+    const continua = box.querySelector("#cds-continua");
+    const errore = box.querySelector("#cds-errore");
+    const aggiorna = () => { continua.disabled = !(m.checked && s.checked); };
+    m.addEventListener("change", aggiorna);
+    s.addEventListener("change", aggiorna);
+    continua.addEventListener("click", async () => {
+      continua.disabled = true; continua.textContent = "Salvo…"; errore.hidden = true;
+      try {
+        await window.cloud.chiamaFunzione("confermaContinuaDaSolo", { consensi: { maggiorenne: true, salute: true, ai: box.querySelector("#cds-ai").checked } });
+        try { await window.cloud.segnaInformativaVista(UID, VERSIONE_INFORMATIVA); } catch (e) { /* si riproporrà */ }
+        location.reload();
+      } catch (e) {
+        errore.textContent = "Non salvato: controlla la connessione e riprova."; errore.hidden = false;
+        continua.textContent = "Continuo da solo"; aggiorna();
+      }
+    });
+    box.querySelector("#cds-elimina").addEventListener("click", async () => {
+      if (!window.confirm("Eliminare definitivamente il tuo account? Vengono cancellati il piano, i pasti segnati, le note, le misure e i dati di accesso.")) return;
+      const b = box.querySelector("#cds-elimina");
+      b.disabled = true; b.textContent = "Eliminazione in corso…";
+      try {
+        await window.cloud.chiamaFunzione("eliminaAccount");
+        box.remove();
+        document.body.classList.remove("con-informativa");
+        await window.cloud.logout().catch(() => {});
+        mostraToast("Account eliminato. Grazie per aver usato Il mio Piano.", 5000);
+      } catch (e) {
+        errore.textContent = "Eliminazione non riuscita: controlla la connessione e riprova."; errore.hidden = false;
+        b.disabled = false; b.textContent = "Elimina il mio account";
+      }
     });
   }
 
@@ -463,8 +573,11 @@
     PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
     // Senza una scelta registrata: sì per i pazienti del nutrizionista, no per
     // gli autonomi (iscritti prima del 20/10), come il controllo sul server.
+    // Senza una scelta registrata le funzioni AI restano spente per tutti
+    // (dalla v114 anche per i pazienti del nutrizionista): si chiede all'avvio.
     const sceltaAI = utenteDati.consensi && utenteDati.consensi.ai;
-    CONSENSO_AI = sceltaAI ? sceltaAI.si !== false : !utenteDati.autonomo;
+    SCELTA_AI_REGISTRATA = !!sceltaAI;
+    CONSENSO_AI = !utenteDati.confermaRichiesta && !!sceltaAI && sceltaAI.si === true;
     mostraSchermata("paziente");
     aggiornaPremium().then(() => caricaReseAI());
     if (!avviaPaziente.collegato) {
@@ -480,6 +593,7 @@
       });
       document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") aggiornaPremium(); });
     }
+    mostraContinuaDaSolo(utenteDati);
     mostraInformativaPrimoAccesso(utenteDati, "paziente");
     migraDominioSeServe(utenteDati);
     rinnovaDispositivoNotifiche(utenteDati);
@@ -679,7 +793,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v113";
+  const VERSIONE_APP = "v114";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -952,7 +1066,7 @@
     });
     const scollega = document.getElementById("btn-scollega-nutrizionista");
     if (scollega) scollega.addEventListener("click", async () => {
-      if (!window.confirm("Scollegarti dal tuo nutrizionista? Il piano resta nell'app e torni a gestirlo tu; lui non vedrà più i tuoi dati e Premium non sarà più incluso.")) return;
+      if (!window.confirm("Scollegarti dal tuo nutrizionista? Il piano resta nell'app e torni a gestirlo tu; lui non vedrà più i tuoi dati e Premium non sarà più incluso. Le sue note riservate e le sue analisi verranno cancellate entro 60 giorni (se ti ricolleghi a lui prima, restano).")) return;
       scollega.disabled = true;
       try {
         await window.cloud.chiamaFunzione("scollegaNutrizionista");
