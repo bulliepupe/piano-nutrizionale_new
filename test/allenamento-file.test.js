@@ -86,4 +86,18 @@ ok(S({ ora: "16:23", durata: 70 }, { ora: "16:30", durata: 62 }), "stesso: picco
 ok(!S({ ora: "07:00", durata: 60 }, { ora: "18:00", durata: 60 }), "diverso: mattina e sera");
 ok(!S({ ora: "18:00", durata: 30 }, { ora: "18:05", durata: 90 }), "diverso: durate molto diverse");
 ok(!S({ ora: "", durata: 60 }, { ora: "18:00", durata: 60 }), "diverso: orario mancante");
+
+// Elenco di Health Connect: stessa sessione da due app
+{
+  const a = { giorno: "2026-10-29", ora: "18:02", durata: 55, tipo: "Palestra / pesi", fonte: "healthconnect", hcId: "1_Strava", origine: "Strava" };
+  const b = { giorno: "2026-10-29", ora: "18:00", durata: 56, tipo: "Palestra / pesi", fonte: "healthconnect", hcId: "2_Fit", origine: "Google Fit", kcal: 310 };
+  const c = { giorno: "2026-10-29", ora: "07:30", durata: 40, tipo: "Corsa", fonte: "healthconnect", hcId: "3_Strava", origine: "Strava" };
+  const d = { giorno: "2026-10-28", ora: "18:01", durata: 55, tipo: "Palestra / pesi", fonte: "healthconnect", hcId: "4_Strava", origine: "Strava" };
+  const u = A.unisciSessioniHC([a, b, c, d]);
+  ok(u.length === 3, "due app, stessa sessione: una sola voce (" + u.length + ")");
+  const p = u.find((x) => x.giorno === "2026-10-29" && x.tipo === "Palestra / pesi");
+  ok(p.kcal === 310 && p.hcId === "2_Fit" && p.hcIdAlt.includes("1_Strava"), "si tiene quella con le calorie, l'altra come identificativo alternativo");
+  ok(p.origini.length === 2, "ricorda le due app");
+  ok(u.some((x) => x.hcId === "3_Strava") && u.some((x) => x.hcId === "4_Strava"), "sessioni diverse e altri giorni restano separati");
+}
 console.log("OK: " + n + " verifiche superate");

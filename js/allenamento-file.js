@@ -484,7 +484,33 @@
     return out;
   }
 
-  const api = { stessoAllenamento, daHealthConnect, kcalDaCampioni, kcalTotaliDaCampioni, tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
+  /**
+   * Elenco di Health Connect: la stessa sessione scritta da due app (es. Strava
+   * e l'app dell'orologio) compare una volta sola. Si tiene quella con le
+   * calorie (a parità, la prima); le altre restano come identificativi
+   * alternativi, per riconoscere un allenamento già importato da un'altra app.
+   */
+  function unisciSessioniHC(sessioni) {
+    const out = [];
+    (Array.isArray(sessioni) ? sessioni : []).filter(Boolean).forEach((s) => {
+      const uguale = out.find((x) => x.giorno === s.giorno && stessoAllenamento(x, s));
+      if (!uguale) { out.push(Object.assign({}, s, { hcIdAlt: [] })); return; }
+      const origini = [uguale.origine, s.origine].filter(Boolean);
+      if (!uguale.kcal && s.kcal) {
+        // tiene la sessione con le calorie
+        const vecchioId = uguale.hcId;
+        const alt = uguale.hcIdAlt.concat(vecchioId);
+        Object.keys(uguale).forEach((k) => delete uguale[k]);
+        Object.assign(uguale, s, { hcIdAlt: alt });
+      } else {
+        uguale.hcIdAlt.push(s.hcId);
+      }
+      uguale.origini = Array.from(new Set((uguale.origini || []).concat(origini)));
+    });
+    return out;
+  }
+
+  const api = { stessoAllenamento, unisciSessioniHC, daHealthConnect, kcalDaCampioni, kcalTotaliDaCampioni, tipoDa, daFit, daTcx, daGpx, limitiZone, minutiInZone, intensitaMisurata, potenzaNormalizzata, derivaCardiaca, riepilogo, leggiFile, eFit };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.allenamentoFile = api;
 })();

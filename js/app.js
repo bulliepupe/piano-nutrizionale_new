@@ -793,7 +793,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v116";
+  const VERSIONE_APP = "v117";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -2875,7 +2875,7 @@
           if (kcal) w.totalEnergyBurned = kcal;
         } catch (e) { /* senza calorie */ }
       }
-      sessioni = grezze.map(window.allenamentoFile.daHealthConnect);
+      sessioni = window.allenamentoFile.unisciSessioniHC(grezze.map(window.allenamentoFile.daHealthConnect));
     } catch (e) {
       sheetHC("Il permesso per leggere gli allenamenti non è stato concesso. Puoi darlo da Health Connect, alla voce Il mio Piano.", true);
       return;
@@ -2884,6 +2884,7 @@
     try { perGiorno = await window.cloud.leggiAttivitaPeriodo(UID, limite); } catch (e) { perGiorno = {}; }
     const importati = new Set();
     Object.values(perGiorno).forEach((g) => (g.allenamenti || []).forEach((a) => { if (a.hcId) importati.add(a.hcId); }));
+    const giaImportata = (r) => [r.hcId].concat(r.hcIdAlt || []).some((id) => importati.has(id));
     const daFile = (r) => ((perGiorno[r.giorno] && perGiorno[r.giorno].allenamenti) || [])
       .some((a) => a.fonte === "file" && window.allenamentoFile.stessoAllenamento(a, r));
     apriSheet(`
@@ -2891,7 +2892,7 @@
       <p class="sheet__nota">Allenamenti degli ultimi 7 giorni. Di ciascuno salviamo solo tipo, giorno, orario, durata e calorie stimate dal dispositivo.</p>
       ${sessioni.length ? `<ul class="stat-note-pasti">${sessioni.map((r, i) => `<li><button type="button" class="stat-nota-pasto allenamento-prof" data-hc="${i}">
           <span class="stat-nota-pasto__testa">${escapeHTML(dataLunga(r.giorno).replace(/^./, (c) => c.toUpperCase()))}</span>
-          <span>${escapeHTML(descriviAllenamento(r))}${r.kcal ? ` · ${numeroIt(r.kcal)} kcal` : ""}${daFile(r) ? " · già importato da file" : importati.has(r.hcId) ? " · già importato" : ""}</span></button></li>`).join("")}</ul>`
+          <span>${escapeHTML(descriviAllenamento(r))}${r.kcal ? ` · ${numeroIt(r.kcal)} kcal` : ""}${daFile(r) ? " · già importato da file" : giaImportata(r) ? " · già importato" : ""}${r.origini && r.origini.length > 1 ? ` · registrato da ${r.origini.length} app` : ""}</span></button></li>`).join("")}</ul>`
         : `<p class="sheet__nota">Nessun allenamento in Health Connect negli ultimi 7 giorni. Controlla che l'app del tuo orologio o del ciclocomputer sia collegata a Health Connect.</p>`}
       <p class="stat-nota">Se un allenamento non compare, apri l'app che lo ha registrato (es. Strava) e aggiorna, poi riprova: alcune app inviano i dati a Health Connect solo quando vengono aperte.</p>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet style="margin-top:12px;">Chiudi</button>`);
@@ -2905,7 +2906,8 @@
     const oggi = chiaveData(new Date());
     const daFile = esistenti.find((x) => x.fonte === "file" && window.allenamentoFile.stessoAllenamento(x, r));
     if (daFile) { apriDoppioneDaFile(r, daFile, esistenti); return; }
-    const giaImportato = esistenti.find((x) => x.hcId && x.hcId === r.hcId);
+    const idSessione = [r.hcId].concat(r.hcIdAlt || []);
+    const giaImportato = esistenti.find((x) => x.hcId && idSessione.includes(x.hcId));
     const aMano = giaImportato ? null : esistenti.find((x) => x.fonte === "manuale" && x.tipo === r.tipo);
     let intensita = (giaImportato && giaImportato.intensita) || "moderata";
     apriSheet(`
@@ -2934,7 +2936,7 @@
         tipo: document.getElementById("hc-tipo").value, intensita,
       });
       if (document.getElementById("hc-indoor").checked) nuovo.indoor = true; else delete nuovo.indoor;
-      delete nuovo.giorno;
+      delete nuovo.giorno; delete nuovo.hcIdAlt; delete nuovo.origini;
       try {
         const attuali = r.giorno === oggi ? (ATTIVITA_OGGI.allenamenti || [])
           : (((await window.cloud.leggiAttivitaPeriodo(UID, r.giorno))[r.giorno] || {}).allenamenti || []);
