@@ -193,6 +193,18 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   await giorni(1); ok(!("users/zeta" in store) && !("piani/pz" in store), "a 90 giorni account e piano cancellati");
   ok("users/creato" in store, "chi ha confermato resta");
 
+  // --- Codici di invito scaduti ---
+  store = {
+    "liste/l1": { nome: "Casa", proprietario: "x", membri: ["x"], codiceInvito: "VECCHIO1" },
+    "inviti/VECCHIO1": { listaId: "l1", creatoDa: "x", scade: ts(ORA - G) },
+    "liste/l2": { nome: "Casa 2", proprietario: "y", membri: ["y"], codiceInvito: "NUOVO123" },
+    "inviti/NUOVO123": { listaId: "l2", creatoDa: "y", scade: ts(ORA + 5 * G) },
+  };
+  const es = await giorni(0);
+  ok(!("inviti/VECCHIO1" in store) && !store["liste/l1"].codiceInvito, "invito scaduto cancellato e tolto dalla lista");
+  ok("inviti/NUOVO123" in store && store["liste/l2"].codiceInvito === "NUOVO123", "invito valido intatto");
+  ok(es.invitiScaduti === 1, "conteggio degli inviti scaduti");
+
   Date.now = realNow;
   console.log("OK: " + n + " verifiche superate");
 })().catch((e) => { console.error(e); process.exit(1); });

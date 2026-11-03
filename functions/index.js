@@ -581,6 +581,20 @@ async function eseguiCustodia(adesso) {
     await cancellaDatiPaziente(u.id, piano ? piano.ref : null);
     esito.accountCancellati++;
   }
+  // 5) Codici di invito alla lista di casa scaduti (14 giorni): si cancellano
+  //    e si toglie il codice dalla lista, che ne mostrerà uno da creare.
+  esito.invitiScaduti = 0;
+  const inviti = await db.collection("inviti").where("scade", "<=", Timestamp.fromMillis(adesso)).get();
+  for (const inv of inviti.docs) {
+    const listaId = (inv.data() || {}).listaId;
+    if (listaId) {
+      const listaRef = db.collection("liste").doc(listaId);
+      const lista = (await listaRef.get()).data();
+      if (lista && lista.codiceInvito === inv.id) await listaRef.update({ codiceInvito: FieldValue.delete() });
+    }
+    await db.recursiveDelete(inv.ref);
+    esito.invitiScaduti++;
+  }
   console.log("Custodia dei dati:", JSON.stringify(esito));
   return esito;
 }

@@ -413,7 +413,7 @@
   // nutrizionista, che resta tenuto a fornire la propria informativa. Se
   // l'informativa cambia in modo rilevante, basta alzare la versione e la
   // schermata ricompare una volta.
-  const VERSIONE_INFORMATIVA = "2026-10-08";
+  const VERSIONE_INFORMATIVA = "2026-11-03";
   const URL_INFORMATIVA = "https://ilmiopiano.it/privacy.html";
 
   function mostraInformativaPrimoAccesso(utenteDati, ruolo) {
@@ -437,11 +437,11 @@
           <li>Con l'account familiare usi solo la <strong>lista della spesa condivisa</strong>. I dati del tuo account (nome, email, lista) sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app.</li>
           <li>Non vedi i piani, le misure o le note dei pazienti: solo gli alimenti della lista di casa.</li>` : autonomo ? `
           <li>Il piano che carichi, i pasti che segni, le tue note e le misure sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app ed è titolare di questi dati. Servono solo a farti seguire il piano.</li>
-          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic): la lettura del piano dal PDF e i consigli sui pasti non come da piano. Vengono inviati solo i testi del piano e dei pasti, senza nome né altri dati identificativi.</li>
+          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic), solo se dai il consenso: la lettura del piano dal PDF, i consigli sui pasti non come da piano e la lettura della tabella nutrizionale. Ricevono i testi del piano e dei pasti e le foto che scegli di inviare, senza nome né email. Riscontri e stime sono generati automaticamente e approssimati.</li>
           <li>Se ti colleghi a un nutrizionista con il suo codice, lui vedrà il tuo piano e il tuo andamento.</li>` : `
           <li>Il piano, i pasti che segni, le tue note, le misure e gli appuntamenti sono trattati dal <strong>tuo nutrizionista</strong>, che ne è il titolare. <strong>Bulli e Pupe S.r.l.</strong> gestisce l'app per suo conto. Il tuo nutrizionista ti fornisce anche la sua informativa.</li>
-          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic): per esempio il riscontro sui pasti non come da piano. In quei casi vengono inviati solo i testi dei pasti e le tue note, senza nome né altri dati identificativi. Il tuo nutrizionista può disattivarle.</li>`}
-          <li>I dati sono conservati su server nell'Unione Europea e protetti da accesso personale. Puoi esercitare i tuoi diritti (accesso, correzione, cancellazione) ${familiare || autonomo ? "scrivendo a info@ilmiopiano.it" : "tramite il tuo nutrizionista o scrivendo a info@ilmiopiano.it"}.</li>
+          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic), solo se dai il consenso: per esempio il riscontro sui pasti non come da piano e la lettura della tabella nutrizionale. Ricevono i testi dei pasti, le tue note e le foto che scegli di inviare, senza nome né email. Riscontri e stime sono generati automaticamente e approssimati; il tuo nutrizionista può disattivarli.</li>`}
+          <li>I dati sono conservati su server di Google nell'Unione Europea (Belgio e Paesi Bassi) e protetti da accesso personale. L'accesso con email e password è gestito da Google anche negli Stati Uniti${familiare ? "" : " e le funzioni di intelligenza artificiale, se le attivi, elaborano i dati negli Stati Uniti"}. Puoi esercitare i tuoi diritti (accesso, correzione, cancellazione) ${familiare || autonomo ? "scrivendo a info@ilmiopiano.it" : "tramite il tuo nutrizionista o scrivendo a info@ilmiopiano.it"}.</li>
         </ul>
         <p><a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Leggi l'informativa completa ↗</a></p>
         <button type="button" class="btn" id="informativa-ok">Ho letto, continua</button>
@@ -793,7 +793,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v114";
+  const VERSIONE_APP = "v115";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -1354,7 +1354,7 @@
     return `
       <section class="settings-section" id="sezione-privacy">
         <h2>Privacy</h2>
-        <p class="hint">Riscontri sui pasti, stime dei macronutrienti e del peso da cotto e lettura del piano da PDF usano l'intelligenza artificiale di Anthropic (Stati Uniti): ricevono i testi del piano e dei pasti, mai nome né email.</p>
+        <p class="hint">Riscontri sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto e lettura del piano da PDF usano l'intelligenza artificiale di Anthropic (Stati Uniti): ricevono i testi del piano e dei pasti e le foto che scegli di inviare, senza nome né email.</p>
         <label class="check-riga"><input type="checkbox" id="consenso-ai"${CONSENSO_AI ? " checked" : ""}> <span>Acconsento all'uso delle funzioni di intelligenza artificiale</span></label>
         <p class="stat-nota">Senza questo consenso l'app funziona, senza le funzioni AI. Puoi cambiarlo quando vuoi.</p>
         <button type="button" class="btn btn--ghost" id="btn-salva-consenso-ai">Salva</button>
@@ -1372,6 +1372,7 @@
       try {
         await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si });
         CONSENSO_AI = si;
+        SCELTA_AI_REGISTRATA = true;
         mostraToast(si ? "Funzioni AI attivate" : "Funzioni AI disattivate: non inviamo più nulla ad Anthropic");
       } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
       finally { btn.disabled = false; }
@@ -2104,6 +2105,7 @@
       try {
         await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: true, da: "richiesta" });
         CONSENSO_AI = true;
+        SCELTA_AI_REGISTRATA = true;
         chiudiSheet();
         if (poi) poi();
       } catch (e) {
@@ -5831,14 +5833,21 @@
       </ul>
       ${(d.membri || []).length < 6 ? `
         <p class="stato-pasto__domanda">Invita qualcuno</p>
-        <p class="sheet__nota" style="margin-top:0;">Codice <strong class="codice-invito">${escapeHTML(d.codiceInvito || "—")}</strong>, valido 14 giorni. Chi lo riceve apre il link, accede (o si registra come familiare) e conferma.</p>
-        <button type="button" class="btn" id="lista-invita-wa">Invia l'invito con WhatsApp</button>
-        <button type="button" class="btn btn--ghost" id="lista-copia">Copia il link di invito</button>
-        <button type="button" class="link-btn" id="lista-nuovo-codice">Crea un nuovo codice (quello vecchio smette di funzionare)</button>` : `<p class="sheet__nota">La lista ha già 6 membri, il massimo.</p>`}
+        ${d.codiceInvito ? `
+        <p class="sheet__nota" style="margin-top:0;">Codice <strong class="codice-invito">${escapeHTML(d.codiceInvito)}</strong>, valido 14 giorni. Chi lo riceve apre il link, accede (o si registra come familiare) e conferma.</p>
+        ${RUOLO === "paziente" ? `<label class="ric-scelta consenso-lista"><input type="checkbox" id="lista-invito-consenso"> <span>Prima di invitare: acconsento che chi entra nella lista veda gli alimenti del mio piano, con quantità e giorni, gli articoli aggiunti e le spunte. Non vedrà il piano completo, i pasti segnati, le note né le misure.</span></label>` : ""}
+        <button type="button" class="btn" id="lista-invita-wa"${RUOLO === "paziente" ? " disabled" : ""}>Invia l'invito con WhatsApp</button>
+        <button type="button" class="btn btn--ghost" id="lista-copia"${RUOLO === "paziente" ? " disabled" : ""}>Copia il link di invito</button>` : `
+        <p class="sheet__nota" style="margin-top:0;">Il codice di invito è scaduto: creane uno nuovo per invitare qualcuno.</p>`}
+        <button type="button" class="link-btn" id="lista-nuovo-codice">${d.codiceInvito ? "Crea un nuovo codice (quello vecchio smette di funzionare)" : "Crea un nuovo codice di invito"}</button>` : `<p class="sheet__nota">La lista ha già 6 membri, il massimo.</p>`}
       <button type="button" class="btn btn--ghost" id="lista-esci" style="margin-top:10px;">Esci dalla lista</button>
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Chiudi</button>
     `);
     const testoInvito = () => `Ciao! Facciamo la spesa insieme con Il mio Piano: apri questo link ed entra nella nostra lista di casa (codice ${LISTA.dati.codiceInvito}).\n${linkInvito(LISTA.dati.codiceInvito)}`;
+    const consensoInvito = overlay.querySelector("#lista-invito-consenso");
+    if (consensoInvito) consensoInvito.addEventListener("change", () => {
+      ["#lista-invita-wa", "#lista-copia"].forEach((id) => { const b = overlay.querySelector(id); if (b) b.disabled = !consensoInvito.checked; });
+    });
     const wa = overlay.querySelector("#lista-invita-wa");
     if (wa) wa.addEventListener("click", () => window.open("https://wa.me/?text=" + encodeURIComponent(testoInvito()), "_blank", "noopener"));
     const cp = overlay.querySelector("#lista-copia");
