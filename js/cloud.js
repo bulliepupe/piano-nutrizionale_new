@@ -693,6 +693,8 @@
         nome: (nome || "").trim(),
         email: email.trim().toLowerCase(),
         creato: FieldValue.serverTimestamp(),
+        // dichiarazione dei 18 anni e accettazione dei termini (casella obbligatoria del modulo)
+        maggiorenne: FieldValue.serverTimestamp(),
       });
       return cred.user;
     },
