@@ -79,7 +79,8 @@ ok(T.macroEffettiviDaRisposta({}, null, null, "diverso") === null, "nessun dato:
 
 // v119: etichetta della differenza calcolata sulla giornata
 const prev = M.pulisciStima({ carboidrati: 5, proteine: 3, grassi: 8, affidabilita: "media" }); // mandorle 15 g, circa 100 kcal
-ok(T.impattoSullaGiornata("rilevante", prev, M.pulisciStima({ carboidrati: 0, proteine: 0, grassi: 0 }), 1500) === "moderato", "spuntino saltato da 100 kcal su 1500: moderato");
+ok(T.impattoSullaGiornata("rilevante", prev, M.pulisciStima({ carboidrati: 0, proteine: 0, grassi: 0 }), 1500) === "lieve", "spuntino saltato da 100 kcal su 1500 (7%): lieve");
+ok(T.impattoSullaGiornata("lieve", prev, M.pulisciStima({ carboidrati: 45, proteine: 3, grassi: 13 }), 1500) === "moderato", "circa 200 kcal in più su 1500 (13%): moderato");
 ok(T.impattoSullaGiornata("moderato", prev, M.pulisciStima({ carboidrati: 7, proteine: 3, grassi: 9 }), 1500) === "lieve", "piccola aggiunta: lieve");
 ok(T.impattoSullaGiornata("irrilevante", prev, M.pulisciStima({ carboidrati: 6, proteine: 3, grassi: 8 }), 1500) === "irrilevante", "scambio equivalente resta irrilevante");
 ok(T.impattoSullaGiornata("lieve", prev, M.pulisciStima({ carboidrati: 80, proteine: 10, grassi: 30 }), 1500) === "rilevante", "oltre il 15%: marcata");

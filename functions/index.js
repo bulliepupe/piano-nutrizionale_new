@@ -1885,15 +1885,16 @@ function macroEffettiviDaRisposta(input, previsti, prodotti, stato) {
 
 /**
  * Etichetta della differenza rispetto al piano, in proporzione alle calorie
- * della giornata: sotto il 5% lieve (o irrilevante, se l'AI ha riconosciuto
- * uno scambio equivalente), dal 5 al 15% moderata, oltre il 15% marcata.
+ * della giornata (dal 5/11/2026): sotto il 10% lieve (o irrilevante, se l'AI
+ * ha riconosciuto uno scambio equivalente), dal 10 al 25% moderata, oltre il
+ * 25% marcata.
  * Senza numeri sufficienti resta la valutazione dell'AI.
  */
 function impattoSullaGiornata(impattoAI, previsti, effettivi, kcalGiorno) {
   if (!previsti || !effettivi || !(kcalGiorno > 0)) return impattoAI;
   const quota = Math.abs((Number(effettivi.kcal) || 0) - (Number(previsti.kcal) || 0)) / kcalGiorno;
-  if (quota < 0.05) return impattoAI === "irrilevante" ? "irrilevante" : "lieve";
-  if (quota < 0.15) return "moderato";
+  if (quota < 0.10) return impattoAI === "irrilevante" ? "irrilevante" : "lieve";
+  if (quota < 0.25) return "moderato";
   return "rilevante";
 }
 
