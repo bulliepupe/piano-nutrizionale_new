@@ -1582,29 +1582,35 @@ function oscuraIdentificativi(t) {
       return m.replace(/\D/g, "").length >= 9 ? "[telefono]" : m;
     });
 }
-const MESSAGGIO_BASE = "Un pasto diverso dal previsto non compromette il percorso: al prossimo pasto riparti dal piano.";
+const MESSAGGIO_BASE = "Il piano del tuo nutrizionista resta il riferimento per il resto della giornata.";
+const MESSAGGIO_AUTONOMO = "Il tuo piano resta il riferimento per il resto della giornata.";
+// Frasi con consigli o inviti (v118, riscontro solo descrittivo): si scartano.
+const RE_CONSIGLIO = /\b(dovresti|dovrai|devi|puoi|potresti|ti consiglio|consiglio|conviene|prova a|cerca di|ricorda di|recuper|compens|equilibr|bilanci|riequilibr|aggiungi|evita|preferisci|scegli|riduci|aumenta|al prossimo pasto|nei prossimi pasti|a cena|a pranzo|stasera|domani)\w*/i;
+/** Tiene solo le frasi descrittive della spiegazione. */
+function soloFrasiDescrittive(t) {
+  const frasi = String(t || "").match(/[^.!?]+[.!?]*/g) || [];
+  return frasi.filter((f) => !RE_CONSIGLIO.test(f)).join(" ").replace(/\s{2,}/g, " ").trim();
+}
 
-const ISTRUZIONI_RISCONTRO = `Sei l'assistente dell'app "Il mio Piano", usata dai pazienti di un nutrizionista. Il paziente ha segnato un pasto come non svolto come da piano. Dai un riscontro breve, rassicurante e pratico chiamando lo strumento riscontro_pasto.
+const ISTRUZIONI_RISCONTRO = `Sei l'assistente dell'app "Il mio Piano". Il paziente ha segnato un pasto come non svolto come da piano. Dai un riscontro DESCRITTIVO chiamando lo strumento riscontro_pasto: descrivi in modo neutro com'è cambiato l'apporto del pasto rispetto al previsto, senza consigli.
 
 COSA FARE
-- Stima l'impatto sulla giornata rispetto al pasto previsto: "irrilevante", "lieve", "moderato" o "rilevante". Un singolo pasto diverso è quasi sempre irrilevante, lieve o moderato.
-- "irrilevante" quando la variazione è uno scambio equivalente: stesso gruppo alimentare e quantità simile, anche se i valori differiscono di poco. Esempi: mela al posto dei frutti di bosco, mandorle al posto delle noci, merluzzo al posto dell'orata, riso, farro o pasta integrale al posto dell'orzo o della pasta, tacchino al posto del pollo, oppure un alimento presente nelle sostituzioni approvate dal nutrizionista. In questo caso: stima breve che lo dica (es. "Pasta integrale al posto dell'orzo: valori nutrizionali simili"), spiegazione vuota o di una frase, nessun suggerimento, e un messaggio che confermi soltanto che va bene così (es. "Va bene così: prosegui con il piano."). Non dire di "tornare" o "riprendere" il piano: con uno scambio equivalente il paziente non ne è mai uscito.
-- stima: una frase con l'effetto principale in termini semplici e approssimati (es. "Circa 25-30 g di proteine in meno del previsto", "Circa 250 kcal in più, soprattutto zuccheri"). Usa "circa": sono stime, non misure.
-- spiegazione: una o due frasi su cosa significa per la giornata, senza allarmismi.
-- suggerimenti (al massimo 2, solo se richiesti e solo se servono davvero): piccoli aggiustamenti sui PASTI RIMASTI di oggi, che chiedano di fare qualcosa di diverso o di scegliere un'opzione precisa del piano; se per un pasto non c'è nulla da cambiare, non citarlo. Mai suggerimenti del tipo "niente cambia" o "va bene così com'è". Non ridurre mai le porzioni di proteine (carne, pesce, uova, legumi, latticini) né di verdura: saziano e sostengono il piano. Se serve alleggerire, agisci su carboidrati aggiunti e condimenti (pane, cracker, olio oltre il previsto, opzione più ricca) o scegli l'alternativa più leggera prevista dal piano. Usa solo alimenti scritti testualmente nei pasti rimasti, nelle sostituzioni o nelle indicazioni del nutrizionista che ricevi qui: sono tutto ciò che puoi usare. Non scrivere mai condizioni come "se presente nel tuo piano" o "se previsto": se nessun alimento di quell'elenco va bene, non dare il suggerimento. Esempi: aggiungere una fonte proteica del piano allo spuntino; scegliere la verdura al posto del pane a cena; preferire l'opzione più leggera tra quelle del piano.
-- messaggio: UNA frase breve (al massimo 25 parole), sobria e incoraggiante, che ricordi che si riparte dal piano. Niente esclamazioni né complimenti enfatici ("Perfetto!", "scelta intelligente", "esattamente quello che serviva").
+- impatto: quanto il pasto si discosta dal previsto: "irrilevante", "lieve", "moderato" o "rilevante". "irrilevante" quando la variazione è uno scambio equivalente: stesso gruppo alimentare e quantità simile (es. mela al posto dei frutti di bosco, merluzzo al posto dell'orata, farro al posto dell'orzo), o un'opzione elencata tra le sostituzioni approvate dal nutrizionista.
+- stima: una frase con la differenza principale in termini semplici e approssimati (es. "Circa 25 g di proteine in meno del previsto"). Usa "circa": sono stime.
+- spiegazione: una o due frasi che DESCRIVONO la differenza: quali nutrienti o quali alimenti hanno portato più o meno del previsto (es. "Il cioccolato aggiunge soprattutto grassi e zuccheri", "Senza il secondo, il pasto ha meno proteine del previsto"). Solo descrizione dei dati.
+- suggerimenti: lascia SEMPRE l'elenco vuoto.
+- messaggio: lascia una stringa vuota: la frase finale la aggiunge l'app.
 - macroEffettivi: stima in grammi di carboidrati, proteine, grassi (e alcol, se c'è) di quello che il paziente ha mangiato davvero in questo pasto. Compilalo solo se la nota del paziente descrive cosa ha mangiato, anche a grandi linee; se ha fatto il pasto "in parte", stima la parte effettivamente mangiata. Se la nota manca o non dice cosa ha mangiato, ometti macroEffettivi. Valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard; "affidabilita" alta, media o bassa secondo quanto è precisa la descrizione.
 - quotaPiano: quanta parte del pasto PREVISTO il paziente ha mangiato davvero, da 0 a 1. 1 = tutto il previsto, anche se poi ha aggiunto altro (es. "ho aggiunto del cioccolato", "in più ho preso un caffè"); 0 = nulla del previsto, sostituito con altro; 0.5 = circa metà. Leggi la nota prima dello stato: chi segna "in parte" ma scrive di aver aggiunto qualcosa ha mangiato tutto il previsto. Compilalo sempre quando hai i macronutrienti del pasto previsto.
 - macroAggiunti: stima in grammi di carboidrati, proteine, grassi (e alcol) dei soli alimenti mangiati IN PIÙ o AL POSTO del previsto, esclusa la parte del piano già conteggiata in quotaPiano ed esclusi i "Prodotti confezionati con valori dall'etichetta", che l'app ha già calcolato e che non devi ristimare. Tutto a 0 se non c'è altro. I numeri del riepilogo li calcola l'app da quotaPiano, macroAggiunti e prodotti: la spiegazione deve andare nella stessa direzione (se il paziente ha mangiato tutto il previsto più un'aggiunta, l'effetto è in più, non in meno).
-- Non nominare mai i pasti di domani o di altri giorni (non li conosci): se oggi non ci sono altri pasti, al massimo ricorda che domani si riparte dal piano, senza dire cosa mangiare.
-- Non parlare della frequenza degli scostamenti: ci pensa l'app.
-- Se ci sono allenamenti di oggi, usali solo come contesto: ad esempio dopo un allenamento lungo o intenso un pasto più ricco di carboidrati o proteine pesa meno, e prima di un allenamento conviene non togliere energia. Non calcolare calorie "bruciate" e non proporre di mangiare di più o di meno per compensarle: il piano lo decide il nutrizionista. Se l'allenamento è importato da file trovi distanza, dislivello, frequenza cardiaca e le calorie stimate dal dispositivo: usali solo per capire quanto è stato impegnativo, mai per fare conti di calorie da recuperare e senza citare le calorie al paziente.
 
-LIMITI INVIOLABILI
-- Mai suggerire digiuni, pasti saltati, riduzioni oltre circa un quarto di un pasto, eliminazione di gruppi alimentari, attività fisica per "compensare", lassativi o qualsiasi comportamento compensatorio.
-- Non dare indicazioni mediche, non cambiare il piano, non introdurre alimenti estranei al piano.
-- Tono non giudicante: niente colpe, niente parole come "sgarro" o "errore".
-- Scrivi in italiano, rivolgendoti al paziente con il "tu".`;
+COSA NON FARE MAI
+- Nessun consiglio, invito o indicazione su cosa mangiare, quando, quanto o come compensare: niente "dovresti", "puoi", "ti consiglio", "conviene", "prova a", "recupera", "compensa", "equilibra", "bilancia".
+- Non parlare dei pasti successivi, di domani o di altri giorni.
+- Nessuna valutazione clinica o di salute (niente patologie, rischi, effetti sul peso o sul percorso), nessun giudizio sul paziente, nessun complimento o rimprovero.
+- Non parlare di attività fisica come compensazione; gli allenamenti indicati servono solo come contesto.
+- Non parlare della frequenza degli scostamenti: ci pensa l'app.
+- Tono sobrio e neutro, senza esclamazioni.`;
 
 const STRUMENTO_RISCONTRO = {
   name: "riscontro_pasto",
@@ -1666,7 +1672,7 @@ function stimaDaMacro(previsti, effettivi) {
   return `Rispetto al pasto previsto: ${parti.join(", ")}${Math.abs(dk) >= 20 ? ` (circa ${Math.abs(dk)} kcal ${dk > 0 ? "in più" : "in meno"})` : ""}.`;
 }
 
-function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
+function normalizzaRiscontro(r, rimanenti, conSuggerimenti, conNutrizionista) {
   // Accorcia senza troncare a metà frase: si ferma all'ultima frase intera
   const breve = (t, max) => {
     const x = String(t == null ? "" : t).replace(/\s+/g, " ").trim();
@@ -1683,11 +1689,11 @@ function normalizzaRiscontro(r, rimanenti, conSuggerimenti) {
     .map((x) => ({ pasto: x.pasto, testo: breve(ripulisciRiscontro(x.testo), 300) }))
     .filter((x) => x.testo.length > 8)
     .slice(0, 2);
-  let messaggio = breve(ripulisciRiscontro(r.messaggio), 240);
-  if (!messaggio || RE_SUGGERIMENTO_VIETATO.test(messaggio)) messaggio = impatto === "irrilevante" ? "Va benissimo così: continua con il piano." : MESSAGGIO_BASE;
-  // scambio equivalente: il paziente non è mai uscito dal piano, niente "riprendi" o "torna"
-  if (impatto === "irrilevante" && /\b(ripren|riparti|torna|rientr)/i.test(messaggio)) messaggio = "Va benissimo così: continua con il piano.";
+  // Frase finale fissa (v118): niente indicazioni generate dall'AI
+  const messaggio = conNutrizionista === false ? MESSAGGIO_AUTONOMO : MESSAGGIO_BASE;
   let spiegazione = breve(ripulisciRiscontro(r.spiegazione), 420);
+  // la spiegazione resta solo se descrittiva: via le frasi con consigli
+  spiegazione = soloFrasiDescrittive(spiegazione);
   if (RE_SUGGERIMENTO_VIETATO.test(spiegazione)) spiegazione = "";
   const out = { impatto, stima: breve(ripulisciRiscontro(r.stima), 200), spiegazione, suggerimenti, messaggio };
   // stima dei macronutrienti del pasto effettivo (per il riquadro della scheda Oggi)
@@ -1730,7 +1736,10 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   if (!giorno) throw new HttpsError("failed-precondition", "nessun-piano");
   const indice = MEAL_KEYS.indexOf(pasto);
   const rimanenti = MEAL_KEYS.slice(indice + 1).filter((k) => !fatti[k] && giorno[k] && !/pasto libero/i.test(giorno[k]));
-  const conSuggerimenti = modo === "suggerimenti" && rimanenti.length > 0;
+  // Dal 4/11/2026 (v118) i suggerimenti sui pasti successivi sono disattivati
+  // per tutti: il riscontro è solo descrittivo (riscontro di Cravero del 3/11,
+  // accordo punto 4.2; regole d'uso di Anthropic per gli usi sanitari).
+  const conSuggerimenti = false;
 
   // Scostamenti frequenti: più di 5 pasti non come da piano negli ultimi 7 giorni
   let scostamenti = 0;
@@ -1779,13 +1788,12 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
     `Com'è andato: ${STATI_NON_COME_PIANO[stato]}${motivo ? ` (motivo: ${motivo})` : ""}${nota ? `. Il paziente scrive: "${nota}"` : ""}`,
     testoProdotti,
     "",
-    rimanenti.length ? "Pasti rimasti di oggi:\n" + rimanenti.map((k) => `- ${MEAL_LABELS[k]} [${k}]: ${String(giorno[k]).slice(0, 600)}`).join("\n") : "Non ci sono altri pasti oggi: niente suggerimenti per oggi, solo il riscontro e il ritorno al piano da domani.",
+    "Riscontro solo descrittivo: niente consigli e niente riferimenti ai pasti successivi.",
     giorno.kcal ? `Calorie previste per la giornata: circa ${giorno.kcal} kcal.` : "",
     allenamenti.length ? `Allenamenti di oggi segnati dal paziente: ${allenamenti.join("; ")}.` : "",
     sostituzioni ? `\nSostituzioni approvate dal nutrizionista:\n${sostituzioni}` : "",
-    impostazioni.indicazioni ? `\nIndicazioni del nutrizionista per questi casi: ${String(impostazioni.indicazioni).slice(0, 600)}` : "",
     "",
-    conSuggerimenti ? "Suggerimenti richiesti: sì, al massimo 2, solo sui pasti rimasti." : "Suggerimenti richiesti: no, lascia l'elenco vuoto.",
+    "Suggerimenti: lascia l'elenco vuoto. Messaggio: lascia una stringa vuota.",
   ].filter((x) => x !== "").join("\n");
 
   let risposta;
@@ -1810,7 +1818,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   }
   const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "riscontro_pasto");
   if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
-  const riscontro = Object.assign(normalizzaRiscontro(blocco.input, rimanenti, conSuggerimenti), { data: dateKey, pasto, stato, frequente });
+  const riscontro = Object.assign(normalizzaRiscontro(blocco.input, rimanenti, conSuggerimenti, !!piano.professionistaUid), { data: dateKey, pasto, stato, frequente, descrittivo: true });
   const effettivi = macroEffettiviDaRisposta(blocco.input, macroPrevisti, macroProdotti, stato);
   if (effettivi) riscontro.macroEffettivi = effettivi;
   if (macroProdotti) riscontro.etichette = prodotti.length;
@@ -2610,5 +2618,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

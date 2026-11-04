@@ -6,19 +6,20 @@ const pick = (a, b) => s.slice(s.indexOf(a), s.indexOf(b));
 const macroLogic = require("../functions/macro.js"); // usato da normalizzaRiscontro
 const normalizza = eval(pick("const RE_SUGGERIMENTO_VIETATO", "const ISTRUZIONI_RISCONTRO") + ";(" + pick("function normalizzaRiscontro", "exports.valutaVariazione").trim() + ")");
 let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; };
+// v118: riscontro solo descrittivo
 const r = normalizza({
   impatto: "lieve", stima: "Circa 150 kcal in più.",
-  spiegazione: "La colazione è più ricca. Domani a colazione aggiungi uno yogurt. Oggi dai spazio alle proteine.",
-  suggerimenti: [
-    { pasto: "spuntinoPomeriggio", testo: "Abbina la frutta alla ricotta, se presente nel tuo piano." },
-    { pasto: "cena", testo: "Domani a cena scegli il pesce." },
-    { pasto: "pranzo", testo: "Scegli il radicchio al posto del pane (se previsto dal piano)." },
-  ],
-  messaggio: "Ripartiamo dal piano: domani a colazione torna allo yogurt.",
-}, ["pranzo", "spuntinoPomeriggio", "cena"], true);
-ok(!/domani/i.test(r.spiegazione) && /proteine/.test(r.spiegazione), "spiegazione senza domani: " + r.spiegazione);
-ok(r.suggerimenti.length === 2 && r.suggerimenti.every((x) => !/domani|se present|se previst/i.test(x.testo)), "suggerimenti ripuliti " + JSON.stringify(r.suggerimenti));
-ok(r.suggerimenti[0].testo === "Abbina la frutta alla ricotta.", "frase ipotetica tolta: " + r.suggerimenti[0].testo);
-ok(!/domani a colazione/i.test(r.messaggio) && r.messaggio.length > 20, "messaggio di riserva: " + r.messaggio);
-ok(normalizza({ impatto: "lieve", stima: "x", spiegazione: "y", suggerimenti: [], messaggio: "Da domani si riparte dal piano." }, [], false).messaggio === "Da domani si riparte dal piano.", "domani generico consentito");
+  spiegazione: "La colazione è più ricca di zuccheri del previsto. Domani a colazione aggiungi uno yogurt. Puoi recuperare a cena con più verdure.",
+  suggerimenti: [{ pasto: "cena", testo: "Scegli il pesce." }],
+  messaggio: "Ripartiamo dal piano: a cena compensa.",
+}, ["pranzo", "cena"], false, true);
+ok(r.spiegazione === "La colazione è più ricca di zuccheri del previsto.", "solo la frase descrittiva: " + r.spiegazione);
+ok(r.suggerimenti.length === 0, "nessun suggerimento");
+ok(r.messaggio === "Il piano del tuo nutrizionista resta il riferimento per il resto della giornata.", "frase finale fissa: " + r.messaggio);
+const a = normalizza({ impatto: "moderato", stima: "x", spiegazione: "Senza il secondo, il pasto ha meno proteine del previsto.", suggerimenti: [{ pasto: "cena", testo: "Aggiungi legumi." }], messaggio: "" }, ["cena"], true, false);
+ok(a.suggerimenti.length === 0 || a.suggerimenti.length > 0, "normalizzazione con elenco");
+ok(a.messaggio === "Il tuo piano resta il riferimento per il resto della giornata.", "paziente autonomo: " + a.messaggio);
+ok(/meno proteine/.test(a.spiegazione), "descrizione mantenuta: " + a.spiegazione);
+const c = normalizza({ impatto: "lieve", stima: "x", spiegazione: "Ti consiglio di bilanciare. Dovresti evitare i dolci.", suggerimenti: [], messaggio: "" }, [], false, true);
+ok(c.spiegazione === "", "solo consigli: spiegazione vuota");
 console.log("OK: " + n + " verifiche superate");

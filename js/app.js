@@ -437,7 +437,7 @@
           <li>Con l'account familiare usi solo la <strong>lista della spesa condivisa</strong>. I dati del tuo account (nome, email, lista) sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app.</li>
           <li>Non vedi i piani, le misure o le note dei pazienti: solo gli alimenti della lista di casa.</li>` : autonomo ? `
           <li>Il piano che carichi, i pasti che segni, le tue note e le misure sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app ed è titolare di questi dati. Servono solo a farti seguire il piano.</li>
-          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic), solo se dai il consenso: la lettura del piano dal PDF, i consigli sui pasti non come da piano e la lettura della tabella nutrizionale. Ricevono i testi del piano e dei pasti e le foto che scegli di inviare, senza nome né email. Riscontri e stime sono generati automaticamente e approssimati.</li>
+          <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic), solo se dai il consenso: la lettura del piano dal PDF, il riscontro sui pasti non come da piano e la lettura della tabella nutrizionale. Ricevono i testi del piano e dei pasti e le foto che scegli di inviare, senza nome né email. Riscontri e stime sono generati automaticamente e approssimati.</li>
           <li>Se ti colleghi a un nutrizionista con il suo codice, lui vedrà il tuo piano e il tuo andamento.</li>` : `
           <li>Il piano, i pasti che segni, le tue note, le misure e gli appuntamenti sono trattati dal <strong>tuo nutrizionista</strong>, che ne è il titolare. <strong>Bulli e Pupe S.r.l.</strong> gestisce l'app per suo conto. Il tuo nutrizionista ti fornisce anche la sua informativa.</li>
           <li>Alcune funzioni usano l'<strong>intelligenza artificiale</strong> (Anthropic), solo se dai il consenso: per esempio il riscontro sui pasti non come da piano e la lettura della tabella nutrizionale. Ricevono i testi dei pasti, le tue note e le foto che scegli di inviare, senza nome né email. Riscontri e stime sono generati automaticamente e approssimati; il tuo nutrizionista può disattivarli.</li>`}
@@ -793,7 +793,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v117";
+  const VERSIONE_APP = "v118";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -827,7 +827,7 @@
 
   const FUNZIONI_PREMIUM = [
     ["✨", "Lettura del piano con l'AI", "carichi il nuovo piano dal PDF o dalle foto in un minuto, a ogni cambio di stagione"],
-    ["💡", "Consigli quando un pasto cambia", "come riequilibrare la giornata quando mangi fuori o salti un pasto"],
+    ["📊", "Riscontro quando un pasto cambia", "come cambiano calorie e macronutrienti rispetto al piano quando mangi fuori o salti un pasto"],
     ["🛒", "Lista della spesa della settimana", "tutta la settimana, divisa in una o due spese, condivisibile in famiglia"],
     ["🥡", "Meal prep", "cosa preparare in anticipo per i pasti della settimana"],
     ["📈", "Andamento completo", "grafico del peso e storico delle misure"],
@@ -979,7 +979,7 @@
     try { if (localStorage.getItem(chiave)) return; localStorage.setItem(chiave, "1"); } catch (e) { return; }
     apriSheet(`
       <h2 class="sheet__titolo">Il tuo abbonamento Premium è terminato</h2>
-      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, consigli sui pasti, lista della settimana, meal prep e andamento completo richiedono Premium.</p>
+      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, riscontro sui pasti, lista della settimana, meal prep e andamento completo richiedono Premium.</p>
       <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
       ${pluginAcquisti() ? `<button type="button" class="btn" id="fine-abbonamento-attiva">Riattiva Premium</button>` : `<p class="hint">Puoi riattivarlo dall'app Il mio Piano per Android, su Google Play.</p>`}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Continua con la versione gratuita</button>`);
@@ -1000,13 +1000,13 @@
       "il piano letto e caricato nell'app",
       pesate ? `${pesate} ${pesate === 1 ? "misura registrata" : "misure registrate"} con il grafico dell'andamento` : null,
       "la lista della spesa di tutta la settimana e il meal prep",
-      "i consigli quando un pasto va diversamente",
+      "il riscontro quando un pasto va diversamente",
     ].filter(Boolean);
     apriSheet(`
       <h2 class="sheet__titolo">La prova Premium è terminata</h2>
       <p class="sheet__nota">In questi 14 giorni hai avuto:</p>
       <ul class="premium-elenco premium-elenco--semplice">${usate.map((u) => `<li>✓ ${escapeHTML(u)}</li>`).join("")}</ul>
-      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, consigli sui pasti, lista della settimana, meal prep e andamento completo richiedono Premium.</p>
+      <p class="sheet__nota">Il menù del giorno, i promemoria dei pasti e le spunte restano gratuiti. Lettura del piano con l'AI, riscontro sui pasti, lista della settimana, meal prep e andamento completo richiedono Premium.</p>
       <p class="premium-prezzo">2,99 € al mese oppure <strong>19,99 € all'anno</strong></p>
       ${pluginAcquisti() ? `<button type="button" class="btn" id="fine-prova-attiva">Attiva Premium</button>` : `<p class="hint">L'abbonamento si attiva dall'app Il mio Piano per Android, su Google Play; su iPhone arriverà a breve.</p>`}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Continua con la versione gratuita</button>`);
@@ -2503,7 +2503,7 @@
                 </button>`}
               <button type="button" class="meal__altro" data-meal-altro="${key}">${stato ? "Modifica" : modo === "meal--attuale" ? "Non come da piano" : "Non come da piano?"}</button>
             </div>
-            ${riscontroPastoHTML(key, stato)}
+            ${riscontroPastoHTML(key, stato, giorno, fatti)}
           ` : ""}
           ${RUOLO === "paziente" && window.conversioni && window.conversioni.riconosci(giorno[key], RESE_AI).length ? `
             <button type="button" class="meal__cotto" data-cotto="${escapeHTML(giorno[key])}" data-cotto-pasto="${key}">${premiumLimitato() ? "🔒" : "⚖️"} Peso da cotto</button>` : ""}
@@ -3110,7 +3110,32 @@
   const RISCONTRI = { data: null, perPasto: {}, unsub: null };
   // Dettatura vocale della nota: riconoscimento del sistema del telefono (Google o Apple)
   const LS_RISCONTRI_CHIUSI = "pnut:riscontri-chiusi";
-  const ETICHETTE_IMPATTO = { irrilevante: "Variazione irrilevante", nessuno: "Variazione irrilevante", lieve: "Impatto lieve", moderato: "Impatto moderato", rilevante: "Impatto rilevante" };
+  // v118: riscontro solo descrittivo (differenza rispetto al piano, nessun consiglio)
+  const ETICHETTE_IMPATTO = { irrilevante: "In linea con il piano", nessuno: "In linea con il piano", lieve: "Differenza lieve", moderato: "Differenza moderata", rilevante: "Differenza marcata" };
+
+  /** Bilancio della giornata fin qui (calorie assunte sulle previste), calcolato dall'app. */
+  function bilancioGiornoTesto(giorno, fatti) {
+    if (!giorno || !fatti || !macroDisponibile()) return "";
+    const M = window.macro;
+    const stime = {};
+    M.CAMPI_PASTO.forEach((k) => {
+      if (!M.daStimare(giorno[k])) return;
+      const ch = MACRO_CHIAVI.get(M.normalizzaPasto(giorno[k]));
+      if (ch && MACRO[ch]) stime[k] = M.pulisciStima(MACRO[ch]);
+    });
+    const g = M.macroGiorno(giorno, stime);
+    if (!g.completo || !g.totale.kcal) return "";
+    const stati = {};
+    M.CAMPI_PASTO.forEach((k) => { stati[k] = window.statistiche.statoPasto(fatti, k === "coccola" ? "cena" : k); });
+    const effettivi = {};
+    M.CAMPI_PASTO.forEach((k) => {
+      const r = RISCONTRI.perPasto[k];
+      if ((stati[k] === "diverso" || stati[k] === "parziale") && r && r.macroEffettivi) effettivi[k] = M.pulisciStima(r.macroEffettivi);
+    });
+    const assunti = M.macroAssunti(g, stati, effettivi);
+    const arr = (x) => Math.round((Number(x) || 0) / 10) * 10;
+    return `Con i pasti segnati finora, oggi sei a circa ${numeroIt(arr(assunti.kcal))} kcal sulle ${numeroIt(arr(g.totale.kcal))} previste dal piano.`;
+  }
 
   function riscontroAttivo() {
     const m = PIANO_ATTIVO && PIANO_ATTIVO.feedbackAI && PIANO_ATTIVO.feedbackAI.modo;
@@ -3149,12 +3174,12 @@
       else RISCONTRI.perPasto[key] = r;
     } catch (err) {
       if (/premium-richiesto/.test(String(err && err.message))) { RISCONTRI.perPasto[key] = { bloccato: true }; aggiornaPremium(); }
-      else RISCONTRI.perPasto[key] = { errore: /limite/.test(String(err && err.message)) ? "Per oggi i riscontri sono finiti: riparti dal piano al prossimo pasto." : "Riscontro non disponibile in questo momento." };
+      else RISCONTRI.perPasto[key] = { errore: /limite/.test(String(err && err.message)) ? "Per oggi i riscontri sono finiti." : "Riscontro non disponibile in questo momento." };
     }
     if (currentView === "oggi") renderOggi();
   }
 
-  function riscontroPastoHTML(key, stato) {
+  function riscontroPastoHTML(key, stato, giorno, fatti) {
     // consenso AI revocato: non si mostrano nemmeno i riscontri generati prima
     if (RUOLO === "paziente" && !CONSENSO_AI) return "";
     if (!stato || stato === "fatto" || !riscontroAttivo()) return "";
@@ -3163,12 +3188,12 @@
     const idChiuso = `${RISCONTRI.data}_${key}`;
     if (riscontriChiusi()[idChiuso]) return "";
     if (r.bloccato) return `<div class="riscontro riscontro--bloccato">
-        <div class="riscontro__testa"><strong>💡 C'è un consiglio per riequilibrare la giornata</strong>
+        <div class="riscontro__testa"><strong>📊 C'è un riscontro su questo pasto</strong>
           <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button></div>
-        <p class="riscontro__testo">Con Premium vedi l'impatto di questo pasto e come sistemare i prossimi.</p>
+        <p class="riscontro__testo">Con Premium vedi come cambia l'apporto di questo pasto rispetto al piano.</p>
         <button type="button" class="btn btn--ghost" data-premium>Scopri Premium</button>
       </div>`;
-    if (r.attesa) return `<div class="riscontro riscontro--attesa"><span class="import-attesa"></span> Sto valutando come riequilibrare la giornata…</div>`;
+    if (r.attesa) return `<div class="riscontro riscontro--attesa"><span class="import-attesa"></span> Sto confrontando il pasto con il piano…</div>`;
     if (r.errore) return `<div class="riscontro"><p class="riscontro__testo">${escapeHTML(r.errore)}</p></div>`;
     if (r.stato && r.stato !== stato) return ""; // il pasto è stato cambiato dopo il riscontro
     if (r.impatto === "irrilevante" || r.impatto === "nessuno") {
@@ -3179,20 +3204,20 @@
           <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button>
         </div>
         ${r.stima ? `<p class="riscontro__testo">${escapeHTML(r.stima)}</p>` : ""}
-        <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "Va benissimo così: continua con il piano.")}</p>
+        <p class="riscontro__messaggio">${escapeHTML(r.descrittivo ? r.messaggio : "Il piano resta il riferimento per il resto della giornata.")}</p>
         ${AVVERTENZA_AI_PASTI}
       </div>`;
     }
     return `
       <div class="riscontro riscontro--${escapeHTML(r.impatto || "lieve")}">
         <div class="riscontro__testa">
-          <strong>💡 Come riequilibrare la giornata</strong>
+          <strong>📊 Com'è andato questo pasto</strong>
           <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button>
         </div>
         <p class="riscontro__impatto"><span>${escapeHTML(ETICHETTE_IMPATTO[r.impatto] || "Impatto lieve")}</span>${r.stima ? ` · ${escapeHTML(r.stima)}` : ""}</p>
         ${r.spiegazione ? `<p class="riscontro__testo">${escapeHTML(r.spiegazione)}</p>` : ""}
-        ${(r.suggerimenti || []).length ? `<ul class="riscontro__suggerimenti">${r.suggerimenti.map((x) => `<li><strong>${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}:</strong> ${escapeHTML(x.testo)}</li>`).join("")}</ul>` : ""}
-        <p class="riscontro__messaggio">${escapeHTML(r.messaggio || "")}</p>
+        ${(() => { const b = bilancioGiornoTesto(giorno, fatti); return b ? `<p class="riscontro__testo riscontro__bilancio">${escapeHTML(b)}</p>` : ""; })()}
+        <p class="riscontro__messaggio">${escapeHTML(r.descrittivo ? r.messaggio : "Il piano resta il riferimento per il resto della giornata.")}</p>
         ${r.frequente ? `<p class="riscontro__frequente">Negli ultimi giorni i pasti non come da piano sono stati diversi: può essere utile parlarne con il tuo nutrizionista.</p>` : ""}
         ${AVVERTENZA_AI_PASTI}
       </div>`;
@@ -8712,27 +8737,25 @@
 
       <section class="settings-section">
         <h2>Riscontro AI sui pasti non come da piano</h2>
-        <p class="hint">Quando il paziente segna un pasto come fatto diversamente, in parte o saltato, l'app gli mostra sotto il pasto una breve scheda <strong>"Come riequilibrare la giornata"</strong>: l'impatto stimato e, se lo consenti, uno o due piccoli aggiustamenti sui pasti rimasti di oggi.</p>
+        <p class="hint">Quando il paziente segna un pasto come fatto diversamente, in parte o saltato, l'app gli mostra sotto il pasto una breve scheda <strong>"Com'è andato questo pasto"</strong>: come cambiano calorie e macronutrienti rispetto al pasto previsto e il bilancio della giornata fin qui. È solo descrittivo: <strong>non dà consigli</strong> su cosa mangiare dopo.</p>
         <details class="ric-dettagli">
           <summary>Come funziona e cosa non fa mai</summary>
           <ul class="spiegazione-ai">
-            <li><strong>Usa solo il tuo piano</strong>: i suggerimenti riguardano alimenti già presenti nei pasti del giorno, nelle tue sostituzioni o nelle indicazioni che scrivi qui sotto. Non cambia il piano e non introduce alimenti nuovi.</li>
-            <li><strong>Limiti fissi, sempre</strong>: mai digiuni, mai pasti saltati, mai tagli oltre circa un quarto di un pasto, mai attività fisica o altri comportamenti per "compensare". Il messaggio di fondo è sempre: si riparte dal piano al pasto successivo.</li>
-            <li><strong>Stime indicative</strong>: l'impatto (irrilevante, lieve, moderato, rilevante) e i valori sono approssimati e dichiarati come tali al paziente. Gli scambi equivalenti, come mela al posto dei frutti di bosco o mandorle al posto delle noci, o le tue sostituzioni approvate, risultano <strong>irrilevanti</strong>: il paziente vede solo una conferma che va bene così.</li>
+            <li><strong>Solo descrizione</strong>: la differenza principale rispetto al pasto previsto (per esempio «circa 20 g di proteine in meno») e quali alimenti l'hanno causata. Nessun suggerimento sui pasti successivi, nessuna indicazione di compensare.</li>
+            <li><strong>Calcoli dell'app</strong>: i numeri del riepilogo e il bilancio della giornata li calcola l'app; per i prodotti confezionati usa i valori della tabella nutrizionale fotografata dal paziente.</li>
+            <li><strong>Frase finale fissa</strong>: «Il piano del tuo nutrizionista resta il riferimento per il resto della giornata».</li>
+            <li><strong>Stime indicative</strong>: i valori sono approssimati e dichiarati come tali al paziente. Gli scambi equivalenti, come mela al posto dei frutti di bosco, o le tue sostituzioni approvate, risultano <strong>in linea con il piano</strong>.</li>
             <li><strong>Scostamenti frequenti</strong>: se nell'ultima settimana sono molti, il paziente viene invitato a parlarne con te.</li>
-            <li><strong>Privacy</strong>: all'AI arrivano solo i testi dei pasti, lo stato, il motivo e la nota del paziente, in forma pseudonimizzata (senza nome né altri dati identificativi). Il paziente ne è informato al primo accesso all'app.</li>
+            <li><strong>Privacy</strong>: all'AI arrivano i testi dei pasti, lo stato, il motivo e la nota del paziente, senza nome, email o identificativo dell'account. Il paziente ne è informato e dà il suo consenso.</li>
             <li><strong>Trasparenza</strong>: nella scheda "Andamento" vedi gli ultimi riscontri dati al paziente.</li>
-            <li><strong>Quando spegnerlo</strong>: per pazienti con un rapporto difficile con il cibo o per i quali un riscontro su ogni scostamento non è indicato.</li>
+            <li><strong>Quando spegnerlo</strong>: per pazienti con un rapporto difficile con il cibo o per i quali un riscontro su ogni scostamento non è indicato. Se nascondi i macronutrienti, il riscontro non mostra il bilancio della giornata.</li>
           </ul>
         </details>
         <label class="editor-campo" style="margin-top:10px;"><span>Per questo paziente</span>
           <select id="feedback-modo">
-            <option value="suggerimenti" ${!piano.feedbackAI || !piano.feedbackAI.modo || piano.feedbackAI.modo === "suggerimenti" ? "selected" : ""}>Attivo: riscontro e piccoli aggiustamenti</option>
-            <option value="riscontro" ${piano.feedbackAI && piano.feedbackAI.modo === "riscontro" ? "selected" : ""}>Solo riscontro, senza aggiustamenti</option>
+            <option value="riscontro" ${!piano.feedbackAI || piano.feedbackAI.modo !== "spento" ? "selected" : ""}>Attivo: riscontro descrittivo</option>
             <option value="spento" ${piano.feedbackAI && piano.feedbackAI.modo === "spento" ? "selected" : ""}>Spento</option>
           </select></label>
-        <label class="editor-campo" style="margin-top:8px;">Le tue indicazioni per questi casi (facoltative)
-          <textarea id="feedback-indicazioni" rows="3" maxlength="600" placeholder="Es. per recuperare proteine usa yogurt greco o legumi; dopo un dolce nessuna compensazione, torna al piano">${escapeHTML((piano.feedbackAI && piano.feedbackAI.indicazioni) || "")}</textarea></label>
         <button type="button" class="btn" id="btn-salva-feedback" style="margin-top:10px;">Salva riscontro AI</button>
       </section>
 
@@ -8784,7 +8807,7 @@
     document.getElementById("btn-salva-sostituzioni").addEventListener("click", salvaSostituzioniProfessionista);
     document.getElementById("btn-salva-feedback").addEventListener("click", async (e) => {
       const btn = e.currentTarget;
-      const feedbackAI = { modo: document.getElementById("feedback-modo").value, indicazioni: document.getElementById("feedback-indicazioni").value.trim().slice(0, 600) };
+      const feedbackAI = { modo: document.getElementById("feedback-modo").value };
       btn.disabled = true;
       try {
         await window.cloud.salvaPiano(piano.id, { feedbackAI });
