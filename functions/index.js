@@ -1777,10 +1777,11 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   // Prodotti confezionati con i valori letti dall'etichetta: li calcola l'app
   const prodotti = stato === "saltato" ? [] : vociEtichettaPasto(fatti, pasto);
   const macroProdotti = prodotti.length ? macroLogic.macroDaEtichette(prodotti) : null;
+  const modoProdotti = prodotti.length && fatti.etichetteModo && ["aggiunta", "sostituzione"].includes(fatti.etichetteModo[pasto]) ? fatti.etichetteModo[pasto] : null;
   const testoProdotti = prodotti.length ? "Prodotti confezionati con valori dall'etichetta (calcolati dall'app, esatti):\n" + prodotti.map((v) => {
     const x = macroLogic.valoriVoceEtichetta(v);
     return `- ${v.nome}, ${Math.round(v.grammi)} ${v.unita}: carboidrati ${Math.round(x.carboidrati)} g, proteine ${Math.round(x.proteine)} g, grassi ${Math.round(x.grassi)} g (circa ${x.kcal} kcal)`;
-  }).join("\n") + "\nNon ristimare questi prodotti: in macroAggiunti metti solo gli altri alimenti in più o al posto del previsto." : "";
+  }).join("\n") + (modoProdotti ? `\nIl paziente indica che questi prodotti li ha mangiati ${modoProdotti === "aggiunta" ? "IN AGGIUNTA al pasto previsto" : "AL POSTO del pasto previsto"}.` : "") + "\nNon ristimare questi prodotti: in macroAggiunti metti solo gli altri alimenti in più o al posto del previsto." : "";
   const testo = [
     `Pasto: ${MEAL_LABELS[pasto]}`,
     `Previsto dal piano: ${String(giorno[pasto]).slice(0, 800)}`,
@@ -1819,12 +1820,17 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "riscontro_pasto");
   if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
   const riscontro = Object.assign(normalizzaRiscontro(blocco.input, rimanenti, conSuggerimenti, !!piano.professionistaUid), { data: dateKey, pasto, stato, frequente, descrittivo: true });
-  const effettivi = macroEffettiviDaRisposta(blocco.input, macroPrevisti, macroProdotti, stato);
+  // Con "fatto diversamente" la scelta del paziente sui prodotti decide la quota del pasto previsto
+  const ingresso = Object.assign({}, blocco.input);
+  if (stato === "diverso" && modoProdotti) ingresso.quotaPiano = modoProdotti === "aggiunta" ? 1 : 0;
+  const effettivi = macroEffettiviDaRisposta(ingresso, macroPrevisti, macroProdotti, stato);
   if (effettivi) riscontro.macroEffettivi = effettivi;
   if (macroProdotti) riscontro.etichette = prodotti.length;
   // La stima mostrata al paziente si ricalcola dai numeri, così non può
   // contraddire il riquadro dei macronutrienti dell'app.
   const stimaNumerica = stimaDaMacro(macroPrevisti, riscontro.macroEffettivi);
+  // L'etichetta della differenza la calcola l'app sulla giornata, non l'AI (v119)
+  riscontro.impatto = impattoSullaGiornata(riscontro.impatto, macroPrevisti, riscontro.macroEffettivi, Number(giorno.kcal) || 0);
   if (stimaNumerica) { riscontro.stima = stimaNumerica; riscontro.macroPrevisti = macroPrevisti; }
   await riscontriRef.doc(`${dateKey}_${pasto}`).set(Object.assign({}, riscontro, { creato: FieldValue.serverTimestamp() }));
   return riscontro;
@@ -1856,6 +1862,20 @@ function macroEffettiviDaRisposta(input, previsti, prodotti, stato) {
   if (prodotti) return macroLogic.sommaStime(prodotti, aggiunti);
   const stima = pulita(input.macroEffettivi);
   return stima && stima.kcal > 0 ? stima : null;
+}
+
+/**
+ * Etichetta della differenza rispetto al piano, in proporzione alle calorie
+ * della giornata: sotto il 5% lieve (o irrilevante, se l'AI ha riconosciuto
+ * uno scambio equivalente), dal 5 al 15% moderata, oltre il 15% marcata.
+ * Senza numeri sufficienti resta la valutazione dell'AI.
+ */
+function impattoSullaGiornata(impattoAI, previsti, effettivi, kcalGiorno) {
+  if (!previsti || !effettivi || !(kcalGiorno > 0)) return impattoAI;
+  const quota = Math.abs((Number(effettivi.kcal) || 0) - (Number(previsti.kcal) || 0)) / kcalGiorno;
+  if (quota < 0.05) return impattoAI === "irrilevante" ? "irrilevante" : "lieve";
+  if (quota < 0.15) return "moderato";
+  return "rilevante";
 }
 
 /** Prodotti con etichetta segnati dal paziente per un pasto (ripuliti, massimo 6). */
@@ -2618,5 +2638,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

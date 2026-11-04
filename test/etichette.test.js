@@ -77,4 +77,13 @@ const soloProdotti = T.macroEffettiviDaRisposta({ macroAggiunti: zero }, null, c
 ok(soloProdotti.kcal === cioccolato.kcal, "senza previsti, con prodotti");
 ok(T.macroEffettiviDaRisposta({}, null, null, "diverso") === null, "nessun dato: nessuna stima");
 
+// v119: etichetta della differenza calcolata sulla giornata
+const prev = M.pulisciStima({ carboidrati: 5, proteine: 3, grassi: 8, affidabilita: "media" }); // mandorle 15 g, circa 100 kcal
+ok(T.impattoSullaGiornata("rilevante", prev, M.pulisciStima({ carboidrati: 0, proteine: 0, grassi: 0 }), 1500) === "moderato", "spuntino saltato da 100 kcal su 1500: moderato");
+ok(T.impattoSullaGiornata("moderato", prev, M.pulisciStima({ carboidrati: 7, proteine: 3, grassi: 9 }), 1500) === "lieve", "piccola aggiunta: lieve");
+ok(T.impattoSullaGiornata("irrilevante", prev, M.pulisciStima({ carboidrati: 6, proteine: 3, grassi: 8 }), 1500) === "irrilevante", "scambio equivalente resta irrilevante");
+ok(T.impattoSullaGiornata("lieve", prev, M.pulisciStima({ carboidrati: 80, proteine: 10, grassi: 30 }), 1500) === "rilevante", "oltre il 15%: marcata");
+ok(T.impattoSullaGiornata("lieve", prev, null, 1500) === "lieve", "senza numeri resta l'AI");
+ok(T.impattoSullaGiornata("lieve", prev, prev, 0) === "lieve", "senza calorie del giorno resta l'AI");
+
 console.log("OK: " + n + " verifiche superate");

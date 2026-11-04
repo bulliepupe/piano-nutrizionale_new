@@ -793,7 +793,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v118";
+  const VERSIONE_APP = "v119";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -3071,7 +3071,7 @@
   }
 
   /** Salva lo stato di un pasto di oggi: true (fatto), "diverso", "parziale", "saltato" oppure null (non segnato). */
-  async function salvaStatoPasto(key, valore, motivo, nota, prodotti) {
+  async function salvaStatoPasto(key, valore, motivo, nota, prodotti, modoProdotti) {
     const dateKey = chiaveData(new Date());
     const nuovoStato = Object.assign({}, PASTI_FATTI_OGGI);
     const motivi = Object.assign({}, nuovoStato.motivi || {});
@@ -3082,6 +3082,10 @@
       ? prodotti.slice(0, window.macro.MAX_ETICHETTE).map(window.macro.pulisciVoceEtichetta).filter((v) => v.grammi > 0) : [];
     if (voci.length) etichette[key] = voci; else delete etichette[key];
     if (Object.keys(etichette).length) nuovoStato.etichette = etichette; else delete nuovoStato.etichette;
+    // prodotti in aggiunta al pasto previsto o al suo posto
+    const modi = Object.assign({}, nuovoStato.etichetteModo || {});
+    if (voci.length && (modoProdotti === "aggiunta" || modoProdotti === "sostituzione")) modi[key] = modoProdotti; else delete modi[key];
+    if (Object.keys(modi).length) nuovoStato.etichetteModo = modi; else delete nuovoStato.etichetteModo;
     const conDettagli = valore === "diverso" || valore === "parziale" || valore === "saltato";
     if (valore === null) delete nuovoStato[key]; else nuovoStato[key] = valore;
     if (motivo && conDettagli) motivi[key] = motivo; else delete motivi[key];
@@ -3268,6 +3272,7 @@
     let nota = (PASTI_FATTI_OGGI.note || {})[key] || "";
     // prodotti confezionati con i valori dell'etichetta (foto della tabella nutrizionale)
     let prodotti = ((PASTI_FATTI_OGGI.etichette || {})[key] || []).map((v) => window.macro.pulisciVoceEtichetta(v));
+    let modoProdotti = ((PASTI_FATTI_OGGI.etichetteModo || {})[key]) || null; // "aggiunta" | "sostituzione"
     let letta = null;        // etichetta appena letta, in attesa di conferma
     let leggendo = false;
     const nomePasto = MEAL_META[key].label;
@@ -3303,15 +3308,25 @@
           <textarea id="stato-pasto-nota" rows="2" maxlength="${S.MAX_NOTA}" placeholder="${escapeHTML(S.SUGGERIMENTI_NOTA[motivo] || (scelta === "diverso" ? "Cosa hai mangiato al posto del pasto previsto?" : "Es. riso al posto della pasta, ho lasciato metà del secondo…"))}">${escapeHTML(nota)}</textarea>
           <span class="stato-pasto__sotto">${DETTATURA_DISPONIBILE ? `<button type="button" class="btn-detta" id="stato-pasto-detta" aria-label="Detta la nota a voce">🎤 Detta</button>` : APP_NATIVA ? `<span class="stato-pasto__aiuto">Per dettare usa il 🎤 della tastiera</span>` : ""}<small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small></span>
           <small class="stato-pasto__avviso">Scrivi solo cosa hai mangiato e perché: niente nomi, telefoni o indirizzi.${CONSENSO_AI ? " La nota può essere letta dall'intelligenza artificiale per il riscontro." : ""}</small>
-        </label>` : "";
+        </label>
+        ${scelta === "saltato" ? `<p class="etichette-pasto__attenzione" id="stato-pasto-avviso-saltato" hidden>Hai mangiato qualcosa al posto del pasto? <button type="button" class="link-btn" id="stato-pasto-passa-diverso">Scegli «Fatto diversamente»</button></p>` : ""}` : "";
       box.querySelectorAll("[data-motivo]").forEach((b) => b.addEventListener("click", () => {
         motivo = motivo === b.dataset.motivo ? null : b.dataset.motivo;
         aggiorna();
       }));
       const nuovoCampo = box.querySelector("#stato-pasto-nota");
+      // "Saltato" ma la nota dice che si è mangiato qualcosa: si propone "Fatto diversamente"
+      const avvisoSaltato = box.querySelector("#stato-pasto-avviso-saltato");
+      const controllaSaltato = () => {
+        if (avvisoSaltato) avvisoSaltato.hidden = !/\b(mangiat|bevut|aggiunt|al posto|invece|ho preso|ho fatto)/i.test(nota);
+      };
+      const bPassa = box.querySelector("#stato-pasto-passa-diverso");
+      if (bPassa) bPassa.addEventListener("click", () => { scelta = "diverso"; aggiorna(); });
+      controllaSaltato();
       if (nuovoCampo) nuovoCampo.addEventListener("input", () => {
         nota = nuovoCampo.value;
         box.querySelector("#stato-pasto-conta").textContent = `${nota.length}/${S.MAX_NOTA}`;
+        controllaSaltato();
       });
       const bDetta = box.querySelector("#stato-pasto-detta");
       if (bDetta && nuovoCampo) bDetta.addEventListener("click", () => {
@@ -3330,6 +3345,7 @@
           nuovoCampo.value = ((base ? base + " " : "") + detto).slice(0, S.MAX_NOTA);
           nota = nuovoCampo.value;
           box.querySelector("#stato-pasto-conta").textContent = `${nota.length}/${S.MAX_NOTA}`;
+          controllaSaltato();
         };
         rec.onerror = (ev) => {
           const e = ev && ev.error;
@@ -3356,7 +3372,8 @@
     // --- Prodotti con etichetta ---
     const n1 = (x) => String(Math.round((Number(x) || 0) * 10) / 10).replace(".", ",");
     const numero = (el) => { const v = parseFloat(String((el && el.value) || "").replace(",", ".")); return Number.isFinite(v) && v >= 0 ? v : 0; };
-    const bloccaSalva = () => { overlay.querySelector("#stato-pasto-salva").disabled = !scelta || leggendo || !!letta; };
+    const conProdotti = () => (scelta === "diverso" || scelta === "parziale") && prodotti.length > 0;
+    const bloccaSalva = () => { overlay.querySelector("#stato-pasto-salva").disabled = !scelta || leggendo || !!letta || (conProdotti() && !modoProdotti); };
     const erroreEtichetta = (err) => {
       const m = String((err && err.message) || "");
       if (/premium-richiesto/.test(m)) { aggiornaPremium(); return "Le etichette si leggono con Premium."; }
@@ -3447,7 +3464,12 @@
             const x = M.valoriVoceEtichetta(v);
             return `<li><span><strong>${escapeHTML(v.nome)}</strong>, ${n1(v.grammi)} ${v.unita}${vedeMacro ? ` · circa ${x.kcal} kcal` : ""}</span>
               <button type="button" class="link-btn" data-togli-etichetta="${i}">Togli</button></li>`;
-          }).join("")}</ul>` : ""}
+          }).join("")}</ul>
+          <p class="stato-pasto__domanda">Li hai mangiati…</p>
+          <div class="ricette-filtri" role="radiogroup">
+            <button type="button" class="chip-filtro" data-modo-prodotti="aggiunta" aria-pressed="${modoProdotti === "aggiunta"}">in aggiunta al pasto previsto</button>
+            <button type="button" class="chip-filtro" data-modo-prodotti="sostituzione" aria-pressed="${modoProdotti === "sostituzione"}">al posto del pasto previsto</button>
+          </div>` : ""}
           ${prodotti.length < M.MAX_ETICHETTE ? `
             <button type="button" class="btn btn--ghost" id="etichetta-foto"${leggendo ? " disabled" : ""}>${leggendo ? `<span class="import-attesa"></span> Sto leggendo la tabella…` : prodotti.length ? "📷 Fotografa un'altra tabella" : "📷 Fotografa la tabella di dichiarazione nutrizionale"}</button>
             ${leggendo ? "" : `<button type="button" class="link-btn etichette-pasto__galleria" id="etichetta-galleria">oppure scegli una foto dalla galleria</button>`}
@@ -3455,6 +3477,10 @@
             <input type="file" id="etichetta-file-galleria" accept="image/*" hidden>` : ""}
           <small class="stato-pasto__avviso">Inquadra solo la tabella: la foto viene letta dall'intelligenza artificiale e non viene conservata.</small>
         </div>`;
+      box.querySelectorAll("[data-modo-prodotti]").forEach((b) => b.addEventListener("click", () => {
+        modoProdotti = b.dataset.modoProdotti;
+        renderEtichette();
+      }));
       box.querySelectorAll("[data-togli-etichetta]").forEach((b) => b.addEventListener("click", () => {
         prodotti = prodotti.filter((_, i) => i !== Number(b.dataset.togliEtichetta));
         renderEtichette();
@@ -3489,7 +3515,7 @@
       fermaDettatura();
       chiudiSheet();
       const campo = overlay.querySelector("#stato-pasto-nota");
-      salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo, campo ? campo.value : "", prodotti);
+      salvaStatoPasto(key, scelta === "fatto" ? true : scelta, motivo, campo ? campo.value : "", prodotti, modoProdotti);
     });
     const togli = overlay.querySelector("#stato-pasto-togli");
     if (togli) togli.addEventListener("click", () => { chiudiSheet(); salvaStatoPasto(key, null, null, null); });
