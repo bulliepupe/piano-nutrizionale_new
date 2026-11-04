@@ -793,7 +793,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v119";
+  const VERSIONE_APP = "v120";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -3466,10 +3466,11 @@
               <button type="button" class="link-btn" data-togli-etichetta="${i}">Togli</button></li>`;
           }).join("")}</ul>
           <p class="stato-pasto__domanda">Li hai mangiati…</p>
-          <div class="ricette-filtri" role="radiogroup">
-            <button type="button" class="chip-filtro" data-modo-prodotti="aggiunta" aria-pressed="${modoProdotti === "aggiunta"}">in aggiunta al pasto previsto</button>
-            <button type="button" class="chip-filtro" data-modo-prodotti="sostituzione" aria-pressed="${modoProdotti === "sostituzione"}">al posto del pasto previsto</button>
-          </div>` : ""}
+          <div class="scelta-modo" role="radiogroup" aria-label="Come hai mangiato i prodotti">
+            <button type="button" class="scelta-modo__opzione" role="radio" data-modo-prodotti="aggiunta" aria-checked="${modoProdotti === "aggiunta"}">➕ In aggiunta al pasto previsto</button>
+            <button type="button" class="scelta-modo__opzione" role="radio" data-modo-prodotti="sostituzione" aria-checked="${modoProdotti === "sostituzione"}">↺ Al posto del pasto previsto</button>
+          </div>
+          ${modoProdotti ? "" : `<small class="stato-pasto__avviso">Scegli una delle due risposte per poter salvare.</small>`}` : ""}
           ${prodotti.length < M.MAX_ETICHETTE ? `
             <button type="button" class="btn btn--ghost" id="etichetta-foto"${leggendo ? " disabled" : ""}>${leggendo ? `<span class="import-attesa"></span> Sto leggendo la tabella…` : prodotti.length ? "📷 Fotografa un'altra tabella" : "📷 Fotografa la tabella di dichiarazione nutrizionale"}</button>
             ${leggendo ? "" : `<button type="button" class="link-btn etichette-pasto__galleria" id="etichetta-galleria">oppure scegli una foto dalla galleria</button>`}

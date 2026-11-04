@@ -2395,3 +2395,13 @@ body.con-informativa { overflow: hidden; }
 .etichette-pasto__azioni .btn { flex: 1; margin: 0; }
 .stat-nota-pasto__prodotti { font-size: 12.5px; color: var(--ink-faint); }
 .etichette-pasto__galleria { display: block; width: 100%; margin: 6px 0 2px; text-align: center; font-size: 13px; }
+
+/* ---- Scelta «in aggiunta / al posto» per i prodotti dalla tabella (v120) ---- */
+.scelta-modo { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 6px; }
+.scelta-modo__opzione {
+  font-family: var(--font-body); font-size: 14px; font-weight: 600; text-align: left;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border: 1.5px solid var(--accent); border-radius: 10px; padding: 11px 14px; cursor: pointer;
+}
+.scelta-modo__opzione[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); }
+.scelta-modo__opzione:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
