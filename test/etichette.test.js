@@ -86,4 +86,13 @@ ok(T.impattoSullaGiornata("lieve", prev, M.pulisciStima({ carboidrati: 80, prote
 ok(T.impattoSullaGiornata("lieve", prev, null, 1500) === "lieve", "senza numeri resta l'AI");
 ok(T.impattoSullaGiornata("lieve", prev, prev, 0) === "lieve", "senza calorie del giorno resta l'AI");
 
+// v121: sostituzione di un singolo alimento (tacchino 60 g al posto del grana 20 g)
+const pranzo = M.pulisciStima({ carboidrati: 60, proteine: 18, grassi: 20, affidabilita: "media" });
+const scambio = T.macroEffettiviDaRisposta({ quotaPiano: 1, macroTolti: { carboidrati: 0, proteine: 7, grassi: 6, affidabilita: "media" }, macroAggiunti: { carboidrati: 0, proteine: 14, grassi: 1, affidabilita: "media" } }, pranzo, null, "diverso");
+ok(scambio.carboidrati === 60 && scambio.proteine === 25 && scambio.grassi === 15, "carboidrati invariati, proteine +7, grassi -5: " + JSON.stringify(scambio));
+const meno = T.macroEffettiviDaRisposta({ quotaPiano: 1, macroTolti: { carboidrati: 90, proteine: 0, grassi: 0, affidabilita: "media" } }, pranzo, null, "diverso");
+ok(meno.carboidrati === 0, "mai sotto zero");
+const saltatoTolti = T.macroEffettiviDaRisposta({ quotaPiano: 1, macroTolti: { carboidrati: 10, proteine: 0, grassi: 0, affidabilita: "media" } }, pranzo, null, "saltato");
+ok(saltatoTolti.kcal === 0, "saltato: i tolti non contano");
+
 console.log("OK: " + n + " verifiche superate");

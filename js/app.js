@@ -793,7 +793,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v120";
+  const VERSIONE_APP = "v121";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -3305,7 +3305,7 @@
         <p class="stato-pasto__domanda">Com'è andata? <span>(facoltativo)</span></p>
         <div class="ricette-filtri">${elenco.map((m) => `<button type="button" class="chip-filtro" data-motivo="${m}" aria-pressed="${motivo === m}">${escapeHTML(S.MOTIVI[m])}</button>`).join("")}</div>
         <label class="editor-campo stato-pasto__nota">Vuoi aggiungere un dettaglio? <span>(facoltativo)</span>
-          <textarea id="stato-pasto-nota" rows="2" maxlength="${S.MAX_NOTA}" placeholder="${escapeHTML(S.SUGGERIMENTI_NOTA[motivo] || (scelta === "diverso" ? "Cosa hai mangiato al posto del pasto previsto?" : "Es. riso al posto della pasta, ho lasciato metà del secondo…"))}">${escapeHTML(nota)}</textarea>
+          <textarea id="stato-pasto-nota" rows="2" maxlength="${S.MAX_NOTA}" placeholder="${escapeHTML(S.SUGGERIMENTI_NOTA[motivo] || (scelta === "diverso" ? "Cosa hai mangiato di diverso? Es. tacchino al posto del grana" : "Es. riso al posto della pasta, ho lasciato metà del secondo…"))}">${escapeHTML(nota)}</textarea>
           <span class="stato-pasto__sotto">${DETTATURA_DISPONIBILE ? `<button type="button" class="btn-detta" id="stato-pasto-detta" aria-label="Detta la nota a voce">🎤 Detta</button>` : APP_NATIVA ? `<span class="stato-pasto__aiuto">Per dettare usa il 🎤 della tastiera</span>` : ""}<small id="stato-pasto-conta">${nota.length}/${S.MAX_NOTA}</small></span>
           <small class="stato-pasto__avviso">Scrivi solo cosa hai mangiato e perché: niente nomi, telefoni o indirizzi.${CONSENSO_AI ? " La nota può essere letta dall'intelligenza artificiale per il riscontro." : ""}</small>
         </label>
