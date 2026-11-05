@@ -129,6 +129,11 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   store["codiciStudio/WXYZ23"] = { professionistaUid: "altro" };
   await f.collegaNutrizionista({ auth: { uid: "pa" }, data: { codice: "WXYZ23" } }).catch(() => {});
   ok(!("piani/p1/noteMisure/m2" in store), "nuovo nutrizionista: i dati del precedente non passano");
+  const copie = Object.keys(store).filter((k) => /^custodiaRestituzioni\/[^/]+$/.test(k));
+  ok(copie.length === 1 && store[copie[0]].exProfessionistaUid === "prof" && store[copie[0]].documenti >= 1, "copia separata per la restituzione al precedente");
+  ok(Object.keys(store).some((k) => k.startsWith(copie[0] + "/noteMisure/m2")), "la copia contiene le note riservate");
+  const scadenzaCopia = store[copie[0]].entro.toMillis();
+  ok(scadenzaCopia > ORA && scadenzaCopia <= ORA + 60 * G, "scadenza della copia entro i 60 giorni dallo scollegamento");
 
   // --- Scollegati prima della v114: cancellazione programmata dalla data di scollegamento ---
   store = {
@@ -153,10 +158,13 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
     "piani/pa": { pazienteUid: "auto", professionistaUid: "prof", gestore: "professionista" },
     "piani/pa/analisi/a": { testo: "analisi" },
     "users/senza": { ruolo: "professionista", email: "s@x.it", licenza: { stato: "scaduta", scadenza: ts(ORA - 400 * G) } },
+    "users/sceglie": { ruolo: "paziente", nome: "Dario", email: "dario@x.it", professionistaUid: "prof" },
+    "piani/ps": { pazienteUid: "sceglie", professionistaUid: "prof", gestore: "professionista" },
+    "piani/ps/noteMisure/x": { testo: "nota" },
   };
   await giorni(0);
   let m = email();
-  ok(m.length === 1 && m[0].to === "rossi@x.it" && /2 pazienti/.test(m[0].message.text), "avviso al nutrizionista con i pazienti e la data");
+  ok(m.length === 1 && m[0].to === "rossi@x.it" && /3 pazienti/.test(m[0].message.text), "avviso al nutrizionista con i pazienti e la data");
   ok(!store["users/senza"].custodia, "nutrizionista senza pazienti: nessun avviso");
   const inizio = ORA;
   await giorni(29); ok(email().length === 1, "nessun'altra email prima dei 30 giorni");
@@ -170,28 +178,50 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   ok(store["users/prof"].custodia.cessata.toMillis() === ripartenza, "nuova cessazione, termini da oggi");
   await giorni(60);
   m = email().filter((e) => e.to !== "rossi@x.it");
-  ok(m.length >= 2 && m.some((e) => e.to === "bruno@x.it" && /accettare i Termini/.test(e.message.text)) && m.some((e) => e.to === "carla@x.it" && /restano tuoi/.test(e.message.text)), "avviso ai pazienti a 60 giorni, testi diversi");
+  ok(m.length >= 2 && m.some((e) => e.to === "bruno@x.it" && /accetta i Termini/.test(e.message.text)) && m.some((e) => e.to === "carla@x.it" && /restano tuoi/.test(e.message.text)), "avviso ai pazienti a 60 giorni, testi diversi");
   ok("piani/pc/noteMisure/n" in store, "a 60 giorni nulla di cancellato");
+  ok(store["users/creato"].sceltaFineLicenza && store["users/creato"].sceltaFineLicenza.entro.toMillis() === ripartenza + 90 * G, "paziente creato: scelta offerta durante la chiusura, fino ai 90 giorni");
+  ok(!store["users/auto"].sceltaFineLicenza, "autonomo: nessuna scelta da fare");
+  // --- Conferma durante la chiusura: continua da solo ---
+  await assert.rejects(f.confermaContinuaDaSolo({ auth: { uid: "sceglie" }, data: { consensi: { maggiorenne: true } } }), /consensi-mancanti/); n++;
+  await f.confermaContinuaDaSolo({ auth: { uid: "sceglie" }, data: { consensi: { maggiorenne: true, salute: true, ai: true } } });
+  ok(store["users/sceglie"].autonomo === true && !store["users/sceglie"].sceltaFineLicenza && store["users/sceglie"].consensi.ai.si === true && store["users/sceglie"].consensi.ai.versione === "2026-11-05", "sceglie di continuare: autonomo con i suoi consensi");
+  ok(Object.keys(store).filter((k) => k.startsWith("users/sceglie/consensiStorico/")).length === 3, "consensi nello storico");
+  ok(T.consensoAINegato(store["users/sceglie"]) === false, "AI disponibile con il consenso nuovo");
   await giorni(30);
-  ok(store["piani/pc"].professionistaUid === null && store["piani/pa"].professionistaUid === null, "a 90 giorni pazienti scollegati");
-  ok(!("piani/pc/noteMisure/n" in store) && !("piani/pa/analisi/a" in store), "dati del nutrizionista cancellati");
-  ok(store["users/creato"].confermaRichiesta && store["users/creato"].confermaRichiesta.entro.toMillis() === ORA + 90 * G, "paziente creato: conferma richiesta entro 90 giorni");
-  ok(!store["users/auto"].confermaRichiesta && !store["users/auto"].professionistaUid, "paziente autonomo: solo scollegato");
-  ok(T.consensoAINegato(store["users/creato"]) === true, "AI bloccata finché non conferma");
+  ok(!("users/creato" in store) && !("piani/pc" in store), "a 90 giorni il paziente creato che non ha scelto viene cancellato");
+  ok(store["piani/pa"].professionistaUid === null && !("piani/pa/analisi/a" in store), "autonomo: scollegato e dati del nutrizionista cancellati");
+  ok(store["users/sceglie"] && store["users/sceglie"].autonomo === true && !store["users/sceglie"].professionistaUid && !store["users/sceglie"].sceltaFineLicenza, "chi ha scelto di continuare resta, scollegato");
+  ok(store["piani/ps"] && store["piani/ps"].professionistaUid === null && !("piani/ps/noteMisure/x" in store), "il suo piano resta, senza i dati del nutrizionista");
 
-  // --- Conferma: continua da solo ---
-  await assert.rejects(f.confermaContinuaDaSolo({ auth: { uid: "creato" }, data: { consensi: { maggiorenne: true } } }), /consensi-mancanti/); n++;
-  await f.confermaContinuaDaSolo({ auth: { uid: "creato" }, data: { consensi: { maggiorenne: true, salute: true, ai: true } } });
-  ok(store["users/creato"].autonomo === true && !store["users/creato"].confermaRichiesta && store["users/creato"].consensi.ai.si === true, "diventa autonomo con i suoi consensi");
-  ok(Object.keys(store).filter((k) => k.startsWith("users/creato/consensiStorico/")).length === 3, "consensi nello storico");
-  ok(T.consensoAINegato(store["users/creato"]) === false, "AI di nuovo disponibile");
+  // --- Licenza rinnovata durante la chiusura: la scelta offerta si toglie ---
+  store["users/prof2"] = { ruolo: "professionista", email: "p2@x.it", licenza: { stato: "attiva", maxPazienti: 10, scadenza: ts(ORA + 30 * G) }, custodia: { cessata: ts(ORA - 61 * G), avviso: ts(ORA), pazienti: ts(ORA) } };
+  store["users/inattesa"] = { ruolo: "paziente", professionistaUid: "prof2", sceltaFineLicenza: { da: "prof2", entro: ts(ORA + 29 * G) } };
+  await giorni(0);
+  ok(!store["users/inattesa"].sceltaFineLicenza && !store["users/prof2"].custodia, "licenza rinnovata: niente più scelta né custodia");
 
-  // --- Senza conferma entro 90 giorni: account cancellato ---
+  // --- Copie per la restituzione scadute ---
+  store["custodiaRestituzioni/r1"] = { exProfessionistaUid: "x", entro: ts(ORA - G) };
+  store["custodiaRestituzioni/r1/noteMisure/a"] = { testo: "t" };
+  await giorni(0);
+  ok(!("custodiaRestituzioni/r1" in store) && !("custodiaRestituzioni/r1/noteMisure/a" in store), "copia scaduta cancellata");
+
+  // --- Revoca del consenso AI: riscontri e analisi cancellati ---
+  store["users/rev"] = { ruolo: "paziente", autonomo: true, consensi: { ai: { si: true, versione: "2026-11-05" } } };
+  store["users/rev/riscontri/2026-11-05_pranzo"] = { impatto: "lieve" };
+  store["piani/prev"] = { pazienteUid: "rev", professionistaUid: null };
+  store["piani/prev/analisi/a1"] = { testo: "analisi" };
+  store["piani/prev/misure/m1"] = { peso: 70 };
+  const esitoRevoca = await f.aggiornaConsensoAI({ auth: { uid: "rev" }, data: { si: false } });
+  ok(esitoRevoca.cancellati === true && !("users/rev/riscontri/2026-11-05_pranzo" in store) && !("piani/prev/analisi/a1" in store), "revoca: riscontri e analisi cancellati");
+  ok("piani/prev/misure/m1" in store && store["users/rev"].consensi.ai.si === false, "revoca: il resto resta, scelta registrata");
+
+  // --- Senza conferma entro 90 giorni (vecchie richieste): account cancellato ---
   store["users/zeta"] = { ruolo: "paziente", nome: "Zeta", confermaRichiesta: { motivo: "fine-licenza", entro: ts(ORA + 90 * G) } };
   store["piani/pz"] = { pazienteUid: "zeta", professionistaUid: null, gestore: "paziente" };
   await giorni(89); ok("users/zeta" in store, "a 89 giorni c'è ancora");
   await giorni(1); ok(!("users/zeta" in store) && !("piani/pz" in store), "a 90 giorni account e piano cancellati");
-  ok("users/creato" in store, "chi ha confermato resta");
+  ok("users/sceglie" in store, "chi ha confermato resta");
 
   // --- Codici di invito scaduti ---
   store = {

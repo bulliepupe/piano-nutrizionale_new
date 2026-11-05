@@ -2405,3 +2405,5 @@ body.con-informativa { overflow: hidden; }
 }
 .scelta-modo__opzione[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); }
 .scelta-modo__opzione:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.consenso-dettagli { margin-top: 4px; font-size: 12px; line-height: 1.45; color: var(--ink-soft, var(--ink)); }
+.consenso-dettagli summary { cursor: pointer; font-weight: 600; color: var(--accent); }

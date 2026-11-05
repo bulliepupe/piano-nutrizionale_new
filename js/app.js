@@ -417,7 +417,7 @@
   const URL_INFORMATIVA = "https://ilmiopiano.it/privacy.html";
 
   function mostraInformativaPrimoAccesso(utenteDati, ruolo) {
-    if (!utenteDati || utenteDati.confermaRichiesta) return;
+    if (!utenteDati || utenteDati.confermaRichiesta || document.getElementById("continua-da-solo")) return;
     if (utenteDati.informativaVersione === VERSIONE_INFORMATIVA) { if (ruolo === "paziente") setTimeout(chiediSceltaAIAvvio, 1500); return; }
     if (document.getElementById("informativa-primo-accesso")) return;
     const familiare = ruolo === "familiare";
@@ -464,6 +464,21 @@
   // ---------------------------------------------------------------------
   let SCELTA_AI_REGISTRATA = true;
   let SCELTA_AI_CHIESTA = false;
+  let SCELTA_AI_VECCHIA = false;      // consenso dato con il testo precedente
+  let COLLEGATO_NUTRIZIONISTA = false;
+  // Testo informativo e formula della scelta AI (Cravero, nota del 3/11/2026,
+  // punto 10). Versione: le scelte precedenti non valgono più (server: VERSIONE_AI).
+  const VERSIONE_AI = "2026-11-05";
+  const TESTO_INFO_AI = "Le funzioni AI usano Claude di Anthropic, con elaborazione negli Stati Uniti. A seconda della funzione vengono inviati il piano, i pasti e le note, i riepiloghi degli allenamenti, i dati utili all’analisi dell’andamento e le immagini che scegli di caricare. Per le etichette fotografa soltanto la tabella nutrizionale. Non aggiungiamo alle richieste nome, email o identificativo del tuo account; testi e immagini possono però contenere informazioni personali o di salute. I controlli di oscuramento non eliminano ogni riferimento: verifica sempre ciò che invii. Puoi usare le altre funzioni dell’app senza attivare l’AI e revocare la scelta in Impostazioni, Privacy. L’informativa descrive finalità, titolari, conservazione e trasferimenti.";
+  const FORMULA_AI = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per le funzioni di intelligenza artificiale descritte qui sopra (lettura del piano, riscontro sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto, analisi dell’andamento per il mio nutrizionista), con elaborazione da parte di Anthropic negli Stati Uniti.";
+  function titolareAITesto() {
+    return COLLEGATO_NUTRIZIONISTA
+      ? "Mentre ti segue il tuo nutrizionista, per queste funzioni il titolare dei dati è il nutrizionista e Bulli &amp; Pupe S.r.l. li tratta per suo conto."
+      : "Per queste funzioni il titolare dei dati è Bulli &amp; Pupe S.r.l.";
+  }
+  function infoAIHTML() {
+    return `<p class="sheet__nota">${TESTO_INFO_AI} ${titolareAITesto()} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>`;
+  }
   function chiediSceltaAIAvvio() {
     if (RUOLO !== "paziente" || SCELTA_AI_REGISTRATA || SCELTA_AI_CHIESTA) return;
     if (document.getElementById("informativa-primo-accesso") || document.getElementById("continua-da-solo")) return;
@@ -471,8 +486,9 @@
     SCELTA_AI_CHIESTA = true;
     apriSheet(`
       <h2 class="sheet__titolo">Funzioni di intelligenza artificiale</h2>
-      <p class="sheet__nota">Alcune funzioni dell'app usano l'intelligenza artificiale di Anthropic negli Stati Uniti: il riscontro sui pasti non come da piano, la lettura della tabella nutrizionale, i macronutrienti e le stime. Ricevono i testi del piano e dei pasti e le foto che scegli di scattare, senza nome né email. Senza il tuo consenso l'app funziona, senza queste funzioni. Puoi cambiare idea quando vuoi da Impostazioni → Privacy.</p>
-      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-ai"> <span>Acconsento all'invio dei testi del mio piano e dei pasti, senza nome né email, ad Anthropic negli Stati Uniti per le funzioni di intelligenza artificiale (riscontri, macronutrienti, stime). Senza questo consenso l'app funziona, senza le funzioni AI.</span></label>
+      ${SCELTA_AI_VECCHIA ? `<p class="sheet__nota"><b>Abbiamo aggiornato le informazioni sulle funzioni AI</b>, che ora leggono anche la tabella nutrizionale dei prodotti: per continuare a usarle serve una nuova scelta.</p>` : ""}
+      ${infoAIHTML()}
+      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-ai"> <span>${FORMULA_AI}</span></label>
       <button type="button" class="btn" id="btn-avvio-ai-si" disabled>Attiva le funzioni AI</button>
       <button type="button" class="btn btn--ghost" id="btn-avvio-ai-no">No, grazie</button>`);
     const casella = document.getElementById("avvio-consenso-ai");
@@ -503,10 +519,15 @@
   // Bulli e Pupe, oppure eliminare l'account. Senza conferma entro la data
   // indicata, il server cancella l'account.
   // ---------------------------------------------------------------------
+  let CONTINUA_RIMANDATO = false;
   function mostraContinuaDaSolo(utenteDati) {
-    if (!utenteDati || !utenteDati.confermaRichiesta || document.getElementById("continua-da-solo")) return;
-    const entro = utenteDati.confermaRichiesta.entro && typeof utenteDati.confermaRichiesta.entro.toDate === "function"
-      ? utenteDati.confermaRichiesta.entro.toDate().toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" }) : "";
+    if (!utenteDati || document.getElementById("continua-da-solo")) return;
+    // v122: la scelta si offre durante la chiusura (sceltaFineLicenza); confermaRichiesta resta per i casi precedenti
+    const richiesta = utenteDati.confermaRichiesta || utenteDati.sceltaFineLicenza;
+    if (!richiesta || (CONTINUA_RIMANDATO && !utenteDati.confermaRichiesta)) return;
+    const durante = !utenteDati.confermaRichiesta;
+    const entro = richiesta.entro && typeof richiesta.entro.toDate === "function"
+      ? richiesta.entro.toDate().toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" }) : "";
     const box = document.createElement("div");
     box.id = "continua-da-solo";
     box.className = "informativa-primo";
@@ -515,17 +536,18 @@
     box.setAttribute("aria-labelledby", "continua-titolo");
     box.innerHTML = `
       <div class="informativa-primo__carta">
-        <h2 id="continua-titolo">Il tuo nutrizionista non usa più Il mio Piano</h2>
-        <p class="informativa-primo__intro">Puoi continuare a usare l'app da solo: il tuo piano, i pasti segnati, il peso e le misure restano qui. Le note e le analisi del nutrizionista sono state cancellate.</p>
+        <h2 id="continua-titolo">${durante ? `Il tuo nutrizionista non userà più Il mio Piano${entro ? ` dal ${escapeHTML(entro)}` : ""}` : "Il tuo nutrizionista non usa più Il mio Piano"}</h2>
+        <p class="informativa-primo__intro">Puoi continuare a usare l'app da solo: il tuo piano, i pasti segnati, il peso e le misure restano qui. Le note riservate e le analisi del nutrizionista non passano a te.</p>
         <ul>
-          <li>Da ora i tuoi dati sono trattati da <strong>Bulli e Pupe S.r.l.</strong>, che gestisce l'app ed è titolare di questi dati.</li>
-          <li>Per continuare servono i consensi qui sotto${entro ? `, entro il <strong>${escapeHTML(entro)}</strong>` : ""}. Se non continui, il tuo account verrà cancellato.</li>
+          <li>${durante ? `Dal ${escapeHTML(entro)} i tuoi dati li tratterà <strong>Bulli &amp; Pupe S.r.l.</strong>, che gestisce l'app e ne sarà titolare.` : `Da ora i tuoi dati sono trattati da <strong>Bulli &amp; Pupe S.r.l.</strong>, che gestisce l'app ed è titolare di questi dati.`}</li>
+          <li>Per continuare servono i consensi qui sotto${entro ? `, entro il <strong>${escapeHTML(entro)}</strong>` : ""}. ${durante ? "Se non scegli entro quella data, quel giorno il tuo account e i tuoi dati verranno cancellati." : "Se non continui, il tuo account verrà cancellato."}</li>
         </ul>
         <label class="auth-check"><input type="checkbox" id="cds-maggiorenne"> <span>Ho almeno 18 anni, accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" class="link-inline">Termini di servizio</a> e ho letto l'<a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa privacy</a></span></label>
         <label class="auth-check"><input type="checkbox" id="cds-salute"> <span>Acconsento al trattamento dei miei dati relativi alla salute (piano alimentare, pasti, peso, misure, allenamenti) per usare Il mio Piano. Posso revocare il consenso in qualsiasi momento.</span></label>
-        <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> Acconsento all'invio dei testi del mio piano e dei pasti, senza nome né email, ad Anthropic negli Stati Uniti per le funzioni di intelligenza artificiale (riscontri, macronutrienti, stime). Senza questo consenso l'app funziona, senza le funzioni AI.</span></label>
+        <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> ${FORMULA_AI} <span class="stato-pasto__avviso">${TESTO_INFO_AI}</span></span></label>
         <p class="auth-error" id="cds-errore" hidden></p>
         <button type="button" class="btn" id="cds-continua" disabled>Continuo da solo</button>
+        ${durante ? `<button type="button" class="btn btn--ghost" id="cds-dopo">Decido più tardi</button>` : ""}
         <button type="button" class="btn btn--ghost btn--pericolo" id="cds-elimina">Elimina il mio account</button>
       </div>`;
     document.body.appendChild(box);
@@ -547,6 +569,13 @@
         errore.textContent = "Non salvato: controlla la connessione e riprova."; errore.hidden = false;
         continua.textContent = "Continuo da solo"; aggiorna();
       }
+    });
+    const dopo = box.querySelector("#cds-dopo");
+    if (dopo) dopo.addEventListener("click", () => {
+      CONTINUA_RIMANDATO = true;
+      box.remove();
+      document.body.classList.remove("con-informativa");
+      mostraToast(`Va bene: te lo richiediamo al prossimo accesso. Puoi scegliere fino al ${entro}.`, 5000);
     });
     box.querySelector("#cds-elimina").addEventListener("click", async () => {
       if (!window.confirm("Eliminare definitivamente il tuo account? Vengono cancellati il piano, i pasti segnati, le note, le misure e i dati di accesso.")) return;
@@ -576,8 +605,12 @@
     // Senza una scelta registrata le funzioni AI restano spente per tutti
     // (dalla v114 anche per i pazienti del nutrizionista): si chiede all'avvio.
     const sceltaAI = utenteDati.consensi && utenteDati.consensi.ai;
-    SCELTA_AI_REGISTRATA = !!sceltaAI;
-    CONSENSO_AI = !utenteDati.confermaRichiesta && !!sceltaAI && sceltaAI.si === true;
+    // v122: vale solo la scelta data con il testo informativo nuovo (un rifiuto resta valido)
+    const sceltaValida = !!sceltaAI && (sceltaAI.si === false || String(sceltaAI.versione || "") >= VERSIONE_AI);
+    SCELTA_AI_REGISTRATA = sceltaValida;
+    SCELTA_AI_VECCHIA = !!sceltaAI && !sceltaValida;
+    COLLEGATO_NUTRIZIONISTA = !!utenteDati.professionistaUid;
+    CONSENSO_AI = !utenteDati.confermaRichiesta && sceltaValida && sceltaAI.si === true;
     mostraSchermata("paziente");
     aggiornaPremium().then(() => caricaReseAI());
     if (!avviaPaziente.collegato) {
@@ -793,7 +826,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v121";
+  const VERSIONE_APP = "v122";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -1354,8 +1387,8 @@
     return `
       <section class="settings-section" id="sezione-privacy">
         <h2>Privacy</h2>
-        <p class="hint">Riscontri sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto e lettura del piano da PDF usano l'intelligenza artificiale di Anthropic (Stati Uniti): ricevono i testi del piano e dei pasti e le foto che scegli di inviare, senza nome né email.</p>
-        <label class="check-riga"><input type="checkbox" id="consenso-ai"${CONSENSO_AI ? " checked" : ""}> <span>Acconsento all'uso delle funzioni di intelligenza artificiale</span></label>
+        <p class="hint">${TESTO_INFO_AI} ${titolareAITesto()}</p>
+        <label class="check-riga"><input type="checkbox" id="consenso-ai"${CONSENSO_AI ? " checked" : ""}> <span>${FORMULA_AI}</span></label>
         <p class="stat-nota">Senza questo consenso l'app funziona, senza le funzioni AI. Puoi cambiarlo quando vuoi.</p>
         <button type="button" class="btn btn--ghost" id="btn-salva-consenso-ai">Salva</button>
         <p class="hint" style="margin-top:12px;">Il consenso ai dati sulla salute serve per usare l'app: per revocarlo elimina l'account, qui sotto. Tutti i dettagli sono nell'<a href="https://ilmiopiano.it/privacy.html" target="_blank" rel="noopener" data-link="privacy">Informativa privacy</a>.</p>
@@ -1373,7 +1406,9 @@
         await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si });
         CONSENSO_AI = si;
         SCELTA_AI_REGISTRATA = true;
-        mostraToast(si ? "Funzioni AI attivate" : "Funzioni AI disattivate: non inviamo più nulla ad Anthropic");
+        SCELTA_AI_VECCHIA = false;
+        if (!si) { RISCONTRI.perPasto = {}; if (typeof render === "function") render(); }
+        mostraToast(si ? "Funzioni AI attivate" : "Funzioni AI disattivate: non inviamo più nulla ad Anthropic e abbiamo cancellato riscontri e analisi", 5000);
       } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
       finally { btn.disabled = false; }
     });
@@ -2092,8 +2127,8 @@
   function chiediConsensoAI(poi, alternativa) {
     apriSheet(`
       <h2 class="sheet__titolo">Leggere il piano con l'intelligenza artificiale</h2>
-      <p class="sheet__nota">Per leggere il PDF o le foto, e per riscontri, macronutrienti e stime, l'app usa l'intelligenza artificiale di Anthropic negli Stati Uniti. Riceve solo le pagine e i testi del piano e dei pasti, mai il tuo nome né la tua email; prima dell'invio vedi e copri i dati personali.</p>
-      <label class="check-riga rep-consenso"><input type="checkbox" id="jit-consenso-ai"> <span>Acconsento all'invio dei testi del mio piano e dei pasti, senza nome né email, ad Anthropic negli Stati Uniti per le funzioni di intelligenza artificiale. Posso revocare il consenso in Impostazioni → Privacy.</span></label>
+      ${infoAIHTML()}
+      <label class="check-riga rep-consenso"><input type="checkbox" id="jit-consenso-ai"> <span>${FORMULA_AI}</span></label>
       <button type="button" class="btn" id="btn-jit-attiva" disabled>Attiva e continua</button>
       ${alternativa ? `<button type="button" class="btn btn--ghost" id="btn-jit-mano">Compilo il piano a mano</button>` : ""}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
@@ -3476,7 +3511,7 @@
             ${leggendo ? "" : `<button type="button" class="link-btn etichette-pasto__galleria" id="etichetta-galleria">oppure scegli una foto dalla galleria</button>`}
             <input type="file" id="etichetta-file" accept="image/*" capture="environment" hidden>
             <input type="file" id="etichetta-file-galleria" accept="image/*" hidden>` : ""}
-          <small class="stato-pasto__avviso">Inquadra solo la tabella: la foto viene letta dall'intelligenza artificiale e non viene conservata.</small>
+          <small class="stato-pasto__avviso">Inquadra soltanto la tabella nutrizionale, senza persone, volti o documenti: la foto viene letta dall’intelligenza artificiale di Anthropic e l’app non la conserva.</small>
         </div>`;
       box.querySelectorAll("[data-modo-prodotti]").forEach((b) => b.addEventListener("click", () => {
         modoProdotti = b.dataset.modoProdotti;

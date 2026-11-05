@@ -452,6 +452,32 @@ async function cancellaDatiProfessionistaDalPiano(pianoRef) {
   await pianoRef.update({ feedbackAI: FieldValue.delete(), datiProfessionistaEntro: FieldValue.delete(), exProfessionistaUid: FieldValue.delete() });
 }
 
+/**
+ * Cambio di nutrizionista: i dati del precedente (note riservate, analisi,
+ * registro dei report, impostazioni del riscontro) passano in una copia
+ * separata in /custodiaRestituzioni, che l'app non può leggere, per la
+ * restituzione al precedente; la custodia notturna la cancella alla scadenza
+ * dei 60 giorni dallo scollegamento. Poi si tolgono dal piano.
+ */
+async function mettiInCustodiaDatiProfessionista(pianoDoc, adesso) {
+  const d = pianoDoc.data() || {};
+  const entro = msDi(d.datiProfessionistaEntro) || (adesso + GIORNI_DATI_DOPO_SCOLLEGAMENTO * GIORNO_MS);
+  const ref = db.collection("custodiaRestituzioni").doc();
+  let copiati = 0;
+  for (const nome of SOTTORACCOLTE_PROFESSIONISTA) {
+    const snap = await pianoDoc.ref.collection(nome).get();
+    for (const doc of snap.docs) { await ref.collection(nome).doc(doc.id).set(doc.data()); copiati++; }
+  }
+  if (copiati || d.feedbackAI) {
+    await ref.set({
+      exProfessionistaUid: d.exProfessionistaUid || null, pianoId: pianoDoc.id, pazienteUid: d.pazienteUid || null,
+      feedbackAI: d.feedbackAI || null, documenti: copiati, creato: FieldValue.serverTimestamp(), entro: Timestamp.fromMillis(entro),
+    });
+  }
+  await cancellaDatiProfessionistaDalPiano(pianoDoc.ref);
+  return copiati;
+}
+
 const dataIt = (ms) => new Date(ms).toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Rome" });
 const msDi = (t) => (t && typeof t.toMillis === "function" ? t.toMillis() : null);
 
@@ -476,23 +502,26 @@ async function chiudiPazienteFineLicenza(pianoDoc, profUid, adesso) {
   const utenteRef = db.collection("users").doc(p.pazienteUid);
   const utente = (await utenteRef.get()).data();
   if (!utente) { await db.recursiveDelete(pianoDoc.ref); return; }
+  // v122 (Cravero, 3/11): la scelta di continuare da soli si offre DURANTE la
+  // chiusura. Chi era stato creato dal nutrizionista e non ha scelto entro la
+  // scadenza chiude il rapporto: account e dati vengono cancellati.
+  if (!utente.autonomo) { await cancellaDatiPaziente(p.pazienteUid, pianoDoc.ref); return "cancellato"; }
   await cancellaDatiProfessionistaDalPiano(pianoDoc.ref);
   await pianoDoc.ref.update({ professionistaUid: null, gestore: "paziente", contattiNutrizionista: FieldValue.delete(), aggiornato: FieldValue.serverTimestamp() });
-  const agg = { professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp(), datiProfessionistaCancellati: FieldValue.serverTimestamp() };
-  if (!utente.autonomo) agg.confermaRichiesta = { motivo: "fine-licenza", da: profUid, entro: Timestamp.fromMillis(adesso + GIORNI_CONFERMA_PAZIENTE * GIORNO_MS) };
-  await utenteRef.update(agg);
+  await utenteRef.update({ professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp(), datiProfessionistaCancellati: FieldValue.serverTimestamp(), sceltaFineLicenza: FieldValue.delete() });
+  return "scollegato";
 }
 
 /** Testi delle email della custodia. */
 function emailCustodia(tipo, d) {
-  const firma = "\n\nIl mio Piano - Bulli e Pupe S.r.l.\ninfo@ilmiopiano.it";
+  const firma = "\n\nIl mio Piano - Bulli & Pupe S.r.l.\ninfo@ilmiopiano.it";
   if (tipo === "avviso" || tipo === "promemoria") {
     return {
       subject: tipo === "avviso" ? "Il mio Piano: la tua licenza non è più attiva" : "Il mio Piano: promemoria sui dati dei tuoi pazienti",
       text: `Buongiorno ${d.nome || ""},\n\n${tipo === "avviso" ? "la tua licenza di Il mio Piano non è più attiva." : "ti ricordiamo che la tua licenza di Il mio Piano non è più attiva."} ` +
         `I dati dei tuoi ${d.pazienti} pazienti restano conservati fino al ${d.chiusura}. In quella data:\n` +
         "- note riservate, analisi dell'andamento e registro dei report verranno cancellati;\n" +
-        "- i pazienti verranno scollegati: chi si era registrato da solo continua con il proprio account, chi era stato creato da te potrà continuare da solo accettando le nostre condizioni, altrimenti il suo account verrà cancellato.\n\n" +
+        "- i pazienti verranno scollegati: chi si era registrato da solo continua con il proprio account; chi era stato creato da te potrà scegliere, prima di quella data, se continuare da solo accettando le nostre condizioni, altrimenti il suo account verrà cancellato.\n\n" +
         `Se rinnovi la licenza prima del ${d.chiusura}, non cambia nulla. Se ti serve una copia dei dati, scrivi a info@ilmiopiano.it entro quella data: te la inviamo entro 15 giorni.` + firma,
     };
   }
@@ -501,7 +530,7 @@ function emailCustodia(tipo, d) {
     text: `Buongiorno ${d.nome || ""},\n\nil tuo nutrizionista non usa più Il mio Piano. Dal ${d.chiusura} non sarà più collegato al tuo account e non vedrà più il tuo andamento.\n\n` +
       (d.autonomo
         ? "Il tuo account e il tuo piano restano tuoi e puoi continuare a usare l'app come prima."
-        : `Potrai continuare a usare l'app da solo, con il tuo piano e il tuo diario: al primo accesso dopo il ${d.chiusura} ti chiederemo di accettare i Termini di servizio e l'informativa privacy di Bulli e Pupe S.r.l., che da quel momento gestirà i tuoi dati. Se non lo fai entro 90 giorni, il tuo account verrà cancellato.`) +
+        : `Puoi continuare a usare l'app da solo, con il tuo piano e il tuo diario: apri l'app e, entro il ${d.chiusura}, accetta i Termini di servizio e l'informativa privacy di Bulli & Pupe S.r.l., che dal ${d.chiusura} gestirà i tuoi dati. Se non lo fai entro quella data, il ${d.chiusura} il tuo account e i tuoi dati verranno cancellati.`) +
       "\n\nPer domande scrivi a info@ilmiopiano.it." + firma,
   };
 }
@@ -539,7 +568,12 @@ async function eseguiCustodia(adesso) {
     const c = p.custodia || null;
     if (!p.licenza) continue;
     if (statoLicenzaServer(p.licenza, adesso).attiva) {
-      if (c) await prof.ref.update({ custodia: FieldValue.delete() });
+      if (c) {
+        await prof.ref.update({ custodia: FieldValue.delete() });
+        // licenza rinnovata: la scelta offerta ai pazienti non serve più
+        const inScelta = await db.collection("users").where("sceltaFineLicenza.da", "==", prof.id).get();
+        for (const u of inScelta.docs) await u.ref.update({ sceltaFineLicenza: FieldValue.delete() });
+      }
       continue;
     }
     if (c && c.chiusa) continue;
@@ -562,11 +596,18 @@ async function eseguiCustodia(adesso) {
           const u = pz.pazienteUid ? (await db.collection("users").doc(pz.pazienteUid).get()).data() : null;
           const email = (u && u.email) || pz.pazienteEmail;
           if (email) await accodaEmail(Object.assign({ to: email }, emailCustodia("paziente", { nome: (u && u.nome) || pz.pazienteNome, autonomo: !!(u && u.autonomo), chiusura })));
+          // chi era stato creato dal nutrizionista può scegliere da ora, nell'app, se continuare da solo
+          if (u && !u.autonomo && pz.pazienteUid) {
+            await db.collection("users").doc(pz.pazienteUid).update({ sceltaFineLicenza: { da: prof.id, entro: Timestamp.fromMillis(inizio + GIORNI_CHIUSURA_LICENZA * GIORNO_MS) } });
+          }
           esito.avvisi++;
         }
       }
       if (fase === "chiusura") {
-        for (const piano of piani.docs) { await chiudiPazienteFineLicenza(piano, prof.id, adesso); esito.chiusi++; }
+        for (const piano of piani.docs) {
+          const r = await chiudiPazienteFineLicenza(piano, prof.id, adesso);
+          if (r === "cancellato") esito.accountCancellati++; else esito.chiusi++;
+        }
       }
       agg[fase] = Timestamp.fromMillis(adesso);
     }
@@ -581,6 +622,11 @@ async function eseguiCustodia(adesso) {
     await cancellaDatiPaziente(u.id, piano ? piano.ref : null);
     esito.accountCancellati++;
   }
+  // 4b) Copie per la restituzione al nutrizionista precedente, scadute
+  esito.restituzioniScadute = 0;
+  const restituzioni = await db.collection("custodiaRestituzioni").where("entro", "<=", Timestamp.fromMillis(adesso)).get();
+  for (const r of restituzioni.docs) { await db.recursiveDelete(r.ref); esito.restituzioniScadute++; }
+
   // 5) Codici di invito alla lista di casa scaduti (14 giorni): si cancellano
   //    e si toglie il codice dalla lista, che ne mostrerà uno da creare.
   esito.invitiScaduti = 0;
@@ -612,16 +658,16 @@ exports.confermaContinuaDaSolo = onCall(async (request) => {
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
-  if (!utente.confermaRichiesta) return { ok: true };
+  if (!utente.confermaRichiesta && !utente.sceltaFineLicenza) return { ok: true };
   if (c.maggiorenne !== true || c.salute !== true) throw new HttpsError("invalid-argument", "consensi-mancanti");
   const ora = FieldValue.serverTimestamp();
   const batch = db.batch();
   batch.update(utenteRef, {
-    autonomo: true, confermaRichiesta: FieldValue.delete(), continuaDaSolo: ora,
-    consensi: { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, data: ora } },
+    autonomo: true, confermaRichiesta: FieldValue.delete(), sceltaFineLicenza: FieldValue.delete(), continuaDaSolo: ora,
+    consensi: { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, versione: VERSIONE_AI, data: ora } },
   });
   ["maggiorenne", "salute", "ai"].forEach((tipo) => batch.set(utenteRef.collection("consensiStorico").doc(), {
-    tipo, si: tipo === "ai" ? c.ai === true : true, versione: VERSIONE_CONSENSI, data: ora, da: "continua da solo",
+    tipo, si: tipo === "ai" ? c.ai === true : true, versione: tipo === "ai" ? VERSIONE_AI : VERSIONE_CONSENSI, data: ora, da: "continua da solo",
   }));
   await batch.commit();
   return { ok: true };
@@ -842,6 +888,10 @@ async function pianoDelPaziente(uid) {
 // consensi: { versione, maggiorenne: data, salute: { si, data }, ai: { si, data } }.
 // Li scrive solo il server; ogni cambio va anche in users/{uid}/consensiStorico.
 const VERSIONE_CONSENSI = "2026-10-20";
+// Versione del testo informativo e della formula della scelta AI (Cravero, nota
+// del 3/11/2026, punto 10). Le scelte registrate con una versione precedente non
+// valgono più: l'app chiede una nuova scelta e il server blocca l'AI fino ad allora.
+const VERSIONE_AI = "2026-11-05";
 
 /**
  * Vero se le funzioni AI vanno bloccate per questo paziente:
@@ -857,7 +907,8 @@ function consensoAINegato(utente) {
   const ai = utente.consensi && utente.consensi.ai;
   // Dal 3/11/2026 (v114) anche i pazienti creati dal nutrizionista: senza una
   // scelta registrata le funzioni AI restano bloccate (l'app la chiede all'avvio).
-  return !(ai && ai.si === true);
+  // Dal 5/11/2026 (v122) vale solo la scelta data con il testo informativo nuovo.
+  return !(ai && ai.si === true && String(ai.versione || "") >= VERSIONE_AI);
 }
 
 exports.aggiornaConsensoAI = onCall(async (request) => {
@@ -868,12 +919,23 @@ exports.aggiornaConsensoAI = onCall(async (request) => {
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
   const batch = db.batch();
-  batch.set(utenteRef, { consensi: { versione: VERSIONE_CONSENSI, ai: { si, data: FieldValue.serverTimestamp() } } }, { merge: true });
+  batch.set(utenteRef, { consensi: { versione: VERSIONE_CONSENSI, ai: { si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp() } } }, { merge: true });
   const da = request.data && request.data.da === "richiesta" ? "richiesta nell'app" : "impostazioni";
-  batch.set(utenteRef.collection("consensiStorico").doc(), { tipo: "ai", si, versione: VERSIONE_CONSENSI, data: FieldValue.serverTimestamp(), da });
+  batch.set(utenteRef.collection("consensiStorico").doc(), { tipo: "ai", si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp(), da });
   await batch.commit();
-  return { si };
+  // Revoca (o scelta negativa): si cancellano i riscontri e l'analisi dell'andamento
+  let cancellati = false;
+  if (!si) cancellati = await cancellaDatiAI(uid);
+  return { si, cancellati };
 });
+
+/** Dopo la revoca del consenso AI: via riscontri del paziente e analisi dell'andamento. */
+async function cancellaDatiAI(uid) {
+  await db.recursiveDelete(db.collection("users").doc(uid).collection("riscontri"));
+  const piano = await pianoDelPaziente(uid);
+  if (piano) await db.recursiveDelete(piano.ref.collection("analisi"));
+  return true;
+}
 
 exports.registraPaziente = onCall(async (request) => {
   const uid = request.auth && request.auth.uid;
@@ -886,7 +948,7 @@ exports.registraPaziente = onCall(async (request) => {
   const c = d.consensi || {};
   if (c.maggiorenne !== true || c.salute !== true) throw new HttpsError("invalid-argument", "consensi-mancanti");
   const ora = FieldValue.serverTimestamp();
-  const consensi = { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, data: ora } };
+  const consensi = { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, versione: VERSIONE_AI, data: ora } };
   const piano = d.piano && typeof d.piano === "object" && !Array.isArray(d.piano) ? d.piano : { settimane: {} };
   if (Buffer.byteLength(JSON.stringify(piano)) > 900 * 1024) {
     throw new HttpsError("invalid-argument", "Piano di partenza troppo grande.");
@@ -1098,7 +1160,8 @@ exports.collegaNutrizionista = onCall(async (request) => {
     if (pianoPrima.data().exProfessionistaUid && pianoPrima.data().exProfessionistaUid === profUid) {
       await pianoPrima.ref.update({ datiProfessionistaEntro: FieldValue.delete(), exProfessionistaUid: FieldValue.delete() });
     } else {
-      await cancellaDatiProfessionistaDalPiano(pianoPrima.ref);
+      // v122 (Cravero, 3/11): copia separata per la restituzione al precedente
+      await mettiInCustodiaDatiProfessionista(pianoPrima, Date.now());
     }
   }
   const profRef = db.collection("users").doc(profUid);
@@ -2658,5 +2721,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
