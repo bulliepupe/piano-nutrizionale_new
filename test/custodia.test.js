@@ -257,6 +257,24 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   ORA += 15 * G; await T.eseguiCustodia(ORA);
   ok(!Object.keys(store).some((k) => k.startsWith("voci/")), "dopo 14 giorni le voci del registro si cancellano");
 
+  // --- Registro: elementi tolti dentro un documento (allenamento, segnatura del pasto) ---
+  const rimAll = T.rimozioniDaAggiornamento("attivita", { allenamenti: [{ id: "a1" }, { id: "a2" }] }, { allenamenti: [{ id: "a2" }] });
+  ok(rimAll.length === 1 && rimAll[0].tipo === "rimozioneAllenamento" && rimAll[0].id === "a1", "allenamento tolto riconosciuto");
+  const rimPasto = T.rimozioniDaAggiornamento("pastiFatti", { pranzo: "diverso", cena: true }, { cena: true });
+  ok(rimPasto.length === 1 && rimPasto[0].campo === "pranzo", "segnatura del pasto tolta riconosciuta");
+  ok(T.rimozioniDaAggiornamento("pastiFatti", { cena: true }, { cena: true, pranzo: true }).length === 0, "nuove segnature: niente da registrare");
+  store = {};
+  await T.registra("rimozioneAllenamento", "users/ua/attivita/2026-11-04", { id: "a1" });
+  await T.registra("rimozionePasto", "users/ua/pastiFatti/2026-11-04", { campo: "pranzo" });
+  Object.assign(store, {
+    "users/ua/attivita/2026-11-04": { allenamenti: [{ id: "a1", tipo: "Corsa" }, { id: "a2", tipo: "Bici" }] },
+    "users/ua/pastiFatti/2026-11-04": { pranzo: "diverso", cena: true, note: { pranzo: "dolce", cena: "ok" }, etichette: { pranzo: [{ nome: "x" }] } },
+  });
+  await T.riapplicaRegistro("(default)", ORA - G);
+  ok(store["users/ua/attivita/2026-11-04"].allenamenti.length === 1 && store["users/ua/attivita/2026-11-04"].allenamenti[0].id === "a2", "allenamento tolto di nuovo dopo il ripristino");
+  const pf = store["users/ua/pastiFatti/2026-11-04"];
+  ok(!pf.pranzo && pf.cena === true && !pf.note.pranzo && pf.note.cena === "ok" && !(pf.etichette && pf.etichette.pranzo), "segnatura, nota e prodotti del pranzo tolti di nuovo, la cena resta");
+
   Date.now = realNow;
   console.log("OK: " + n + " verifiche superate");
 })().catch((e) => { console.error(e); process.exit(1); });

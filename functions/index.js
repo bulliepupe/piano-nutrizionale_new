@@ -22,6 +22,7 @@ const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https")
 const triggerFirestore = require("firebase-functions/v2/firestore");
 const { onDocumentCreated } = triggerFirestore;
 const onDocumentDeleted = triggerFirestore.onDocumentDeleted || (() => () => {});
+const onDocumentUpdated = triggerFirestore.onDocumentUpdated || (() => () => {});
 const { defineSecret } = require("firebase-functions/params");
 const { setGlobalOptions } = require("firebase-functions/v2");
 // firebase-admin 14 accetta solo le API "modulari": il vecchio stile
@@ -423,6 +424,18 @@ async function riapplicaRegistro(databaseId, dalMs) {
     if (v.tipo === "cancellazione" && v.percorso) {
       await target.recursiveDelete(target.doc(v.percorso));
       esito.documentiCancellati++;
+    } else if (v.tipo === "rimozioneAllenamento" && v.percorso && v.id) {
+      const ref = target.doc(v.percorso);
+      const d = (await ref.get()).data();
+      if (d && Array.isArray(d.allenamenti)) await ref.update({ allenamenti: d.allenamenti.filter((a) => a && a.id !== v.id) });
+      esito.documentiCancellati++;
+    } else if (v.tipo === "rimozionePasto" && v.percorso && v.campo) {
+      const ref = target.doc(v.percorso);
+      if ((await ref.get()).exists) {
+        const k = v.campo;
+        await ref.update({ [k]: FieldValue.delete(), [`note.${k}`]: FieldValue.delete(), [`motivi.${k}`]: FieldValue.delete(), [`etichette.${k}`]: FieldValue.delete(), [`etichetteModo.${k}`]: FieldValue.delete() });
+      }
+      esito.documentiCancellati++;
     } else if (v.tipo === "revocaAI" && v.uid) {
       const ref = target.collection("users").doc(v.uid);
       if ((await ref.get()).exists) {
@@ -440,6 +453,27 @@ async function riapplicaRegistro(databaseId, dalMs) {
 /** Ogni cancellazione sotto users/ e piani/ (dall'app o dal server) va nel registro. */
 exports.registraCancellazioneUtente = onDocumentDeleted({ document: "users/{uid}" }, (e) => registra("cancellazione", "users/" + e.params.uid));
 exports.registraCancellazioneSottoUtente = onDocumentDeleted({ document: "users/{uid}/{raccolta}/{id}" }, (e) => registra("cancellazione", `users/${e.params.uid}/${e.params.raccolta}/${e.params.id}`));
+/** Elementi tolti dentro un documento: un allenamento o la segnatura di un pasto. */
+function rimozioniDaAggiornamento(raccolta, prima, dopo) {
+  prima = prima || {}; dopo = dopo || {};
+  const out = [];
+  if (raccolta === "attivita") {
+    const restano = new Set((Array.isArray(dopo.allenamenti) ? dopo.allenamenti : []).map((a) => a && a.id));
+    (Array.isArray(prima.allenamenti) ? prima.allenamenti : []).forEach((a) => { if (a && a.id && !restano.has(a.id)) out.push({ tipo: "rimozioneAllenamento", id: a.id }); });
+  }
+  if (raccolta === "pastiFatti") {
+    MEAL_KEYS.forEach((k) => { if (prima[k] && !dopo[k]) out.push({ tipo: "rimozionePasto", campo: k }); });
+  }
+  return out;
+}
+exports.registraRimozioneInterna = onDocumentUpdated({ document: "users/{uid}/{raccolta}/{id}" }, async (e) => {
+  const r = e.params.raccolta;
+  if (r !== "attivita" && r !== "pastiFatti") return;
+  const percorso = `users/${e.params.uid}/${r}/${e.params.id}`;
+  for (const x of rimozioniDaAggiornamento(r, e.data.before.data(), e.data.after.data())) {
+    await registra(x.tipo, percorso, x.id ? { id: x.id } : { campo: x.campo });
+  }
+});
 exports.registraCancellazionePiano = onDocumentDeleted({ document: "piani/{pid}" }, (e) => registra("cancellazione", "piani/" + e.params.pid));
 exports.registraCancellazioneSottoPiano = onDocumentDeleted({ document: "piani/{pid}/{raccolta}/{id}" }, (e) => registra("cancellazione", `piani/${e.params.pid}/${e.params.raccolta}/${e.params.id}`));
 
@@ -449,8 +483,10 @@ exports.registraCancellazioneSottoPiano = onDocumentDeleted({ document: "piani/{
  * database=(default) o il database di prova; dal=data ISO (predefinita: 14 giorni fa).
  */
 exports.manutenzioneRegistro = onRequest({ secrets: [MANUTENZIONE_TOKEN], timeoutSeconds: 540 }, async (req, res) => {
-  const atteso = "Bearer " + MANUTENZIONE_TOKEN.value();
-  if (req.get("authorization") !== atteso) { res.status(403).json({ errore: "non autorizzato" }); return; }
+  // confronto tollerante a spazi e a capo finali (copia e incolla da Windows)
+  const atteso = String(MANUTENZIONE_TOKEN.value() || "").trim();
+  const dato = String(req.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (!atteso || dato !== atteso) { res.status(403).json({ errore: "non autorizzato" }); return; }
   const azione = String(req.query.azione || "stato");
   const conf = registroDb.collection("config").doc("manutenzione");
   if (azione === "inizio" || azione === "fine") {
@@ -2835,5 +2871,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
