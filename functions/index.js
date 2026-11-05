@@ -19,7 +19,9 @@
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const triggerFirestore = require("firebase-functions/v2/firestore");
+const { onDocumentCreated } = triggerFirestore;
+const onDocumentDeleted = triggerFirestore.onDocumentDeleted || (() => () => {});
 const { defineSecret } = require("firebase-functions/params");
 const { setGlobalOptions } = require("firebase-functions/v2");
 // firebase-admin 14 accetta solo le API "modulari": il vecchio stile
@@ -34,6 +36,10 @@ const crypto = require("crypto");
 
 initializeApp();
 const db = getFirestore();
+// Registro delle cancellazioni e delle revoche (Cravero, 4/11/2026): database
+// separato «registro», fuori dai backup e dai ripristini del database dell'app.
+const registroDb = getFirestore("registro");
+const MANUTENZIONE_TOKEN = defineSecret("MANUTENZIONE_TOKEN");
 const messaging = getMessaging();
 
 // Regione europea: più vicina, e coerente con la posizione scelta per Firestore.
@@ -371,6 +377,100 @@ exports.eliminaPaziente = onCall(async (request) => {
  * e infine il piano (con misure e note). Usata dal professionista
  * (eliminaPaziente) e dal paziente stesso (eliminaAccount).
  */
+// =========================================================================
+// REGISTRO DELLE CANCELLAZIONI E DELLE REVOCHE, MANUTENZIONE E RIPRISTINO
+// =========================================================================
+// Ogni cancellazione di documenti sotto users/ e piani/ (trigger) e ogni revoca
+// del consenso AI (scrittura esplicita) finisce in registro/voci con data e ora,
+// tipo e percorso. Le voci si conservano 14 giorni: oltre la copia più vecchia
+// recuperabile (7 giorni) e il tempo di un ripristino. Dopo un ripristino:
+// 1) manutenzione attiva (le funzioni AI si fermano); 2) riapplicazione del
+// registro sul database ripristinato; 3) fine manutenzione e regole pubblicate.
+const GIORNI_REGISTRO = 14;
+
+/** Scrive una voce nel registro (non blocca mai l'operazione principale). */
+async function registra(tipo, percorso, extra) {
+  try {
+    const ora = Date.now();
+    await registroDb.collection("voci").add(Object.assign({
+      tipo, percorso, quando: Timestamp.fromMillis(ora), scade: Timestamp.fromMillis(ora + GIORNI_REGISTRO * GIORNO_MS),
+    }, extra || {}));
+  } catch (e) {
+    console.error("Registro: scrittura non riuscita", tipo, e && e.message);
+  }
+}
+
+let manutenzioneCache = { quando: 0, attiva: false };
+/** Vero se è in corso un ripristino: le funzioni AI non devono elaborare dati. */
+async function inManutenzione() {
+  if (Date.now() - manutenzioneCache.quando < 30000) return manutenzioneCache.attiva;
+  let attiva = false;
+  try { const d = (await registroDb.collection("config").doc("manutenzione").get()).data(); attiva = !!(d && d.attiva); } catch (e) { attiva = false; }
+  manutenzioneCache = { quando: Date.now(), attiva };
+  return attiva;
+}
+async function bloccaSeInManutenzione() {
+  if (await inManutenzione()) throw new HttpsError("unavailable", "manutenzione");
+}
+
+/** Riapplica al database indicato le voci del registro successive a «dal». */
+async function riapplicaRegistro(databaseId, dalMs) {
+  const target = databaseId && databaseId !== "(default)" ? getFirestore(databaseId) : db;
+  const voci = await registroDb.collection("voci").where("quando", ">=", Timestamp.fromMillis(dalMs)).get();
+  const ordinate = voci.docs.map((v) => v.data()).sort((a, b) => msDi(a.quando) - msDi(b.quando));
+  const esito = { voci: ordinate.length, documentiCancellati: 0, revoche: 0 };
+  for (const v of ordinate) {
+    if (v.tipo === "cancellazione" && v.percorso) {
+      await target.recursiveDelete(target.doc(v.percorso));
+      esito.documentiCancellati++;
+    } else if (v.tipo === "revocaAI" && v.uid) {
+      const ref = target.collection("users").doc(v.uid);
+      if ((await ref.get()).exists) {
+        await ref.set({ consensi: { ai: { si: false, versione: VERSIONE_AI, data: v.quando } } }, { merge: true });
+        await target.recursiveDelete(ref.collection("riscontri"));
+        const piani = await target.collection("piani").where("pazienteUid", "==", v.uid).limit(1).get();
+        if (!piani.empty) await target.recursiveDelete(piani.docs[0].ref.collection("analisi"));
+      }
+      esito.revoche++;
+    }
+  }
+  return esito;
+}
+
+/** Ogni cancellazione sotto users/ e piani/ (dall'app o dal server) va nel registro. */
+exports.registraCancellazioneUtente = onDocumentDeleted({ document: "users/{uid}" }, (e) => registra("cancellazione", "users/" + e.params.uid));
+exports.registraCancellazioneSottoUtente = onDocumentDeleted({ document: "users/{uid}/{raccolta}/{id}" }, (e) => registra("cancellazione", `users/${e.params.uid}/${e.params.raccolta}/${e.params.id}`));
+exports.registraCancellazionePiano = onDocumentDeleted({ document: "piani/{pid}" }, (e) => registra("cancellazione", "piani/" + e.params.pid));
+exports.registraCancellazioneSottoPiano = onDocumentDeleted({ document: "piani/{pid}/{raccolta}/{id}" }, (e) => registra("cancellazione", `piani/${e.params.pid}/${e.params.raccolta}/${e.params.id}`));
+
+/**
+ * Manutenzione e ripristino, da terminale (curl) con il token del segreto
+ * MANUTENZIONE_TOKEN. azione=stato | inizio | riapplica | fine;
+ * database=(default) o il database di prova; dal=data ISO (predefinita: 14 giorni fa).
+ */
+exports.manutenzioneRegistro = onRequest({ secrets: [MANUTENZIONE_TOKEN], timeoutSeconds: 540 }, async (req, res) => {
+  const atteso = "Bearer " + MANUTENZIONE_TOKEN.value();
+  if (req.get("authorization") !== atteso) { res.status(403).json({ errore: "non autorizzato" }); return; }
+  const azione = String(req.query.azione || "stato");
+  const conf = registroDb.collection("config").doc("manutenzione");
+  if (azione === "inizio" || azione === "fine") {
+    await conf.set({ attiva: azione === "inizio", quando: FieldValue.serverTimestamp() });
+    manutenzioneCache = { quando: 0, attiva: false };
+    res.json({ manutenzione: azione === "inizio" });
+    return;
+  }
+  if (azione === "riapplica") {
+    const dal = req.query.dal ? Date.parse(String(req.query.dal)) : Date.now() - GIORNI_REGISTRO * GIORNO_MS;
+    if (!Number.isFinite(dal)) { res.status(400).json({ errore: "data non valida" }); return; }
+    const esito = await riapplicaRegistro(String(req.query.database || "(default)"), dal);
+    console.log("Registro riapplicato:", JSON.stringify(esito));
+    res.json(esito);
+    return;
+  }
+  const voci = await registroDb.collection("voci").count().get().catch(() => null);
+  res.json({ manutenzione: await inManutenzione(), voci: voci ? voci.data().count : null });
+});
+
 async function cancellaDatiPaziente(pazienteUid, pianoRef) {
   if (pazienteUid) {
     const utenteRef = db.collection("users").doc(pazienteUid);
@@ -626,6 +726,11 @@ async function eseguiCustodia(adesso) {
   esito.restituzioniScadute = 0;
   const restituzioni = await db.collection("custodiaRestituzioni").where("entro", "<=", Timestamp.fromMillis(adesso)).get();
   for (const r of restituzioni.docs) { await db.recursiveDelete(r.ref); esito.restituzioniScadute++; }
+
+  // 4c) Voci del registro oltre i 14 giorni
+  esito.vociRegistroScadute = 0;
+  const vecchie = await registroDb.collection("voci").where("scade", "<=", Timestamp.fromMillis(adesso)).get();
+  for (const v of vecchie.docs) { await v.ref.delete(); esito.vociRegistroScadute++; }
 
   // 5) Codici di invito alla lista di casa scaduti (14 giorni): si cancellano
   //    e si toglie il codice dalla lista, che ne mostrerà uno da creare.
@@ -925,7 +1030,10 @@ exports.aggiornaConsensoAI = onCall(async (request) => {
   await batch.commit();
   // Revoca (o scelta negativa): si cancellano i riscontri e l'analisi dell'andamento
   let cancellati = false;
-  if (!si) cancellati = await cancellaDatiAI(uid);
+  if (!si) {
+    await registra("revocaAI", "users/" + uid, { uid });
+    cancellati = await cancellaDatiAI(uid);
+  }
   return { si, cancellati };
 });
 
@@ -1510,6 +1618,7 @@ function normalizzaPianoAI(r) {
 const VERSIONE_CONSENSO_AI = "2026-10-14";
 
 exports.importaPianoAI = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 300, memory: "512MiB" }, async (request) => {
+  await bloccaSeInManutenzione();
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const utenteRef = db.collection("users").doc(uid);
@@ -1778,6 +1887,7 @@ function normalizzaRiscontro(r, rimanenti, conSuggerimenti, conNutrizionista) {
 }
 
 exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 }, async (request) => {
+  await bloccaSeInManutenzione();
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const pasto = String((request.data && request.data.pasto) || "");
@@ -2045,6 +2155,7 @@ function normalizzaEtichetta(x) {
 }
 
 exports.leggiEtichetta = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 }, async (request) => {
+  await bloccaSeInManutenzione();
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const immagine = String((request.data && request.data.immagine) || "");
@@ -2138,6 +2249,7 @@ function chiaveResa(nome) {
 }
 
 exports.stimaRese = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 }, async (request) => {
+  await bloccaSeInManutenzione();
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const nomi = Array.from(new Set(((request.data && request.data.nomi) || [])
@@ -2337,6 +2449,7 @@ function chiaveMacro(testo) {
 }
 
 exports.stimaMacro = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 }, async (request) => {
+  await bloccaSeInManutenzione();
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const testi = Array.from(new Set(((request.data && request.data.testi) || [])
@@ -2482,6 +2595,7 @@ function normalizzaAnalisi(r) {
 }
 
 exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 }, async (request) => {
+  await bloccaSeInManutenzione();
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const pianoId = String((request.data && request.data.pianoId) || "");
@@ -2721,5 +2835,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

@@ -35,6 +35,7 @@ function ref(path) {
     async get() { return snap(path); },
     async update(d) { if (!(path in store)) throw new Error("no doc " + path); applica(store[path], d); },
     async set(d, o) { store[path] = o && o.merge ? applica(store[path] || {}, d) : applica({}, d); },
+    async delete() { delete store[path]; },
   };
 }
 function snap(path) { return { exists: path in store, id: path.split("/").pop(), ref: ref(path), data: () => (path in store ? store[path] : undefined) }; }
@@ -55,6 +56,7 @@ function col(path, filtri = [], lim = 0) {
           const x = valore(leggi(d.data(), campo)); const y = valore(v);
           if (op === "==") return x === y;
           if (op === "<=") return x != null && x <= y;
+          if (op === ">=") return x != null && x >= y;
           return false;
         });
       }
@@ -66,6 +68,7 @@ function col(path, filtri = [], lim = 0) {
 }
 const db = {
   collection: (c) => col(c),
+  doc: (p) => ref(p),
   async recursiveDelete(r) { const p = r.path; Object.keys(store).forEach((k) => { if (k === p || k.startsWith(p + "/")) delete store[k]; }); },
   batch() { const ops = []; return { set: (r, d, o) => ops.push(() => r.set(d, o)), update: (r, d) => ops.push(() => r.update(d)), delete: (r) => ops.push(() => db.recursiveDelete(r)), commit: async () => { for (const o of ops) await o(); } }; },
   async runTransaction(fn) { const ops = []; const r = await fn({ get: (x) => x.get(), update: (x, d) => ops.push(() => x.update(d)), set: (x, d, o) => ops.push(() => x.set(d, o)), create: (x, d) => ops.push(() => x.set(d)) }); for (const o of ops) await o(); return r; },
@@ -234,6 +237,25 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   ok(!("inviti/VECCHIO1" in store) && !store["liste/l1"].codiceInvito, "invito scaduto cancellato e tolto dalla lista");
   ok("inviti/NUOVO123" in store && store["liste/l2"].codiceInvito === "NUOVO123", "invito valido intatto");
   ok(es.invitiScaduti === 1, "conteggio degli inviti scaduti");
+
+  // --- Registro: cancellazioni e revoche riapplicate dopo un ripristino ---
+  store = {};
+  await T.registra("cancellazione", "piani/pr/misure/m1");
+  await T.registra("revocaAI", "users/ur", { uid: "ur" });
+  const voci = Object.keys(store).filter((k) => k.startsWith("voci/"));
+  ok(voci.length === 2 && store[voci[0]].quando && store[voci[0]].scade.toMillis() - store[voci[0]].quando.toMillis() === 14 * G, "voci con data, ora e scadenza a 14 giorni");
+  // database «ripristinato»: i dati cancellati e il consenso revocato sono tornati
+  Object.assign(store, {
+    "piani/pr": { pazienteUid: "ur" }, "piani/pr/misure/m1": { peso: 70 }, "piani/pr/misure/m2": { peso: 71 },
+    "piani/pr/analisi/a": { testo: "analisi" },
+    "users/ur": { ruolo: "paziente", consensi: { ai: { si: true, versione: "2026-11-05" } } }, "users/ur/riscontri/r1": { impatto: "lieve" },
+  });
+  const esitoRip = await T.riapplicaRegistro("(default)", ORA - 14 * G);
+  ok(esitoRip.documentiCancellati === 1 && esitoRip.revoche === 1, "riapplicate una cancellazione e una revoca: " + JSON.stringify(esitoRip));
+  ok(!("piani/pr/misure/m1" in store) && "piani/pr/misure/m2" in store, "il documento cancellato sparisce di nuovo, gli altri restano");
+  ok(store["users/ur"].consensi.ai.si === false && !("users/ur/riscontri/r1" in store) && !("piani/pr/analisi/a" in store), "revoca riapplicata: consenso negato, riscontri e analisi cancellati");
+  ORA += 15 * G; await T.eseguiCustodia(ORA);
+  ok(!Object.keys(store).some((k) => k.startsWith("voci/")), "dopo 14 giorni le voci del registro si cancellano");
 
   Date.now = realNow;
   console.log("OK: " + n + " verifiche superate");
