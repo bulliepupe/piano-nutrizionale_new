@@ -598,6 +598,7 @@
     AUTONOMO = !!utenteDati.autonomo;
     PAUSE = Array.isArray(utenteDati.pause) ? utenteDati.pause : [];
     ACQUA = Object.assign({}, utenteDati.acqua || {});
+    INTEGRAZIONE = Array.isArray(utenteDati.integrazione) ? utenteDati.integrazione : [];
     PIANO_VISTO = utenteDati.pianoVisto || null;
     PARAMETRI_ALLENAMENTO = Object.assign({}, utenteDati.parametriAllenamento || {});
     // Senza una scelta registrata: sì per i pazienti del nutrizionista, no per
@@ -823,10 +824,11 @@
   let AUTONOMO = false;
   let PAUSE = []; // pausa del percorso: [{ dal, al }]
   let ACQUA = {}; // { mostra, obiettivo, promemoria, ogniOre }
+  let INTEGRAZIONE = []; // integratori aggiunti dal paziente (users/{uid}.integrazione)
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v122";
+  const VERSIONE_APP = "v123";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -861,6 +863,7 @@
   const FUNZIONI_PREMIUM = [
     ["✨", "Lettura del piano con l'AI", "carichi il nuovo piano dal PDF o dalle foto in un minuto, a ogni cambio di stagione"],
     ["📊", "Riscontro quando un pasto cambia", "come cambiano calorie e macronutrienti rispetto al piano quando mangi fuori o salti un pasto"],
+    ["💊", "Integrazione", "i tuoi integratori con un promemoria all’orario e la spunta nella scheda Oggi"],
     ["🛒", "Lista della spesa della settimana", "tutta la settimana, divisa in una o due spese, condivisibile in famiglia"],
     ["🥡", "Meal prep", "cosa preparare in anticipo per i pasti della settimana"],
     ["📈", "Andamento completo", "grafico del peso e storico delle misure"],
@@ -2459,6 +2462,7 @@
       ${riepilogoGiornoHTML({ settimana, giornoNome, giorno, orari, statoDi, numFatti, numDiversi, numParziali })}
       ${macroOggiHTML(giorno, fatti)}
       <div class="timeline">${renderTimelineHTML(giorno, orari, { checkable: true, fatti })}</div>
+      ${integrazioneOggiHTML()}
       ${renderCoccolaHTML(giorno)}
       ${renderNormeHTML()}
       ${renderContattoNutrizionistaHTML()}
@@ -2466,6 +2470,7 @@
 
     aggiornaMacro(giorno);
 
+    root.querySelectorAll("[data-integratore]").forEach((b) => b.addEventListener("click", () => segnaIntegratore(b.dataset.integratore)));
     root.querySelectorAll("[data-meal-check]").forEach((btn) => {
       btn.addEventListener("click", () => onToggleMealCheck(btn.dataset.mealCheck));
     });
@@ -4570,12 +4575,14 @@
         <p class="hint" style="margin-top:14px;">Pasti, regole generali e dati del piano vengono aggiornati dal tuo professionista e si sincronizzano automaticamente qui — da questa app si possono solo consultare.</p>
       </section>`}
       ${acquaSezioneHTML()}
+      ${integrazioneSezioneHTML()}
       ${pausaSezioneHTML()}
       ${eliminaAccountSezioneHTML()}
       <p class="stat-nota" style="text-align:center;margin:18px 0 8px;">Il mio Piano · versione ${VERSIONE_APP}</p>
     `;
     collegaPulsantiMioPiano(root, "impostazioni");
     collegaAcquaImpostazioni();
+    collegaIntegrazioneImpostazioni();
     collegaSezioneNutrizionista();
     collegaEliminaAccount();
     collegaRiepilogoVisita();
@@ -4822,6 +4829,7 @@
     if (window.cloud.nativo) return; // nell'app Android i promemoria arrivano solo come notifiche native
     if (pausaInCorso()) return; // pausa del percorso: niente promemoria
     pianificaAcquaOggi();
+    pianificaIntegrazioneOggi();
 
     const oggi = new Date();
     const { giorno } = window.weekLogic.menuDelGiorno(oggi, CONFIG, PIANO_ATTIVO);
@@ -5093,6 +5101,164 @@
       try { await window.cloud.salvaAttivita(UID, chiaveData(new Date()), { acqua: nuovo }); }
       catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
     }));
+  }
+
+  // ---------------------------------------------------------------------
+  // Integrazione (Premium, v123): integratori prescritti dal nutrizionista
+  // (piano.integrazione) e aggiunti dal paziente (users/{uid}.integrazione),
+  // con promemoria all'orario e spunta nella scheda Oggi. Solo integratori,
+  // mai farmaci; nessun dato inviato all'AI. Logica in js/integrazione.js.
+  // ---------------------------------------------------------------------
+  function vociIntegrazioneOggi() {
+    if (RUOLO !== "paziente" || !window.integrazione) return [];
+    return window.integrazione.vociDelGiorno((PIANO_GREZZO || {}).integrazione, INTEGRAZIONE, new Date());
+  }
+
+  function integrazioneOggiHTML() {
+    if (RUOLO !== "paziente" || premiumLimitato()) return "";
+    const voci = vociIntegrazioneOggi();
+    if (!voci.length) return "";
+    const segnate = (PASTI_FATTI_OGGI && PASTI_FATTI_OGGI.integratori) || {};
+    const fatte = voci.filter((v) => segnate[v.chiave]).length;
+    return `
+      <section class="integrazione-oggi" aria-labelledby="titolo-integrazione-oggi">
+        <div class="integrazione-oggi__testa"><h2 id="titolo-integrazione-oggi">💊 Integrazione di oggi</h2><span>${fatte} su ${voci.length}</span></div>
+        <ul class="integrazione-oggi__elenco">${voci.map((v) => {
+          const fatta = !!segnate[v.chiave];
+          return `<li><button type="button" class="integrazione-voce${fatta ? " is-fatta" : ""}" data-integratore="${escapeHTML(v.chiave)}" aria-pressed="${fatta}">
+            <span class="integrazione-voce__check" aria-hidden="true">${fatta ? "✓" : ""}</span>
+            <span class="integrazione-voce__ora">${v.orario}</span>
+            <span class="integrazione-voce__testo"><strong>${escapeHTML(v.nome)}</strong>${v.quantita ? ` · ${escapeHTML(v.quantita)}` : ""}${v.fonte === "nutrizionista" ? ` <em>dal nutrizionista</em>` : ""}${v.note ? `<small>${escapeHTML(v.note)}</small>` : ""}</span>
+          </button></li>`;
+        }).join("")}</ul>
+      </section>`;
+  }
+
+  async function segnaIntegratore(chiave) {
+    const nuovoStato = Object.assign({}, PASTI_FATTI_OGGI);
+    const integratori = Object.assign({}, nuovoStato.integratori || {});
+    if (integratori[chiave]) delete integratori[chiave]; else integratori[chiave] = true;
+    if (Object.keys(integratori).length) nuovoStato.integratori = integratori; else delete nuovoStato.integratori;
+    try {
+      await window.cloud.salvaPastiFattiCloud(UID, chiaveData(new Date()), nuovoStato);
+    } catch (e) {
+      mostraToast("Impossibile salvare: controlla la connessione");
+    }
+  }
+
+  function pianificaIntegrazioneOggi() {
+    if (premiumLimitato()) return;
+    const oggi = new Date();
+    vociIntegrazioneOggi().forEach((v) => {
+      const [h, m] = v.orario.split(":").map(Number);
+      const quando = new Date(oggi); quando.setHours(h, m, 0, 0);
+      const attesa = quando.getTime() - Date.now();
+      if (attesa <= 0) return;
+      timersProgrammati.push(setTimeout(() => {
+        const segnate = (PASTI_FATTI_OGGI && PASTI_FATTI_OGGI.integratori) || {};
+        if (segnate[v.chiave]) return;
+        mostraNotifica("💊 " + v.nome, v.quantita || "È l’ora del tuo integratore");
+      }, attesa));
+    });
+  }
+
+  function rigaIntegratoreHTML(v, attributoModifica) {
+    const I = window.integrazione;
+    return `<li class="integrazione-riga"><div><strong>${escapeHTML(v.nome)}</strong>${v.quantita ? ` · ${escapeHTML(v.quantita)}` : ""}
+      <small>${v.orari.join(", ")} · ${I.giorniTesto(v.giorni)}${v.note ? ` · ${escapeHTML(v.note)}` : ""}</small></div>
+      ${attributoModifica ? `<button type="button" class="link-btn" ${attributoModifica}="${escapeHTML(v.id)}">Modifica</button>` : ""}</li>`;
+  }
+
+  function integrazioneSezioneHTML() {
+    if (RUOLO !== "paziente" || !window.integrazione) return "";
+    const I = window.integrazione;
+    if (premiumLimitato()) {
+      return `
+      <section class="settings-section" id="sezione-integrazione">
+        <h2>Integrazione</h2>
+        <p class="hint">Annota gli integratori che prendi: un promemoria all’orario giusto e la spunta nella scheda Oggi. È una funzione Premium.</p>
+        <button type="button" class="btn btn--ghost" data-premium>Scopri Premium</button>
+      </section>`;
+    }
+    const prescritti = I.pulisciLista((PIANO_GREZZO || {}).integrazione);
+    const miei = I.pulisciLista(INTEGRAZIONE);
+    const seguito = !!(PIANO_GREZZO && PIANO_GREZZO.professionistaUid);
+    return `
+      <section class="settings-section" id="sezione-integrazione">
+        <h2>Integrazione</h2>
+        <p class="hint">Gli integratori che prendi, con un promemoria all’orario indicato e la spunta nella scheda Oggi. Per i promemoria servono le notifiche attive.</p>
+        ${prescritti.length ? `<h3 class="integrazione-sotto">Indicati dal tuo nutrizionista</h3><ul class="integrazione-elenco">${prescritti.map((v) => rigaIntegratoreHTML(v, "")).join("")}</ul>` : ""}
+        <h3 class="integrazione-sotto">${prescritti.length ? "Aggiunti da te" : "I tuoi integratori"}</h3>
+        ${miei.length ? `<ul class="integrazione-elenco">${miei.map((v) => rigaIntegratoreHTML(v, "data-modifica-integratore")).join("")}</ul>` : `<p class="stat-nota">Non hai ancora aggiunto integratori.</p>`}
+        ${miei.length < I.MAX_VOCI ? `<button type="button" class="btn btn--ghost" id="btn-aggiungi-integratore">+ Aggiungi un integratore</button>` : ""}
+        <p class="stat-nota">Solo integratori, non farmaci. L’app non suggerisce prodotti né dosi: registra soltanto quello che indicate tu e il tuo nutrizionista.${seguito ? " Il tuo nutrizionista vede questo elenco e le spunte." : ""}</p>
+      </section>`;
+  }
+
+  function collegaIntegrazioneImpostazioni() {
+    const sez = document.getElementById("sezione-integrazione");
+    if (!sez || !window.integrazione) return;
+    const I = window.integrazione;
+    const salva = async (nuova) => {
+      const lista = I.pulisciLista(nuova);
+      await window.cloud.salvaIntegrazione(UID, lista);
+      INTEGRAZIONE = lista;
+      pianificaNotificheOggi();
+      renderImpostazioni();
+    };
+    const add = document.getElementById("btn-aggiungi-integratore");
+    if (add) add.addEventListener("click", () => apriEditorIntegratore(null, (v) => salva(I.pulisciLista(INTEGRAZIONE).concat(v))));
+    sez.querySelectorAll("[data-modifica-integratore]").forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.modificaIntegratore;
+      const voce = I.pulisciLista(INTEGRAZIONE).find((x) => x.id === id);
+      if (!voce) return;
+      apriEditorIntegratore(voce,
+        (v) => salva(I.pulisciLista(INTEGRAZIONE).map((x) => (x.id === id ? v : x))),
+        () => salva(I.pulisciLista(INTEGRAZIONE).filter((x) => x.id !== id)));
+    }));
+  }
+
+  /** Scheda per aggiungere o modificare un integratore (paziente e nutrizionista). */
+  function apriEditorIntegratore(voce, onSalva, onElimina) {
+    const I = window.integrazione;
+    const v = voce ? I.pulisciVoce(voce) : { id: I.nuovoId(), nome: "", quantita: "", orari: ["08:00"], giorni: [], note: "" };
+    const ov = apriSheet(`
+      <h2 class="sheet__titolo">${voce ? "Modifica integratore" : "Nuovo integratore"}</h2>
+      <label class="editor-campo"><span>Nome</span><input type="text" id="int-nome" maxlength="60" value="${escapeHTML(v.nome)}" placeholder="Es. magnesio, vitamina D, creatina"></label>
+      <label class="editor-campo"><span>Quantità</span><input type="text" id="int-quantita" maxlength="60" value="${escapeHTML(v.quantita)}" placeholder="Es. 1 compressa, 5 g in acqua"></label>
+      <div class="editor-campo"><span>Orari (fino a 4)</span>
+        <div class="int-orari">${[0, 1, 2, 3].map((i) => `<input type="time" data-int-orario value="${v.orari[i] || ""}" aria-label="Orario ${i + 1}">`).join("")}</div></div>
+      <div class="editor-campo"><span>Giorni</span>
+        <div class="int-giorni">${I.GIORNI_BREVI.map((g, i) => `<label class="int-giorno" title="${I.GIORNI_NOMI[i]}"><input type="checkbox" data-int-giorno="${i + 1}"${!v.giorni.length || v.giorni.includes(i + 1) ? " checked" : ""}><span>${g}</span></label>`).join("")}</div></div>
+      <label class="editor-campo"><span>Nota (facoltativa)</span><input type="text" id="int-note" maxlength="120" value="${escapeHTML(v.note)}" placeholder="Es. dopo l’allenamento"></label>
+      <p class="stat-nota">Solo integratori, non farmaci.</p>
+      <p class="auth-error" id="int-errore" hidden></p>
+      <button type="button" class="btn" id="int-salva">Salva</button>
+      ${voce && onElimina ? `<button type="button" class="btn btn--ghost btn--pericolo" id="int-elimina">Elimina</button>` : ""}
+      <button type="button" class="btn btn--ghost" id="int-annulla">Annulla</button>`);
+    const q = (sel) => ov.querySelector(sel);
+    const errore = (t) => { const e = q("#int-errore"); e.textContent = t; e.hidden = false; };
+    q("#int-annulla").addEventListener("click", chiudiSheet);
+    q("#int-salva").addEventListener("click", async () => {
+      const giorni = Array.from(ov.querySelectorAll("[data-int-giorno]")).filter((c) => c.checked).map((c) => Number(c.dataset.intGiorno));
+      const nuova = I.pulisciVoce({
+        id: v.id, nome: q("#int-nome").value, quantita: q("#int-quantita").value, note: q("#int-note").value,
+        orari: Array.from(ov.querySelectorAll("[data-int-orario]")).map((i) => i.value).filter(Boolean),
+        giorni: giorni.length === 7 ? [] : giorni,
+      });
+      if (!nuova.nome) { errore("Scrivi il nome dell’integratore."); return; }
+      if (!nuova.orari.length) { errore("Indica almeno un orario."); return; }
+      if (!giorni.length) { errore("Scegli almeno un giorno."); return; }
+      const b = q("#int-salva"); b.disabled = true; b.textContent = "Salvo…";
+      try { await onSalva(nuova); chiudiSheet(); mostraToast("Integrazione salvata"); }
+      catch (e) { b.disabled = false; b.textContent = "Salva"; errore(msgErroreScrittura(e, "Non salvato: controlla la connessione")); }
+    });
+    const el = q("#int-elimina");
+    if (el) el.addEventListener("click", async () => {
+      if (!window.confirm(`Eliminare «${v.nome}» dall’integrazione?`)) return;
+      try { await onElimina(); chiudiSheet(); mostraToast("Integratore eliminato"); }
+      catch (e) { errore(msgErroreScrittura(e, "Non eliminato: controlla la connessione")); }
+    });
   }
 
   function acquaSezioneHTML() {
@@ -7504,6 +7670,8 @@
           }),
           pianoVisto: u.pianoVisto || null,
           accessoRilevato: !!u.ultimoAccesso,
+          integrazioneMia: Array.isArray(u.integrazione) ? u.integrazione : [],
+          integrazioneAderenza: window.integrazione ? window.integrazione.aderenza(p.integrazione, u.integrazione, spunte, new Date(), 7, false) : [],
         };
       } catch (e) {
         console.error("Statistiche paziente", p.id, e);
@@ -7747,6 +7915,8 @@
       </section>
 
       ${sezionePesoProfHTML(piano)}
+
+      ${integrazioneProfStatHTML(x)}
 
       <section class="settings-section">
         <h2>Andamento settimanale</h2>
@@ -8793,6 +8963,8 @@
         <button type="button" class="btn" id="btn-salva-sostituzioni" style="margin-top:10px;">Salva sostituzioni</button>
       </section>
 
+      ${integrazioneProfEditorHTML(piano)}
+
       ${renderEditorPastoHTML(piano, EDITOR_PROF.settSel, EDITOR_PROF.giornoSel, disponibili)}
 
       ${renderCopiaSettimanaHTML(disponibili)}
@@ -8866,6 +9038,7 @@
     });
     document.getElementById("btn-salva-dati-paziente").addEventListener("click", salvaDatiPazienteProfessionista);
     document.getElementById("btn-salva-norme").addEventListener("click", salvaNormeGeneraliProfessionista);
+    collegaIntegrazioneProf(piano);
     document.getElementById("btn-salva-sostituzioni").addEventListener("click", salvaSostituzioniProfessionista);
     document.getElementById("btn-salva-feedback").addEventListener("click", async (e) => {
       const btn = e.currentTarget;
@@ -9008,6 +9181,58 @@
   }
 
   /** Salva le "Regole generali del piano" (una per riga nella textarea) — passa comunque dal validatore per restare nel formato coerente. */
+  // Integrazione prescritta dal nutrizionista (piano.integrazione) e quella
+  // aggiunta dal paziente, con l'aderenza degli ultimi 7 giorni (v123).
+  function integrazioneProfEditorHTML(piano) {
+    if (!window.integrazione) return "";
+    const I = window.integrazione;
+    const prescritti = I.pulisciLista(piano.integrazione);
+    const x = STAT.risultati[piano.id];
+    const miei = x && !x.errore ? I.pulisciLista(x.integrazioneMia) : [];
+    return `
+      <section class="settings-section" id="sezione-integrazione-prof">
+        <h2>Integrazione</h2>
+        <p class="hint">Gli integratori che indichi al paziente: li vede in Impostazioni e nella scheda Oggi, con un promemoria all’orario e la spunta. Solo integratori, non farmaci. Funzione Premium, inclusa per i tuoi pazienti.</p>
+        ${prescritti.length ? `<ul class="integrazione-elenco">${prescritti.map((v) => rigaIntegratoreHTML(v, "data-modifica-int-prof")).join("")}</ul>` : `<p class="stat-nota">Nessun integratore indicato.</p>`}
+        ${prescritti.length < I.MAX_VOCI ? `<button type="button" class="btn btn--ghost" id="btn-aggiungi-int-prof">+ Aggiungi un integratore</button>` : ""}
+        ${miei.length ? `<h3 class="integrazione-sotto">Aggiunti dal paziente</h3><ul class="integrazione-elenco">${miei.map((v) => rigaIntegratoreHTML(v, "")).join("")}</ul>` : ""}
+      </section>`;
+  }
+
+  function collegaIntegrazioneProf(piano) {
+    const sez = document.getElementById("sezione-integrazione-prof");
+    if (!sez || !window.integrazione) return;
+    const I = window.integrazione;
+    const salva = async (nuova) => {
+      const lista = I.pulisciLista(nuova);
+      await window.cloud.salvaPiano(piano.id, { integrazione: lista });
+      piano.integrazione = lista;
+      renderEditorProfessionista();
+    };
+    const add = document.getElementById("btn-aggiungi-int-prof");
+    if (add) add.addEventListener("click", () => apriEditorIntegratore(null, (v) => salva(I.pulisciLista(piano.integrazione).concat(v))));
+    sez.querySelectorAll("[data-modifica-int-prof]").forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.modificaIntProf;
+      const voce = I.pulisciLista(piano.integrazione).find((v) => v.id === id);
+      if (!voce) return;
+      apriEditorIntegratore(voce,
+        (v) => salva(I.pulisciLista(piano.integrazione).map((x) => (x.id === id ? v : x))),
+        () => salva(I.pulisciLista(piano.integrazione).filter((x) => x.id !== id)));
+    }));
+  }
+
+  function integrazioneProfStatHTML(x) {
+    const ad = (x && x.integrazioneAderenza) || [];
+    if (!ad.length) return "";
+    return `
+      <section class="settings-section">
+        <h2>Integrazione · ultimi 7 giorni</h2>
+        <ul class="integrazione-elenco">${ad.map((a) => `<li class="integrazione-riga"><div><strong>${escapeHTML(a.nome)}</strong>${a.quantita ? ` · ${escapeHTML(a.quantita)}` : ""}
+          <small>${a.fonte === "nutrizionista" ? "Indicato da te" : "Aggiunto dal paziente"} · segnato ${a.segnate} volte su ${a.previste}</small></div></li>`).join("")}</ul>
+        <p class="stat-nota" style="margin-top:6px;">Conta le spunte del paziente nella scheda Oggi, compresa la giornata di oggi.</p>
+      </section>`;
+  }
+
   async function salvaNormeGeneraliProfessionista() {
     const piano = PIANO_ATTIVO_PROF;
     const testo = document.getElementById("editor-norme").value;

@@ -788,6 +788,10 @@
       await db.collection("users").doc(uid).update({ parametriAllenamento: parametri });
     },
 
+    async salvaIntegrazione(uid, integrazione) {
+      await db.collection("users").doc(uid).update({ integrazione });
+    },
+
     async salvaAcqua(uid, acqua) {
       await db.collection("users").doc(uid).update({ acqua });
     },

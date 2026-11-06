@@ -33,6 +33,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { getMessaging } = require("firebase-admin/messaging");
 const weekLogic = require("./week-logic.js");
 const macroLogic = require("./macro.js");
+const integrazioneLogic = require("./integrazione.js");
 const crypto = require("crypto");
 
 initializeApp();
@@ -289,6 +290,30 @@ exports.controllaPromemoria = onSchedule(
           { pasti: FieldValue.arrayUnion(key), aggiornato: FieldValue.serverTimestamp() },
           { merge: true }
         );
+      }
+
+      // Integrazione (Premium): promemoria all'orario di ogni integratore,
+      // prescritto dal nutrizionista o aggiunto dal paziente, se non è già segnato.
+      const vociInt = integrazioneLogic.vociDelGiorno(piano.integrazione, utente.integrazione, ora);
+      let premiumInt = null;
+      for (const v of vociInt) {
+        const chiaveInt = "int-" + v.chiave;
+        if (giaInviate.includes(chiaveInt)) continue;
+        if (!pastoDaNotificareOra(ora, v.orario, 0, FINESTRA_MINUTI)) continue;
+        if (premiumInt === null) premiumInt = (await statoPremiumPaziente(utente, Date.now())).attivo;
+        if (!premiumInt) break;
+        if (segnati === null) {
+          const fattiDoc = await utenteRef.collection("pastiFatti").doc(dateKey).get();
+          segnati = fattiDoc.exists ? (fattiDoc.data() || {}) : {};
+        }
+        if (segnati.integratori && segnati.integratori[v.chiave]) continue;
+        try {
+          await inviaNotificaPaziente(utenteRef, tokens, "💊 " + v.nome, v.quantita || "È l'ora del tuo integratore", "pasto-💊 " + v.nome);
+        } catch (e) {
+          console.error("Errore invio promemoria integrazione a", pazienteUid, e);
+          continue;
+        }
+        await trackingRef.set({ pasti: FieldValue.arrayUnion(chiaveInt), aggiornato: FieldValue.serverTimestamp() }, { merge: true });
       }
 
       // Acqua: promemoria facoltativo, saltato se l'obiettivo è già raggiunto

@@ -1,0 +1,24 @@
+/** Integrazione: pulizia delle voci, giorni, ordine e aderenza. node test/integrazione.test.js */
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const I = require("../js/integrazione.js");
+let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; };
+ok(fs.readFileSync(path.join(__dirname, "../js/integrazione.js"), "utf8") === fs.readFileSync(path.join(__dirname, "../functions/integrazione.js"), "utf8"), "le due copie del modulo sono identiche");
+const v = I.pulisciVoce({ id: "a1<x>", nome: "  Magnesio   ", quantita: "1 compressa", orari: ["21:00", "08:00", "21:00", "25:00", "x"], giorni: [3, 1, 9, 3], note: "" });
+ok(v.id === "a1x" && v.nome === "Magnesio" && v.orari.join() === "08:00,21:00" && v.giorni.join() === "1,3", "voce ripulita: " + JSON.stringify(v));
+ok(I.pulisciVoce({ giorni: [1, 2, 3, 4, 5, 6, 7] }).giorni.length === 0, "tutti i giorni = elenco vuoto");
+ok(I.pulisciLista([{ nome: "senza id", orari: ["08:00"] }, { id: "b", nome: "", orari: ["08:00"] }, { id: "c", nome: "Senza orari", orari: [] }]).length === 0, "voci incomplete scartate");
+const presc = [{ id: "p1", nome: "Vitamina D", quantita: "10 gocce", orari: ["08:00"], giorni: [7] }];
+const miei = [{ id: "m1", nome: "Creatina", quantita: "5 g", orari: ["07:30", "18:00"], giorni: [] }];
+const dom = new Date(2026, 10, 8), lun = new Date(2026, 10, 9);
+const vd = I.vociDelGiorno(presc, miei, dom);
+ok(vd.map((x) => x.orario + " " + x.nome).join("|") === "07:30 Creatina|08:00 Vitamina D|18:00 Creatina", "domenica: tre assunzioni in ordine di orario");
+ok(vd[1].fonte === "nutrizionista" && vd[1].chiave === "n_p1_0800" && vd[0].chiave === "m_m1_0730", "fonte e chiave");
+ok(I.vociDelGiorno(presc, miei, lun).length === 2, "lunedì: la vitamina D della domenica non c'è");
+ok(I.giorniTesto([]) === "tutti i giorni" && I.giorniTesto([7]) === "la domenica" && I.giorniTesto([1]) === "il lunedì" && I.giorniTesto([1, 3, 5]) === "L M V", "giorni in testo");
+const spunte = { "2026-11-08": { integratori: { m_m1_0730: true, n_p1_0800: true } }, "2026-11-07": { integratori: { m_m1_1800: true } } };
+const ad = I.aderenza(presc, miei, spunte, dom, 7, false);
+const cr = ad.find((a) => a.nome === "Creatina"), vit = ad.find((a) => a.nome === "Vitamina D");
+ok(cr.previste === 14 && cr.segnate === 2 && vit.previste === 1 && vit.segnate === 1, "aderenza 7 giorni: " + JSON.stringify(ad));
+console.log("OK: " + n + " verifiche superate");

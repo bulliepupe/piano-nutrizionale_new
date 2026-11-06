@@ -12,7 +12,7 @@
  * direttamente da js/firebase-config.js (vedi importScripts più sotto).
  */
 
-const CACHE_VERSION = "v122";
+const CACHE_VERSION = "v123";
 const CACHE_NAME = "piano-nutrizionale-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -33,6 +33,7 @@ const APP_SHELL = [
   "./js/statistiche.js",
   "./js/week-logic.js",
   "./js/macro.js",
+  "./js/integrazione.js",
   "./js/allenamento-file.js",
   "./js/report-preparatore.js",
   "./js/firebase-config.js",
