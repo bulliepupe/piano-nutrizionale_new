@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v123";
+  const VERSIONE_APP = "v124";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -4483,6 +4483,129 @@
   // ---------------------------------------------------------------------
   // Vista "Impostazioni" (paziente) — solo consultazione, niente modifiche al piano
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // Impostazioni a gruppi, con sezioni comprimibili (v124). Le sezioni restano
+  // quelle di sempre: dopo il disegno vengono raggruppate per tema e chiuse
+  // sotto un titolo con una riga di riepilogo; l'app ricorda quelle aperte.
+  // ---------------------------------------------------------------------
+  const GRUPPI_IMPOSTAZIONI = [
+    { titolo: "Il mio percorso", sezioni: ["Il mio piano", "Il tuo nutrizionista", "Il tuo andamento", "Visita dal nutrizionista"] },
+    { titolo: "Ogni giorno", sezioni: ["Promemoria pasti", "Acqua", "Integrazione"] },
+    { titolo: "Allenamento", sezioni: ["Allenamenti"] },
+    { titolo: "Strumenti", sezioni: ["Crudo e cotto", "Spesa condivisa"] },
+    { titolo: "Abbonamento", sezioni: ["Premium"] },
+    { titolo: "App e account", sezioni: ["Aspetto dell'app", "Privacy", "Pausa dal piano", "Il tuo account"], altre: true },
+  ];
+  const SEZIONI_APERTE = new Set();
+
+  /** Una riga che dice lo stato della sezione senza aprirla. */
+  function riepilogoSezioneImpostazioni(titolo) {
+    try {
+      switch (titolo) {
+        case "Premium":
+          if (!PREMIUM.noto) return "Verifica in corso";
+          if (!PREMIUM.attivo) return "Versione gratuita";
+          if (PREMIUM.origine === "nutrizionista") return "Incluso dal tuo nutrizionista";
+          return giorniProvaRimasti() != null ? `Prova gratuita: ${giorniProvaRimasti()} giorni` : "Attivo";
+        case "Il mio piano": {
+          if (gestisceIlPiano()) return "Modifica o carica il tuo piano";
+          const p = (PIANO_ATTIVO && PIANO_ATTIVO.paziente) || {};
+          return [p.obiettivo, p.targetKcal != null ? `~${p.targetKcal} kcal` : ""].filter(Boolean).join(" · ") || "Piano del tuo nutrizionista";
+        }
+        case "Il tuo nutrizionista": return COLLEGATO_NUTRIZIONISTA ? "Collegato" : "Collegati con il codice studio";
+        case "Il tuo andamento": return "Peso e misure";
+        case "Visita dal nutrizionista": return "Riepilogo in PDF per il controllo";
+        case "Promemoria pasti": return notificheAttive() ? `Attivi · ${anticipoMinutiEffettivo()} minuti prima` : "Spenti";
+        case "Acqua":
+          if (!ACQUA.mostra) return "Contatore nascosto";
+          return [ACQUA.obiettivo ? `Obiettivo ${ACQUA.obiettivo} bicchieri` : "Nessun obiettivo", ACQUA.promemoria ? "con promemoria" : ""].filter(Boolean).join(" · ");
+        case "Integrazione": {
+          if (premiumLimitato()) return "Funzione Premium";
+          const n = window.integrazione ? window.integrazione.pulisciLista((PIANO_GREZZO || {}).integrazione).length + window.integrazione.pulisciLista(INTEGRAZIONE).length : 0;
+          return n ? `${n} ${n === 1 ? "integratore" : "integratori"}` : "Nessun integratore";
+        }
+        case "Allenamenti": return "Frequenza cardiaca, FTP e Health Connect";
+        case "Crudo e cotto": return "Calcola il peso da cotto";
+        case "Spesa condivisa": return LISTA.dati ? `Lista «${LISTA.dati.nome || "di casa"}»` : "Non condivisa";
+        case "Aspetto dell'app": return "Tema e caratteri";
+        case "Privacy": return CONSENSO_AI ? "Funzioni AI attive" : "Funzioni AI spente";
+        case "Pausa dal piano": return pausaInCorso() ? "In pausa" : "Nessuna pausa in corso";
+        case "Il tuo account": {
+          const u = window.cloud.utenteCorrente && window.cloud.utenteCorrente();
+          return (u && u.email) || "Account ed eliminazione";
+        }
+        default: return "";
+      }
+    } catch (e) { return ""; }
+  }
+
+  function rendiSezioneComprimibile(sec, titolo, n) {
+    const h2 = sec.querySelector(":scope > h2");
+    if (!h2) return;
+    const corpo = document.createElement("div");
+    corpo.className = "imp-corpo";
+    corpo.id = "imp-corpo-" + n;
+    while (h2.nextSibling) corpo.appendChild(h2.nextSibling);
+    sec.appendChild(corpo);
+    const aperta = SEZIONI_APERTE.has(titolo);
+    corpo.hidden = !aperta;
+    h2.textContent = "";
+    h2.classList.add("imp-h2");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "imp-testa";
+    btn.setAttribute("aria-expanded", String(aperta));
+    btn.setAttribute("aria-controls", corpo.id);
+    const riep = riepilogoSezioneImpostazioni(titolo);
+    btn.innerHTML = `<span class="imp-testa__testi"><span class="imp-testa__titolo">${escapeHTML(titolo)}</span>${riep ? `<span class="imp-testa__riepilogo">${escapeHTML(riep)}</span>` : ""}</span><span class="imp-testa__freccia" aria-hidden="true">›</span>`;
+    btn.addEventListener("click", () => {
+      const apri = corpo.hidden;
+      corpo.hidden = !apri;
+      btn.setAttribute("aria-expanded", String(apri));
+      if (apri) SEZIONI_APERTE.add(titolo); else SEZIONI_APERTE.delete(titolo);
+    });
+    h2.appendChild(btn);
+    sec.classList.add("imp-sezione");
+    sec.dataset.titolo = titolo;
+  }
+
+  function organizzaImpostazioni(contenitore) {
+    const sezioni = Array.from(contenitore.querySelectorAll(":scope > section.settings-section")).map((sec) => {
+      const h2 = sec.querySelector(":scope > h2");
+      return { sec, titolo: h2 ? h2.textContent.trim() : "" };
+    });
+    if (!sezioni.length) return;
+    const noti = new Set(GRUPPI_IMPOSTAZIONI.flatMap((g) => g.sezioni));
+    const wrap = document.createDocumentFragment();
+    let n = 0;
+    GRUPPI_IMPOSTAZIONI.forEach((g) => {
+      const del = sezioni.filter((x) => g.sezioni.includes(x.titolo) || (g.altre && !noti.has(x.titolo)));
+      del.sort((a, b) => {
+        const ia = g.sezioni.indexOf(a.titolo), ib = g.sezioni.indexOf(b.titolo);
+        return (ia < 0 ? -1 : ia) - (ib < 0 ? -1 : ib);
+      });
+      if (!del.length) return;
+      const box = document.createElement("div");
+      box.className = "imp-gruppo";
+      box.innerHTML = `<h2 class="imp-gruppo__titolo">${escapeHTML(g.titolo)}</h2>`;
+      del.forEach((x) => { rendiSezioneComprimibile(x.sec, x.titolo, ++n); box.appendChild(x.sec); });
+      wrap.appendChild(box);
+    });
+    contenitore.insertBefore(wrap, contenitore.firstChild);
+  }
+
+  /** Apre una sezione delle Impostazioni (per i collegamenti diretti). */
+  function apriSezioneImpostazioni(id) {
+    const el = document.getElementById(id);
+    const sec = el && (el.classList.contains("imp-sezione") ? el : el.closest(".imp-sezione"));
+    if (!sec) return el;
+    const corpo = sec.querySelector(":scope > .imp-corpo");
+    const btn = sec.querySelector(".imp-testa");
+    if (corpo && corpo.hidden) { corpo.hidden = false; if (btn) btn.setAttribute("aria-expanded", "true"); }
+    if (sec.dataset.titolo) SEZIONI_APERTE.add(sec.dataset.titolo);
+    return sec;
+  }
+
   function renderImpostazioni() {
     if (RUOLO === "familiare") { renderImpostazioniFamiliare(); return; }
     const p = (PIANO_ATTIVO && PIANO_ATTIVO.paziente) || {};
@@ -4580,6 +4703,7 @@
       ${eliminaAccountSezioneHTML()}
       <p class="stat-nota" style="text-align:center;margin:18px 0 8px;">Il mio Piano · versione ${VERSIONE_APP}</p>
     `;
+    organizzaImpostazioni(root);
     collegaPulsantiMioPiano(root, "impostazioni");
     collegaAcquaImpostazioni();
     collegaIntegrazioneImpostazioni();
@@ -5623,7 +5747,7 @@
       const vai = document.getElementById("btn-ricette-codice");
       if (vai) vai.addEventListener("click", () => {
         attivaTab("impostazioni"); render();
-        setTimeout(() => { const el = document.getElementById("sezione-nutrizionista"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 50);
+        setTimeout(() => { const el = apriSezioneImpostazioni("sezione-nutrizionista"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 50);
       });
       return;
     }
@@ -6231,6 +6355,7 @@
       ${eliminaAccountSezioneHTML()}
       <p class="hint">Account familiare: vedi solo la lista della spesa condivisa. Il piano nutrizionale resta privato di chi lo segue.</p>
     `;
+    organizzaImpostazioni(root);
     document.getElementById("btn-lista-casa").addEventListener("click", apriListaCasa);
     collegaAspetto(renderImpostazioniFamiliare);
     collegaEliminaAccount();

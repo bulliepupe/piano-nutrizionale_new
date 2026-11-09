@@ -2435,3 +2435,19 @@ body.con-informativa { overflow: hidden; }
 .int-giorno span { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--border); font-weight: 600; font-size: 13px; cursor: pointer; }
 .int-giorno input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .int-giorno input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- Impostazioni a gruppi e sezioni comprimibili (v124) ---- */
+.imp-gruppo { margin-bottom: 26px; }
+.imp-gruppo__titolo { font-family: var(--font-body); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 8px 4px; }
+.imp-gruppo .settings-section.imp-sezione { margin-bottom: 8px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; padding: 0; overflow: hidden; }
+.imp-h2 { margin: 0 !important; }
+.imp-testa { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: transparent; border: 0; cursor: pointer; text-align: left; font: inherit; color: var(--ink); }
+.imp-testa__testi { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.imp-testa__titolo { font-size: 15px; font-weight: 600; }
+.imp-testa__riepilogo { font-size: 13px; font-weight: 400; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-testa__freccia { flex: none; font-size: 22px; line-height: 1; color: var(--ink-faint); transition: transform .2s ease; }
+.imp-testa[aria-expanded="true"] .imp-testa__freccia { transform: rotate(90deg); color: var(--accent); }
+.imp-testa:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.imp-corpo { padding: 0 16px 16px; }
+.imp-corpo > .hint:first-child { margin-top: 0; }
+@media (prefers-reduced-motion: reduce) { .imp-testa__freccia { transition: none; } }
