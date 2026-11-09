@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v126";
+  const VERSIONE_APP = "v128";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -4547,7 +4547,7 @@
     { titolo: "Gestione", sezioni: ["Elimina paziente"], altre: true },
   ];
   const GRUPPI_ANDAMENTO_PROF = [
-    { titolo: "Andamento", sezioni: ["Ultime 4 settimane", "Andamento settimanale", "Pasti negli ultimi 30 giorni", "Peso e misure", "Integrazione · ultimi 7 giorni"] },
+    { titolo: "Andamento", sezioni: ["Ultime 4 settimane", "Andamento settimanale", "Pasti negli ultimi 30 giorni", "Pasti non come da piano*", "Peso e misure", "#sezione-attivita", "#sezione-acqua-prof", "Integrazione · ultimi 7 giorni"] },
     { titolo: "Rapporto con il paziente", sezioni: ["Uso dell'app", "Prossimo controllo", "Scrivi a*", "Report per il preparatore"], altre: true },
   ];
   const GRUPPI_PROFILO_PROF = [
@@ -4596,6 +4596,7 @@
         case "Ultime 4 settimane": return `Aderenza: ${pct(r.aderenza30)} in 30 giorni · ${pct(r.aderenza7)} in 7`;
         case "Andamento settimanale": return "Settimana per settimana";
         case "Pasti negli ultimi 30 giorni": return `Feriali ${pct(r.feriali)} · fine settimana ${pct(r.weekend)}`;
+        case "Pasti non come da piano (30 giorni, oggi compreso)": return "Quali pasti, motivi e note del paziente";
         case "Uso dell'app": return r.ultimaInterazione ? "Ultimo accesso registrato" : "Nessun accesso registrato";
         case "Prossimo controllo": return testoControllo || "Non impostato";
         default: return riepilogoSezioneProf(titolo, piano);
@@ -4611,7 +4612,8 @@
   function organizzaSezioni(contenitore, gruppi, riepilogo, chiave, aperte) {
     const sezioni = Array.from(contenitore.querySelectorAll(":scope > section.settings-section")).map((sec) => {
       const h2 = sec.querySelector(":scope > h2");
-      return { sec, titolo: h2 ? h2.textContent.trim() : "" };
+      // sezioni riempite dopo (allenamenti, acqua): si riconoscono dall'id
+      return { sec, titolo: h2 ? h2.textContent.trim() : (sec.id ? "#" + sec.id : "") };
     });
     if (!sezioni.length) return;
     (aperte || []).forEach((t) => { if (!SEZIONI_VISTE.has(chiave + "|" + t)) { SEZIONI_VISTE.add(chiave + "|" + t); SEZIONI_APERTE.add(chiave + "|" + t); } });
@@ -6749,7 +6751,7 @@
         const a = tutti.find((x) => x.giorno + "|" + x.id === b.dataset.allenamentoProf);
         if (a) apriAllenamentoProf(a, piano);
       }));
-      box.hidden = false;
+      box.hidden = false; if (box.closest(".imp-gruppo") && box.querySelector(":scope > h2")) { const t = box.querySelector(":scope > h2").textContent.trim(); rendiSezioneComprimibile(box, t, "andamento-sezione-attivita", "Ultimi 30 giorni, da app, file e Health Connect", "andamento|" + t); }
     } catch (e) { /* sezione facoltativa */ }
   }
 
@@ -6777,7 +6779,7 @@
     box.innerHTML = `<h2>Acqua</h2><p class="hint">Bicchieri da 250 ml segnati dal paziente, media sui giorni in cui li ha registrati.</p>
       ${m7 != null ? `<p class="stat-riga"><span>Ultimi 7 giorni</span><strong>${fmt(m7)} al giorno</strong></p>` : ""}
       <p class="stat-riga"><span>Ultimi 30 giorni</span><strong>${fmt(m30)} al giorno · ${valori.length} ${valori.length === 1 ? "giorno" : "giorni"} registrati</strong></p>`;
-    box.hidden = false;
+    box.hidden = false; if (box.closest(".imp-gruppo") && box.querySelector(":scope > h2")) { const t = box.querySelector(":scope > h2").textContent.trim(); rendiSezioneComprimibile(box, t, "andamento-sezione-acqua-prof", "Bicchieri segnati dal paziente", "andamento|" + t); }
   }
 
   // ---- Professionista: consigli AI dati al paziente ----
@@ -6904,7 +6906,11 @@
     });
     collegaMisure(piano.id, () => {
       const b = document.getElementById("sezione-peso");
-      if (b && pazienteSelezionatoId === piano.id) b.innerHTML = contenutoPesoProfHTML(piano);
+      if (b && pazienteSelezionatoId === piano.id) {
+        b.innerHTML = contenutoPesoProfHTML(piano);
+        // nell'Andamento la sezione è comprimibile: si ricompone dopo ogni aggiornamento
+        if (b.closest(".imp-gruppo")) rendiSezioneComprimibile(b, "Peso e misure", "andamento-peso", riepilogoSezioneProf("Peso e misure", piano), "andamento|Peso e misure");
+      }
     });
   }
 
@@ -8155,7 +8161,6 @@
               <span class="stat-colonna__barra"><span style="height:${s.valore == null ? 0 : Math.max(3, Math.round(s.valore * 100))}%"></span></span>
               <span class="stat-colonna__etichetta">${d.getDate()}/${d.getMonth() + 1}</span>
             </div>`;
-    organizzaSezioni(profRoot, GRUPPI_ANDAMENTO_PROF, (t) => riepilogoSezioneAndamento(t, r, testoControllo, piano), "andamento", ["Ultime 4 settimane", "Andamento settimanale"]);
           }).join("")}
         </div>
         <p class="stat-nota" style="margin-top:8px;">Percentuale di pasti segnati per settimana, dal lunedì indicato. L'ultima colonna è la settimana in corso.</p>
@@ -8216,6 +8221,7 @@
       </section>
       <p class="registro-link"><button type="button" class="link-btn" id="btn-registro-dettagliato">Registro dettagliato (note e consigli AI)</button></p>
     `;
+    organizzaSezioni(profRoot, GRUPPI_ANDAMENTO_PROF, (t) => riepilogoSezioneAndamento(t, r, testoControllo, piano), "andamento", ["Ultime 4 settimane", "Andamento settimanale"]);
 
     document.getElementById("btn-torna-stat").addEventListener("click", renderStatistiche);
     document.getElementById("btn-apri-piano-da-stat").addEventListener("click", () => apriEditorPaziente(id));
