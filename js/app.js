@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v125";
+  const VERSIONE_APP = "v126";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -4546,6 +4546,10 @@
     { titolo: "Cosa vede il paziente", sezioni: ["Riscontro AI sui pasti non come da piano", "Macronutrienti nella scheda Oggi", "Meal prep"] },
     { titolo: "Gestione", sezioni: ["Elimina paziente"], altre: true },
   ];
+  const GRUPPI_ANDAMENTO_PROF = [
+    { titolo: "Andamento", sezioni: ["Ultime 4 settimane", "Andamento settimanale", "Pasti negli ultimi 30 giorni", "Peso e misure", "Integrazione · ultimi 7 giorni"] },
+    { titolo: "Rapporto con il paziente", sezioni: ["Uso dell'app", "Prossimo controllo", "Scrivi a*", "Report per il preparatore"], altre: true },
+  ];
   const GRUPPI_PROFILO_PROF = [
     { titolo: "Il tuo studio", sezioni: ["Come ti vedono i pazienti", "Il tuo codice studio"], altre: true },
   ];
@@ -4575,8 +4579,26 @@
         case "Meal prep": return "Preparazioni in anticipo";
         case "Elimina paziente": return "Cancella il paziente e i suoi dati";
         case "Come ti vedono i pazienti": return "Nome, studio e contatti";
+        case "Peso e misure": return "Misure in studio e pesate a casa";
+        case "Integrazione · ultimi 7 giorni": return "Integratori segnati dal paziente";
+        case "Report per il preparatore": return "Allenamenti da condividere";
         case "Il tuo codice studio": return "Per collegare i pazienti che usano già l’app";
         default: return "";
+      }
+    } catch (e) { return ""; }
+  }
+
+  function riepilogoSezioneAndamento(titolo, r, testoControllo, piano) {
+    try {
+      const pct = (f) => (f == null ? "—" : Math.round(f * 100) + "%");
+      if (titolo.startsWith("Scrivi a")) return "Messaggio di incoraggiamento";
+      switch (titolo) {
+        case "Ultime 4 settimane": return `Aderenza: ${pct(r.aderenza30)} in 30 giorni · ${pct(r.aderenza7)} in 7`;
+        case "Andamento settimanale": return "Settimana per settimana";
+        case "Pasti negli ultimi 30 giorni": return `Feriali ${pct(r.feriali)} · fine settimana ${pct(r.weekend)}`;
+        case "Uso dell'app": return r.ultimaInterazione ? "Ultimo accesso registrato" : "Nessun accesso registrato";
+        case "Prossimo controllo": return testoControllo || "Non impostato";
+        default: return riepilogoSezioneProf(titolo, piano);
       }
     } catch (e) { return ""; }
   }
@@ -4595,13 +4617,15 @@
     (aperte || []).forEach((t) => { if (!SEZIONI_VISTE.has(chiave + "|" + t)) { SEZIONI_VISTE.add(chiave + "|" + t); SEZIONI_APERTE.add(chiave + "|" + t); } });
     const segnaposto = document.createComment("gruppi");
     contenitore.insertBefore(segnaposto, sezioni[0].sec);
-    const noti = new Set(gruppi.flatMap((g) => g.sezioni));
+    // un nome che finisce con * vale come prefisso (titoli con il nome del paziente)
+    const indice = (lista, t) => lista.findIndex((x) => (x.endsWith("*") ? t.startsWith(x.slice(0, -1)) : x === t));
+    const tutti = gruppi.flatMap((g) => g.sezioni);
     const wrap = document.createDocumentFragment();
     let n = 0;
     gruppi.forEach((g) => {
-      const del = sezioni.filter((x) => g.sezioni.includes(x.titolo) || (g.altre && !noti.has(x.titolo)));
+      const del = sezioni.filter((x) => indice(g.sezioni, x.titolo) >= 0 || (g.altre && indice(tutti, x.titolo) < 0));
       del.sort((a, b) => {
-        const ia = g.sezioni.indexOf(a.titolo), ib = g.sezioni.indexOf(b.titolo);
+        const ia = indice(g.sezioni, a.titolo), ib = indice(g.sezioni, b.titolo);
         return (ia < 0 ? -1 : ia) - (ib < 0 ? -1 : ib);
       });
       if (!del.length) return;
@@ -8131,6 +8155,7 @@
               <span class="stat-colonna__barra"><span style="height:${s.valore == null ? 0 : Math.max(3, Math.round(s.valore * 100))}%"></span></span>
               <span class="stat-colonna__etichetta">${d.getDate()}/${d.getMonth() + 1}</span>
             </div>`;
+    organizzaSezioni(profRoot, GRUPPI_ANDAMENTO_PROF, (t) => riepilogoSezioneAndamento(t, r, testoControllo, piano), "andamento", ["Ultime 4 settimane", "Andamento settimanale"]);
           }).join("")}
         </div>
         <p class="stat-nota" style="margin-top:8px;">Percentuale di pasti segnati per settimana, dal lunedì indicato. L'ultima colonna è la settimana in corso.</p>
