@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v124";
+  const VERSIONE_APP = "v125";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -4539,7 +4539,85 @@
     } catch (e) { return ""; }
   }
 
-  function rendiSezioneComprimibile(sec, titolo, n) {
+  // Gruppi del pannello del nutrizionista (v125): scheda del paziente e studio
+  const GRUPPI_EDITOR_PROF = [
+    { titolo: "Paziente", sezioni: ["Dati paziente"] },
+    { titolo: "Piano", sezioni: ["Modifica un pasto", "Copia una settimana", "Regole generali del piano", "Sostituzioni pasto", "Integrazione", "Importa / sostituisci l'intero piano"] },
+    { titolo: "Cosa vede il paziente", sezioni: ["Riscontro AI sui pasti non come da piano", "Macronutrienti nella scheda Oggi", "Meal prep"] },
+    { titolo: "Gestione", sezioni: ["Elimina paziente"], altre: true },
+  ];
+  const GRUPPI_PROFILO_PROF = [
+    { titolo: "Il tuo studio", sezioni: ["Come ti vedono i pazienti", "Il tuo codice studio"], altre: true },
+  ];
+
+  function riepilogoSezioneProf(titolo, piano) {
+    try {
+      const pz = (piano && piano.paziente) || {};
+      switch (titolo) {
+        case "Dati paziente": return [piano && piano.pazienteNome || pz.nome, pz.obiettivo, pz.targetKcal != null ? `~${pz.targetKcal} kcal` : ""].filter(Boolean).join(" · ");
+        case "Modifica un pasto": return "Pasti di ogni giorno, settimana per settimana";
+        case "Copia una settimana": return "Duplica una settimana su un’altra";
+        case "Regole generali del piano": {
+          const n = String((piano && piano.norme) || "").split("\n").filter((r) => r.trim()).length;
+          return n ? `${n} ${n === 1 ? "regola" : "regole"}` : "Nessuna regola";
+        }
+        case "Sostituzioni pasto": {
+          const n = Array.isArray(piano && piano.sostituzioni) ? piano.sostituzioni.length : 0;
+          return n ? `${n} ${n === 1 ? "gruppo" : "gruppi"} di alimenti equivalenti` : "Nessun gruppo";
+        }
+        case "Integrazione": {
+          const n = window.integrazione ? window.integrazione.pulisciLista(piano && piano.integrazione).length : 0;
+          return n ? `${n} ${n === 1 ? "integratore indicato" : "integratori indicati"}` : "Nessun integratore indicato";
+        }
+        case "Importa / sostituisci l'intero piano": return "Da PDF o foto, con controllo prima di salvare";
+        case "Riscontro AI sui pasti non come da piano": return piano && piano.feedbackAI && piano.feedbackAI.modo === "spento" ? "Spento" : "Attivo: riscontro descrittivo";
+        case "Macronutrienti nella scheda Oggi": return piano && piano.macro && piano.macro.visibile === false ? "Nascosti al paziente" : "Visibili al paziente";
+        case "Meal prep": return "Preparazioni in anticipo";
+        case "Elimina paziente": return "Cancella il paziente e i suoi dati";
+        case "Come ti vedono i pazienti": return "Nome, studio e contatti";
+        case "Il tuo codice studio": return "Per collegare i pazienti che usano già l’app";
+        default: return "";
+      }
+    } catch (e) { return ""; }
+  }
+
+  /**
+   * Raggruppa le sezioni figlie dirette di un contenitore e le rende
+   * comprimibili. chiave distingue le pagine nel ricordo delle sezioni aperte;
+   * aperte: titoli aperti la prima volta.
+   */
+  function organizzaSezioni(contenitore, gruppi, riepilogo, chiave, aperte) {
+    const sezioni = Array.from(contenitore.querySelectorAll(":scope > section.settings-section")).map((sec) => {
+      const h2 = sec.querySelector(":scope > h2");
+      return { sec, titolo: h2 ? h2.textContent.trim() : "" };
+    });
+    if (!sezioni.length) return;
+    (aperte || []).forEach((t) => { if (!SEZIONI_VISTE.has(chiave + "|" + t)) { SEZIONI_VISTE.add(chiave + "|" + t); SEZIONI_APERTE.add(chiave + "|" + t); } });
+    const segnaposto = document.createComment("gruppi");
+    contenitore.insertBefore(segnaposto, sezioni[0].sec);
+    const noti = new Set(gruppi.flatMap((g) => g.sezioni));
+    const wrap = document.createDocumentFragment();
+    let n = 0;
+    gruppi.forEach((g) => {
+      const del = sezioni.filter((x) => g.sezioni.includes(x.titolo) || (g.altre && !noti.has(x.titolo)));
+      del.sort((a, b) => {
+        const ia = g.sezioni.indexOf(a.titolo), ib = g.sezioni.indexOf(b.titolo);
+        return (ia < 0 ? -1 : ia) - (ib < 0 ? -1 : ib);
+      });
+      if (!del.length) return;
+      const box = document.createElement("div");
+      box.className = "imp-gruppo";
+      box.innerHTML = `<h2 class="imp-gruppo__titolo">${escapeHTML(g.titolo)}</h2>`;
+      del.forEach((x) => { rendiSezioneComprimibile(x.sec, x.titolo, chiave + "-" + (++n), riepilogo(x.titolo), chiave + "|" + x.titolo); box.appendChild(x.sec); });
+      wrap.appendChild(box);
+    });
+    contenitore.insertBefore(wrap, segnaposto);
+    segnaposto.remove();
+  }
+  const SEZIONI_VISTE = new Set();
+
+  function rendiSezioneComprimibile(sec, titolo, n, riepilogoTesto, chiaveAperta) {
+    const chiaveA = chiaveAperta || titolo;
     const h2 = sec.querySelector(":scope > h2");
     if (!h2) return;
     const corpo = document.createElement("div");
@@ -4547,7 +4625,7 @@
     corpo.id = "imp-corpo-" + n;
     while (h2.nextSibling) corpo.appendChild(h2.nextSibling);
     sec.appendChild(corpo);
-    const aperta = SEZIONI_APERTE.has(titolo);
+    const aperta = SEZIONI_APERTE.has(chiaveA);
     corpo.hidden = !aperta;
     h2.textContent = "";
     h2.classList.add("imp-h2");
@@ -4556,17 +4634,17 @@
     btn.className = "imp-testa";
     btn.setAttribute("aria-expanded", String(aperta));
     btn.setAttribute("aria-controls", corpo.id);
-    const riep = riepilogoSezioneImpostazioni(titolo);
+    const riep = riepilogoTesto != null ? riepilogoTesto : riepilogoSezioneImpostazioni(titolo);
     btn.innerHTML = `<span class="imp-testa__testi"><span class="imp-testa__titolo">${escapeHTML(titolo)}</span>${riep ? `<span class="imp-testa__riepilogo">${escapeHTML(riep)}</span>` : ""}</span><span class="imp-testa__freccia" aria-hidden="true">›</span>`;
     btn.addEventListener("click", () => {
       const apri = corpo.hidden;
       corpo.hidden = !apri;
       btn.setAttribute("aria-expanded", String(apri));
-      if (apri) SEZIONI_APERTE.add(titolo); else SEZIONI_APERTE.delete(titolo);
+      if (apri) SEZIONI_APERTE.add(chiaveA); else SEZIONI_APERTE.delete(chiaveA);
     });
     h2.appendChild(btn);
     sec.classList.add("imp-sezione");
-    sec.dataset.titolo = titolo;
+    sec.dataset.titolo = chiaveA;
   }
 
   function organizzaImpostazioni(contenitore) {
@@ -9155,6 +9233,7 @@
         <button type="button" class="btn btn--pericolo" id="btn-elimina-paziente">Elimina paziente</button>
       </section>
     `;
+    organizzaSezioni(profRoot, GRUPPI_EDITOR_PROF, (t) => riepilogoSezioneProf(t, piano), "editor", ["Modifica un pasto"]);
 
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-andamento-paziente").addEventListener("click", () => {
@@ -9626,6 +9705,7 @@
       </section>
       ${codiceStudioSezioneHTML()}
     `;
+    organizzaSezioni(profRoot, GRUPPI_PROFILO_PROF, (t) => riepilogoSezioneProf(t, null), "profilo", []);
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-salva-profilo").addEventListener("click", salvaProfiloProfessionista);
     caricaCodiceStudio();
@@ -9817,7 +9897,7 @@
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);
     document.getElementById("btn-vai-codice-studio").addEventListener("click", () => {
       renderProfiloProfessionista();
-      setTimeout(() => { const el = document.getElementById("sezione-codice-studio"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 50);
+      setTimeout(() => { const el = apriSezioneImpostazioni("sezione-codice-studio"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 50);
     });
     document.getElementById("btn-crea-paziente").addEventListener("click", onCreaPaziente);
   }
