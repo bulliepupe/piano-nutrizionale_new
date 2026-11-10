@@ -84,8 +84,9 @@ ok(T.impattoSullaGiornata("lieve", prev, M.pulisciStima({ carboidrati: 45, prote
 ok(T.impattoSullaGiornata("moderato", prev, M.pulisciStima({ carboidrati: 7, proteine: 3, grassi: 9 }), 1500) === "lieve", "piccola aggiunta: lieve");
 ok(T.impattoSullaGiornata("irrilevante", prev, M.pulisciStima({ carboidrati: 6, proteine: 3, grassi: 8 }), 1500) === "irrilevante", "scambio equivalente resta irrilevante");
 ok(T.impattoSullaGiornata("lieve", prev, M.pulisciStima({ carboidrati: 80, proteine: 10, grassi: 30 }), 1500) === "rilevante", "oltre il 15%: marcata");
-ok(T.impattoSullaGiornata("lieve", prev, null, 1500) === "lieve", "senza numeri resta l'AI");
-ok(T.impattoSullaGiornata("lieve", prev, prev, 0) === "lieve", "senza calorie del giorno resta l'AI");
+ok(T.impattoSullaGiornata("lieve", prev, null, 1500) === "non_stimato", "senza stima del pasto: nessun livello (v131)");
+ok(T.impattoSullaGiornata("rilevante", prev, prev, 0) === "non_stimato", "piano senza calorie del giorno: nessun livello, mai quello dell'AI (v131)");
+ok(T.impattoSullaGiornata("irrilevante", null, prev, 1500) === "non_stimato", "senza valori previsti: nessun livello, nemmeno irrilevante (v131)");
 
 // v121: sostituzione di un singolo alimento (tacchino 60 g al posto del grana 20 g)
 const pranzo = M.pulisciStima({ carboidrati: 60, proteine: 18, grassi: 20, affidabilita: "media" });

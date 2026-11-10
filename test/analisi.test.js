@@ -57,4 +57,8 @@ const lungo = "Nelle note ricorrono sostituzioni a pranzo e cena. Gli esempi son
 const e = T.normalizzaAnalisi({ note: lungo });
 assert.strictEqual(e.note, "Nelle note ricorrono sostituzioni a pranzo e cena.", "taglio alla frase completa: " + e.note);
 console.log("ok taglio a fine frase");
-console.log("OK: 6 verifiche superate");
+// 7. Punti senza dati scartati
+const g = T.normalizzaAnalisi({ dettagli: ["Nessun dato sul peso disponibile", "Data del prossimo controllo non indicata", "Ultima apertura dell'app il 6/11"] });
+assert.deepStrictEqual(g.dettagli, ["Ultima apertura dell'app il 6/11"]);
+console.log("ok punti senza dati scartati");
+console.log("OK: 7 verifiche superate");

@@ -2122,10 +2122,12 @@ function macroEffettiviDaRisposta(input, previsti, prodotti, stato) {
  * della giornata (dal 5/11/2026): sotto il 10% lieve (o irrilevante, se l'AI
  * ha riconosciuto uno scambio equivalente), dal 10 al 25% moderata, oltre il
  * 25% marcata.
- * Senza numeri sufficienti resta la valutazione dell'AI.
+ * Senza numeri sufficienti (piano senza calorie della giornata o stime
+ * mancanti) nessun livello: "non_stimato" (v131, parere MDR dell'8/11/2026:
+ * il livello non lo decide l'AI).
  */
 function impattoSullaGiornata(impattoAI, previsti, effettivi, kcalGiorno) {
-  if (!previsti || !effettivi || !(kcalGiorno > 0)) return impattoAI;
+  if (!previsti || !effettivi || !(kcalGiorno > 0)) return "non_stimato";
   const quota = Math.abs((Number(effettivi.kcal) || 0) - (Number(previsti.kcal) || 0)) / kcalGiorno;
   if (quota < 0.10) return impattoAI === "irrilevante" ? "irrilevante" : "lieve";
   if (quota < 0.25) return "moderato";
@@ -2601,6 +2603,7 @@ REGOLE
 - Nessuna indicazione al professionista: niente azioni suggerite, inviti a contattare o sentire il paziente, proposte di modifica del piano, approfondimenti o messaggi da inviare.
 - Nessuna considerazione clinica o di salute: niente diagnosi, rischi, effetti sul peso o sul percorso, interpretazioni del peso.
 - Non nominare il paziente e non rivolgerti a lui.
+- Riscontri: se il conteggio dei riscontri è tutto a zero, non parlarne. Il livello "non_stimato" indica riscontri senza livello (piano senza calorie della giornata).
 - Scrivi le date nel formato giorno/mese (es. 6/11), mai come 2026-11-06.
 - Sii conciso: ogni campo al massimo 2 frasi brevi, senza elenchi lunghi tra parentesi; negli esempi tra virgolette riporta al massimo 2 note. Non usare l'abbreviazione "es.".
 - PIANO APPENA INIZIATO: giorniValutati30 indica da quanti giorni il piano è attivo negli ultimi 30. Riferisci aderenza e uso dell'app solo a quei giorni, mai ai 30 (non scrivere "1 giorno su 30"). Solo se è inferiore a 7, scrivi nella sintesi che il piano è attivo da pochi giorni e i dati sono ancora pochi; da 7 giorni in su non dirlo.`;
@@ -2624,6 +2627,9 @@ const STRUMENTO_ANALISI = {
 // Frasi da scartare anche se il modello non rispetta le istruzioni: indicazioni
 // al professionista, inviti a contattare il paziente, giudizi e allarmi.
 const RE_VALUTAZIONE_ANALISI = /\b(contatt|sentirl|chiamarl|scrivergli|consigl|suggeri|conviene|converrebbe|dovrebbe|dovresti|occorre|bisogna|sarebbe utile|valuta|rivaluta|approfond|interven|attenzion|preoccup|critic|allarm|rischi|ottim|eccellent|positiv|negativ|insufficien|scars|buon|bene\b|male\b|tenere d'occhio|da monitorare|monitora)\w*/i;
+
+// Punti vuoti da scartare: "dato non disponibile", "nessun dato sul peso"...
+const RE_DATO_MANCANTE = /\b(non disponibil|nessun dato|non indicat)\w*/i;
 
 function soloFrasiNeutre(t) {
   const frasi = String(t || "").match(/[^.!?]+[.!?]*/g) || [];
@@ -2654,7 +2660,7 @@ function normalizzaAnalisi(r) {
     sintesi: breve(r.sintesi, 600),
     scostamenti: breve(r.scostamenti, 480),
     note: breve(r.note, 480),
-    dettagli: elenco(r.dettagli, 4, 200),
+    dettagli: elenco(r.dettagli, 4, 200).filter((x) => !RE_DATO_MANCANTE.test(x)),
   };
 }
 

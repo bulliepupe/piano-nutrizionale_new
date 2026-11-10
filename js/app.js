@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v130";
+  const VERSIONE_APP = "v131";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -3155,7 +3155,7 @@
   // Dettatura vocale della nota: riconoscimento del sistema del telefono (Google o Apple)
   const LS_RISCONTRI_CHIUSI = "pnut:riscontri-chiusi";
   // v118: riscontro solo descrittivo (differenza rispetto al piano, nessun consiglio)
-  const ETICHETTE_IMPATTO = { irrilevante: "In linea con il piano", nessuno: "In linea con il piano", lieve: "Differenza lieve", moderato: "Differenza moderata", rilevante: "Differenza marcata" };
+  const ETICHETTE_IMPATTO = { irrilevante: "In linea con il piano", nessuno: "In linea con il piano", lieve: "Differenza lieve", moderato: "Differenza moderata", rilevante: "Differenza marcata", non_stimato: "Differenza rispetto al piano" };
 
   /** Bilancio della giornata fin qui (calorie assunte sulle previste), calcolato dall'app. */
   function bilancioGiornoTesto(giorno, fatti) {
@@ -3253,7 +3253,7 @@
       </div>`;
     }
     return `
-      <div class="riscontro riscontro--${escapeHTML(r.impatto || "lieve")}">
+      <div class="riscontro riscontro--${escapeHTML(r.impatto && r.impatto !== "non_stimato" ? r.impatto : "lieve")}">
         <div class="riscontro__testa">
           <strong>📊 Com'è andato questo pasto</strong>
           <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button>
@@ -6620,7 +6620,7 @@
     try { misure = await window.cloud.leggiMisure(piano.id); } catch (e) { /* facoltative */ }
     const limite = S.chiave(new Date(Date.now() - 30 * 86400000));
     riscontri = riscontri.filter((x) => x.data && x.data >= limite);
-    const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0 };
+    const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0, non_stimato: 0 };
     riscontri.forEach((x) => { const k = x.impatto === "nessuno" ? "irrilevante" : x.impatto; if (k in conteggio) conteggio[k]++; });
     const rp = riepilogoPeso(misure, piano.corpo);
     return {
@@ -6776,9 +6776,9 @@
   }
 
   function sintesiRiscontri(lista) {
-    const ORDINE = ["irrilevante", "lieve", "moderato", "rilevante"];
-    const NOMI = { irrilevante: ["irrilevante", "irrilevanti"], lieve: ["lieve", "lievi"], moderato: ["moderato", "moderati"], rilevante: ["rilevante", "rilevanti"] };
-    const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0 };
+    const ORDINE = ["irrilevante", "lieve", "moderato", "rilevante", "non_stimato"];
+    const NOMI = { irrilevante: ["irrilevante", "irrilevanti"], lieve: ["lieve", "lievi"], moderato: ["moderato", "moderati"], rilevante: ["rilevante", "rilevanti"], non_stimato: ["senza livello", "senza livello"] };
+    const conteggio = { irrilevante: 0, lieve: 0, moderato: 0, rilevante: 0, non_stimato: 0 };
     lista.forEach((r) => { const k = r.impatto === "nessuno" ? "irrilevante" : r.impatto; if (k in conteggio) conteggio[k]++; });
     return ORDINE.filter((k) => conteggio[k]).map((k) => `${conteggio[k]} ${NOMI[k][conteggio[k] === 1 ? 0 : 1]}`).join(", ");
   }
@@ -6786,7 +6786,7 @@
   function rigaRiscontroHTML(r) {
     const STATI = { diverso: "fatto diversamente", parziale: "in parte", saltato: "saltato" };
     const d = window.statistiche.daChiave(r.data);
-    return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(MEAL_META[r.pasto] ? MEAL_META[r.pasto].label : r.pasto)} · ${STATI[r.stato] || ""} · impatto ${escapeHTML(r.impatto || "")}${r.frequente ? " · ⚠️ scostamenti frequenti" : ""}</span>
+    return `<li class="stat-nota-pasto"><span class="stat-nota-pasto__testa">${d.getDate()}/${d.getMonth() + 1} · ${escapeHTML(MEAL_META[r.pasto] ? MEAL_META[r.pasto].label : r.pasto)} · ${STATI[r.stato] || ""} · ${escapeHTML(ETICHETTE_IMPATTO[r.impatto] || ("impatto " + (r.impatto || "")))}${r.frequente ? " · ⚠️ scostamenti frequenti" : ""}</span>
         <span>${escapeHTML(r.stima || "")}</span>
         ${(r.suggerimenti || []).map((x) => `<span>→ ${escapeHTML(MEAL_META[x.pasto] ? MEAL_META[x.pasto].label : x.pasto)}: ${escapeHTML(x.testo)}</span>`).join("")}</li>`;
   }
@@ -6797,7 +6797,7 @@
     try {
       const lista = await leggiRiscontri30(piano);
       if (!lista.length || pazienteSelezionatoId !== piano.id) return;
-      riga.innerHTML = `<span>Consigli AI dati al paziente</span><strong>${lista.length}: ${escapeHTML(sintesiRiscontri(lista))}</strong>`;
+      riga.innerHTML = `<span>Riscontri AI mostrati al paziente</span><strong>${lista.length}: ${escapeHTML(sintesiRiscontri(lista))}</strong>`;
       riga.hidden = false;
     } catch (e) { /* riga facoltativa */ }
   }
