@@ -64,3 +64,20 @@ assert.equal(p.problemaPagamento, true);
 assert.equal(T.premiumDaRevenueCat({ entitlements: {} }, ora), null);
 assert.equal(T.premiumDaRevenueCat(null, ora), null);
 console.log("Tutti i controlli superati");
+
+// R8 (v133): cancellazione del cliente RevenueCat dopo l'eliminazione dell'account
+{
+  const assert = require("assert");
+  const path = require("path");
+  const req = require("module").createRequire(path.join(__dirname, "../functions/index.js"));
+  const T2 = req("./index.js")._test;
+  assert.strictEqual(T2.esitoCancellazioneRC(200, 0), "fatto");
+  assert.strictEqual(T2.esitoCancellazioneRC(404, 3), "fatto", "cliente mai creato: niente da cancellare");
+  assert.strictEqual(T2.esitoCancellazioneRC(500, 0), "riprova");
+  assert.strictEqual(T2.esitoCancellazioneRC(0, 8), "riprova", "errore di rete: riprova");
+  assert.strictEqual(T2.esitoCancellazioneRC(429, 9), "abbandona", "al decimo tentativo si abbandona");
+  const src = require("fs").readFileSync(path.join(__dirname, "../functions/index.js"), "utf8");
+  const i = src.indexOf("async function cancellaDatiPaziente"), j = src.indexOf("\n}\n", i);
+  assert.ok(/cancellazioniRevenueCat/.test(src.slice(i, j)), "l'eliminazione del paziente mette in coda il cliente RevenueCat");
+  console.log("OK: cancellazione RevenueCat (6 verifiche)");
+}

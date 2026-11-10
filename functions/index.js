@@ -544,6 +544,10 @@ async function cancellaDatiPaziente(pazienteUid, pianoRef) {
       if (e.code !== "auth/user-not-found") throw new HttpsError("internal", "Impossibile eliminare l'account di accesso.");
     }
 
+    // 1b) Cliente RevenueCat (abbonamenti dagli store): cancellato di notte da
+    // cancellaClientiRevenueCat, che ha la chiave segreta (v133, punto R8).
+    await db.collection("cancellazioniRevenueCat").doc(pazienteUid).set({ richiesta: FieldValue.serverTimestamp(), tentativi: 0 }).catch(() => {});
+
     // 2) Esce dalla eventuale lista di casa (gli altri membri non vedono più i suoi alimenti)
     if (utente.exists && utente.data().listaCasa) await lasciaLista(pazienteUid, utente.data().listaCasa).catch(() => {});
     // 3) Documento utente + sottoraccolte (spunte "pasto fatto", spesa, riscontri).
@@ -1256,6 +1260,45 @@ exports.sincronizzaAbbonamento = onCall({ secrets: [REVENUECAT_SECRET_KEY] }, as
   const utente = (await db.collection("users").doc(uid).get()).data() || {};
   return statoPremiumPaziente(utente, Date.now());
 });
+
+/**
+ * Cancellazione del cliente RevenueCat dopo l'eliminazione dell'account
+ * (v133, parere MDR/privacy punto R8). La richiesta resta in coda in
+ * /cancellazioniRevenueCat/{uid} finché RevenueCat non conferma (o risponde
+ * che il cliente non esiste); dopo 10 tentativi falliti si abbandona e si
+ * registra l'errore per il controllo manuale.
+ */
+const MAX_TENTATIVI_RC = 10;
+function esitoCancellazioneRC(status, tentativi) {
+  if (status >= 200 && status < 300) return "fatto";
+  if (status === 404) return "fatto"; // cliente mai creato o già cancellato
+  return (Number(tentativi) || 0) + 1 >= MAX_TENTATIVI_RC ? "abbandona" : "riprova";
+}
+
+async function eseguiCancellazioniRevenueCat(chiave) {
+  const coda = await db.collection("cancellazioniRevenueCat").limit(200).get();
+  for (const d of coda.docs) {
+    let status = 0;
+    try {
+      const r = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(d.id)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${chiave}`, "Content-Type": "application/json" },
+      });
+      status = r.status;
+    } catch (e) { status = 0; }
+    const esito = esitoCancellazioneRC(status, d.data().tentativi);
+    if (esito === "riprova") await d.ref.update({ tentativi: FieldValue.increment(1), ultimoStato: status });
+    else {
+      if (esito === "abbandona") console.error("cancellaClientiRevenueCat: cancellazione non riuscita dopo 10 tentativi", d.id, status);
+      await d.ref.delete();
+    }
+  }
+}
+
+exports.cancellaClientiRevenueCat = onSchedule(
+  { schedule: "45 3 * * *", timeZone: "Europe/Rome", secrets: [REVENUECAT_SECRET_KEY] },
+  async () => { await eseguiCancellazioniRevenueCat(REVENUECAT_SECRET_KEY.value()); },
+);
 
 function stessaStringa(a, b) {
   const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
@@ -2894,5 +2937,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
