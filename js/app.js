@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v128";
+  const VERSIONE_APP = "v129";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -6590,13 +6590,14 @@
       </svg>`;
   }
 
-  // ---- Professionista: analisi AI dell'andamento (in cima alla scheda) ----
-  // Lettura dell'AI (considera anche note, riscontri e peso): distinta dall'indicatore di aderenza ETICHETTE_STATO
-  const ETICHETTE_ANALISI = { verde: "Lettura AI: nessun segnale critico", giallo: "Lettura AI: da tenere d'occhio", rosso: "Lettura AI: da contattare" };
+  // ---- Professionista: sintesi AI dell'andamento (in cima alla scheda) ----
+  // Dalla v129 (parere MDR, destinazione non medica) la sintesi descrive i dati
+  // senza valutarli: niente semaforo, azioni suggerite, contatti o bozze di messaggio.
+  const FORMATO_ANALISI = 2;
 
   function analisiAttesaHTML() {
     return `
-      <div class="analisi-ai__testa"><span class="analisi-ai__icona" aria-hidden="true">✨</span><div><h2>Analisi AI dell'andamento</h2><p>Sto leggendo i dati degli ultimi 30 giorni…</p></div></div>
+      <div class="analisi-ai__testa"><span class="analisi-ai__icona" aria-hidden="true">✨</span><div><h2>Sintesi AI dell'andamento</h2><p>Sto riassumendo i dati degli ultimi 30 giorni…</p></div></div>
       <div class="analisi-ai__attesa"><span></span><span></span><span></span></div>`;
   }
 
@@ -6605,7 +6606,7 @@
     const t = JSON.stringify(obj);
     let h = 5381;
     for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
-    return "v1-" + h.toString(36) + "-" + t.length;
+    return "v2-" + h.toString(36) + "-" + t.length;
   }
 
   async function datiPerAnalisi(piano, r) {
@@ -6629,16 +6630,15 @@
       aderenzaFeriali: r.feriali == null ? null : Math.round(r.feriali * 100),
       aderenzaWeekend: r.weekend == null ? null : Math.round(r.weekend * 100),
       giorniDiFilaRispettati: r.serie, record: r.record,
-      statoCalcolatoDallApp: ETICHETTE_STATO[r.stato] || r.stato, segnaliDellApp: r.motivi,
+      segnaliDellApp: r.motivi,
       aderenzaPerSettimana: (r.settimane || []).map((x) => ({ settimanaDal: x.lunedi, aderenza: x.valore == null ? null : Math.round(x.valore * 100) })),
       pastiUltimi30giorni: (r.perPasto || []).map((x) => ({ pasto: lbl(x.pasto), ...x.conta })),
       pastiNonComeDaPiano: { fattiDiversamente: grp(im.diverso), fattiInParte: grp(im.parziale), saltati: grp(im.saltato) },
       noteDelPaziente: (im.note || []).filter((n) => n.nota).map((n) => ({ giorno: n.giorno, pasto: lbl(n.pasto), stato: n.stato, motivo: motivo(n.motivo), nota: n.nota })),
-      riscontriAI: { attivo: !(piano.feedbackAI && piano.feedbackAI.modo === "spento"), conteggioImpatti30giorni: conteggio, ultimi: riscontri.slice(0, 10).map((x) => ({ giorno: x.data, pasto: lbl(x.pasto), impatto: x.impatto, stima: x.stima })) },
+      riscontriAI: { attivo: !(piano.feedbackAI && piano.feedbackAI.modo === "spento"), conteggioLivelli30giorni: conteggio },
       peso: rp ? { ultimoKg: rp.ultimo.peso, ultimoIl: rp.ultimo.data, variazioneDallInizioKg: rp.variazioneInizio == null ? null : Math.round(rp.variazioneInizio * 10) / 10, variazioneUltimoControlloKg: rp.variazioneControllo == null ? null : Math.round(rp.variazioneControllo * 10) / 10, obiettivoKg: rp.obiettivo, misurazioni: rp.conPeso.length } : null,
       usoApp: { ultimaInterazione: r.ultimaInterazione, giorniInattivo: r.giorniInattivo, promemoria: r.notifiche },
       prossimoControllo: r.prossimoControllo ? { traGiorni: r.prossimoControllo.traGiorni } : null,
-      obiettivo: piano.obiettivo || (piano.paziente && piano.paziente.obiettivo) || null,
     };
   }
 
@@ -6653,7 +6653,7 @@
       let analisi = null;
       if (!forza) {
         try { analisi = await window.cloud.leggiAnalisiAndamento(piano.id); } catch (e) { analisi = null; }
-        if (analisi && (analisi.impronta !== impronta || Date.now() - (analisi.creata || 0) > 7 * 86400000)) analisi = null;
+        if (analisi && (analisi.formato !== FORMATO_ANALISI || analisi.impronta !== impronta || Date.now() - (analisi.creata || 0) > 7 * 86400000)) analisi = null;
       }
       if (!analisi) analisi = await window.cloud.analizzaAndamento(piano.id, dati, impronta);
       if (ancoraQui()) mostraAnalisiAndamento(box, piano, r, analisi);
@@ -6661,11 +6661,11 @@
       if (!ancoraQui()) return;
       const m = String((err && err.message) || "");
       box.innerHTML = `
-        <div class="analisi-ai__testa"><span class="analisi-ai__icona" aria-hidden="true">✨</span><div><h2>Analisi AI dell'andamento</h2>
-        <p>${m === "limite-giornaliero" ? "Per oggi le analisi disponibili sono esaurite."
+        <div class="analisi-ai__testa"><span class="analisi-ai__icona" aria-hidden="true">✨</span><div><h2>Sintesi AI dell'andamento</h2>
+        <p>${m === "limite-giornaliero" ? "Per oggi le sintesi disponibili sono esaurite."
           : m === "licenza-non-attiva" ? "Serve una licenza attiva."
           : m === "consenso-ai-negato" ? "Il paziente non ha dato il consenso alle funzioni AI: può attivarlo dall'app, in Impostazioni → Privacy. Le statistiche qui sotto restano disponibili."
-          : "Analisi non disponibile in questo momento."}</p></div></div>
+          : "Sintesi non disponibile in questo momento."}</p></div></div>
         ${m === "consenso-ai-negato" ? "" : `<button type="button" class="btn btn--ghost" id="analisi-riprova">Riprova</button>`}`;
       const b = document.getElementById("analisi-riprova");
       if (b) b.addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
@@ -6675,35 +6675,20 @@
   function mostraAnalisiAndamento(box, piano, r, a) {
     const d = new Date(a.creata || Date.now());
     const quando = `${d.getDate()}/${d.getMonth() + 1} alle ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    box.className = `analisi-ai analisi-ai--${a.valutazione}`;
+    box.className = "analisi-ai";
     box.innerHTML = `
       <div class="analisi-ai__testa">
         <span class="analisi-ai__icona" aria-hidden="true">✨</span>
         <div>
-          <p class="analisi-ai__etichetta">Analisi AI dell'andamento</p>
-          <span class="analisi-ai__semaforo analisi-ai__semaforo--${a.valutazione}"><span></span>${ETICHETTE_ANALISI[a.valutazione] || ""}</span>
-          <h2>${escapeHTML(a.titolo || "")}</h2>
+          <p class="analisi-ai__etichetta">Sintesi AI dell'andamento</p>
+          <h2>${escapeHTML(a.titolo || "Andamento degli ultimi 30 giorni")}</h2>
         </div>
       </div>
-      <p class="analisi-ai__sintesi">${escapeHTML(a.sintesi || "")}</p>
-      <p class="stat-nota">La lettura AI considera anche note, riscontri e peso; l'indicatore nella lista dei pazienti conta solo uso dell'app, pasti segnati e promemoria. Per questo possono dare indicazioni diverse.</p>
-      ${a.impattoScostamenti ? `<p class="analisi-ai__impatto"><strong>Scostamenti:</strong> ${escapeHTML(a.impattoScostamenti)}</p>` : ""}
-      <div class="analisi-ai__colonne">
-        ${a.puntiAttenzione && a.puntiAttenzione.length ? `<div><h3>Punti di attenzione</h3><ul>${a.puntiAttenzione.map((x) => `<li>${escapeHTML(x)}</li>`).join("")}</ul></div>` : ""}
-        ${a.puntiForza && a.puntiForza.length ? `<div><h3>Cosa va bene</h3><ul>${a.puntiForza.map((x) => `<li>${escapeHTML(x)}</li>`).join("")}</ul></div>` : ""}
-      </div>
-      <div class="analisi-ai__azione"><strong>${a.contattare ? "📞 Azione suggerita" : "✓ Azione suggerita"}</strong><span>${escapeHTML(a.azione || "")}</span></div>
-      ${a.messaggio ? `<button type="button" class="btn" id="analisi-usa-messaggio">Usa la bozza di messaggio proposta</button>` : ""}
-      <p class="analisi-ai__piede">✨ Generata con intelligenza artificiale il ${quando}, dai dati degli ultimi 30 giorni. È un supporto: la valutazione clinica resta tua. <button type="button" class="link-btn" id="analisi-rigenera">Rigenera</button></p>`;
-    const usa = document.getElementById("analisi-usa-messaggio");
-    if (usa) usa.addEventListener("click", () => {
-      const campo = document.getElementById("testo-incoraggiamento");
-      if (!campo) return;
-      campo.value = a.messaggio;
-      campo.scrollIntoView({ behavior: "smooth", block: "center" });
-      campo.focus();
-      mostraToast("Bozza inserita: rivedila prima di inviarla");
-    });
+      ${a.sintesi ? `<p class="analisi-ai__sintesi">${escapeHTML(a.sintesi)}</p>` : ""}
+      ${a.scostamenti ? `<p class="analisi-ai__impatto"><strong>Pasti non come da piano:</strong> ${escapeHTML(a.scostamenti)}</p>` : ""}
+      ${a.note ? `<p class="analisi-ai__impatto"><strong>Dalle note del paziente:</strong> ${escapeHTML(a.note)}</p>` : ""}
+      ${a.dettagli && a.dettagli.length ? `<ul class="analisi-ai__dettagli">${a.dettagli.map((x) => `<li>${escapeHTML(x)}</li>`).join("")}</ul>` : ""}
+      <p class="analisi-ai__piede">✨ Sintesi generata con intelligenza artificiale il ${quando}, dai dati degli ultimi 30 giorni. Riassume i dati senza valutarli e non suggerisce interventi: la valutazione resta tua. <button type="button" class="link-btn" id="analisi-rigenera">Rigenera</button></p>`;
     document.getElementById("analisi-rigenera").addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
   }
 
@@ -7977,9 +7962,9 @@
         <section class="stat-sintesi">
           <div class="stat-sintesi__num"><strong>${perc(media7)}</strong><span>aderenza media negli ultimi 7 giorni</span></div>
           <div class="stat-sintesi__stati">
-            <span class="stato-badge stato-badge--rosso"><span class="stato-punto"></span>${conteggi.rosso} da ricontattare</span>
-            <span class="stato-badge stato-badge--giallo"><span class="stato-punto"></span>${conteggi.giallo} da seguire</span>
-            <span class="stato-badge stato-badge--verde"><span class="stato-punto"></span>${conteggi.verde} in linea</span>
+            <span class="stato-badge stato-badge--rosso"><span class="stato-punto"></span>${conteggi.rosso} non usano l'app</span>
+            <span class="stato-badge stato-badge--giallo"><span class="stato-punto"></span>${conteggi.giallo} con segnali da verificare</span>
+            <span class="stato-badge stato-badge--verde"><span class="stato-punto"></span>${conteggi.verde} usano l'app regolarmente</span>
             ${conteggi.pausa ? `<span class="stato-badge stato-badge--pausa"><span class="stato-punto"></span>${conteggi.pausa} in pausa</span>` : ""}
             ${conteggi.attesa ? `<span class="stato-badge stato-badge--attesa"><span class="stato-punto"></span>${conteggi.attesa} non iniziati</span>` : ""}
           </div>
@@ -8016,7 +8001,7 @@
               </button>`;
           }).join("")}
         </div>
-        <p class="stat-nota">L'aderenza si calcola sui giorni già conclusi: un pasto fatto vale 1 punto, uno fatto in parte 0,5, uno saltato o non segnato 0. Una giornata è rispettata con almeno ${window.statistiche.SOGLIA_GIORNO_OK} punti su 5. Il paziente è da ricontattare se non apre l'app e non segna pasti da più di ${window.statistiche.GIORNI_ALLARME} giorni.</p>
+        <p class="stat-nota">L'aderenza si calcola sui giorni già conclusi: un pasto fatto vale 1 punto, uno fatto in parte 0,5, uno saltato o non segnato 0. Una giornata è rispettata con almeno ${window.statistiche.SOGLIA_GIORNO_OK} punti su 5. Il paziente risulta «Non usa l'app» se non apre l'app e non segna pasti da più di ${window.statistiche.GIORNI_ALLARME} giorni.</p>
       `}
     `;
 

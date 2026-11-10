@@ -2572,86 +2572,79 @@ exports.stimaMacro = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 
 });
 
 // =========================================================================
-// ANALISI AI DELL'ANDAMENTO DEL PAZIENTE (per il professionista)
+// SINTESI AI DELL'ANDAMENTO DEL PAZIENTE (per il professionista)
 // =========================================================================
-// All'apertura della scheda Andamento l'app invia un riassunto dei dati del
-// paziente (aderenza, pasti non come da piano, riscontri, peso, uso
+// Dalla v129 (parere MDR dell'8/11/2026, destinazione non medica): la sintesi
+// DESCRIVE i dati degli ultimi 30 giorni, senza valutazioni, semafori, azioni
+// suggerite, inviti a contattare il paziente o bozze di messaggio.
+// All'apertura della scheda Andamento l'app invia un riassunto dei dati
+// (aderenza, pasti non come da piano, note, conteggio dei riscontri, peso, uso
 // dell'app), senza nome né dati identificativi, con la sua "impronta". Il
 // risultato si salva in /piani/{id}/analisi/ultima, leggibile solo dal
 // professionista: se i dati non cambiano, l'app mostra quello salvato.
 const MODELLO_ANALISI = "claude-sonnet-5";
 const LIMITE_ANALISI_GIORNO = 80;
+const FORMATO_ANALISI = 2;
 
-const ISTRUZIONI_ANALISI = `Sei l'assistente di un nutrizionista che usa l'app "Il mio Piano". Ricevi i dati di andamento di un suo paziente (ultimi 30 giorni circa) e prepari per il professionista una lettura sintetica e utile, chiamando lo strumento analisi_andamento.
+const ISTRUZIONI_ANALISI = `Sei l'assistente di un nutrizionista che usa l'app "Il mio Piano". Ricevi i dati di andamento di un suo paziente (ultimi 30 giorni circa) e scrivi per il professionista una SINTESI DESCRITTIVA, chiamando lo strumento sintesi_andamento. Il tuo compito è riassumere i dati in modo leggibile, non valutarli: la valutazione e le decisioni spettano solo al professionista.
 
-COME VALUTARE
-- valutazione: "verde" se il paziente segue il piano con regolarità e gli scostamenti sono pochi o di scarso impatto; "giallo" se ci sono segnali da tenere d'occhio (aderenza in calo, scostamenti moderati ricorrenti su un pasto, uso dell'app discontinuo); "rosso" se conviene contattarlo (aderenza bassa, scostamenti rilevanti frequenti, pasti saltati ricorrenti, app non usata da giorni).
-- Valuta il peso degli scostamenti: gli scambi equivalenti o irrilevanti non sono un problema; conta la frequenza di quelli moderati e rilevanti e i pasti su cui si concentrano.
-- Se i dati sono pochi (piano iniziato da pochi giorni, poche segnalazioni), dillo e sii prudente.
-- PIANO APPENA INIZIATO: giorniValutati30 indica da quanti giorni il piano è attivo nella finestra degli ultimi 30 (non quanti giorni il paziente ha usato l'app). Valuta aderenza, tracciamento e uso dell'app solo su quei giorni, mai sui 30: non scrivere "1 giorno su 30" o simili. Se giorniValutati30 è inferiore a 7, scrivi che il piano è appena iniziato e i dati sono ancora pochi per una valutazione; non indicare come problema il basso utilizzo, lo scarso tracciamento o i pochi giorni registrati; valutazione "verde", oppure "giallo" solo per scostamenti rilevanti già evidenti; contattare false; azione del tipo "Nessuna azione per ora: rivaluta tra qualche giorno". Unica eccezione: se il paziente non ha mai usato l'app da più di 3 giorni (usoApp.giorniInattivo maggiore di 3), puoi suggerire di contattarlo per aiutarlo a partire.
-- Basati solo sui dati ricevuti: non inventare, non fare diagnosi, non dare indicazioni cliniche al posto del professionista.
+COSA SCRIVERE (in italiano, rivolto al professionista, tono sobrio e neutro)
+- titolo: una frase breve che riassume i dati principali con i numeri (es. "Aderenza al 78% in 30 giorni; la cena è il pasto più spesso fatto diversamente").
+- sintesi: 2-3 frasi che descrivono l'andamento: aderenza (7 e 30 giorni, feriali e weekend, andamento per settimana), pasti fatti, in parte o saltati, uso dell'app.
+- scostamenti: una frase che descrive i pasti non come da piano: quanti, su quali pasti, con quali motivi indicati dal paziente, e il conteggio dei riscontri per livello se presente.
+- note: una frase che riporta i temi che ricorrono nelle note del paziente, usando le sue parole (es. "Nelle note ricorrono gli impegni di lavoro e le cene fuori"). Stringa vuota se non ci sono note.
+- dettagli: fino a 4 punti brevi con altri fatti utili: variazione del peso (dall'inizio e dall'ultimo controllo), giorni dall'ultima apertura dell'app, promemoria, giorni al prossimo controllo.
 
-COSA SCRIVERE (in italiano, rivolto al professionista, tono professionale e concreto)
-- titolo: una frase breve che riassume (es. "Segue bene il piano, cena più difficile nel weekend").
-- sintesi: 2-3 frasi sull'andamento generale.
-- impattoScostamenti: una frase sul peso degli scostamenti (quanti e di che impatto, su quali pasti).
-- puntiAttenzione: fino a 4 punti brevi e specifici; puntiForza: fino a 3 punti brevi.
-- azione: una frase con l'azione suggerita al professionista (es. "Contattalo per capire le difficoltà a cena" oppure "Nessuna azione necessaria: conferma al prossimo controllo").
-- contattare: true se suggerisci di contattarlo prima del prossimo controllo.
-- messaggio: solo se contattare è true, una bozza breve (al massimo 5 righe) che il professionista può inviare al paziente: tono caldo, non giudicante, dando del tu, senza nome e senza firma. Altrimenti stringa vuota.`;
+REGOLE
+- Riporta solo quello che c'è nei dati, con i numeri che ricevi. Non inventare e non dedurre cause che il paziente non ha scritto.
+- Nessuna valutazione: niente giudizi come buono, ottimo, scarso, critico, preoccupante, positivo o negativo; niente semafori o livelli di gravità; niente "da tenere d'occhio" o "segnali di allarme".
+- Nessuna indicazione al professionista: niente azioni suggerite, inviti a contattare o sentire il paziente, proposte di modifica del piano, approfondimenti o messaggi da inviare.
+- Nessuna considerazione clinica o di salute: niente diagnosi, rischi, effetti sul peso o sul percorso, interpretazioni del peso.
+- Non nominare il paziente e non rivolgerti a lui.
+- PIANO APPENA INIZIATO: giorniValutati30 indica da quanti giorni il piano è attivo negli ultimi 30. Riferisci aderenza e uso dell'app solo a quei giorni, mai ai 30 (non scrivere "1 giorno su 30"). Se è inferiore a 7, scrivi nella sintesi che il piano è attivo da pochi giorni e i dati sono ancora pochi.`;
 
 const STRUMENTO_ANALISI = {
-  name: "analisi_andamento",
-  description: "Lettura dell'andamento del paziente per il professionista.",
+  name: "sintesi_andamento",
+  description: "Sintesi descrittiva dei dati di andamento del paziente, per il professionista.",
   input_schema: {
     type: "object",
     properties: {
-      valutazione: { type: "string", enum: ["verde", "giallo", "rosso"] },
       titolo: { type: "string" },
       sintesi: { type: "string" },
-      impattoScostamenti: { type: "string" },
-      puntiAttenzione: { type: "array", items: { type: "string" } },
-      puntiForza: { type: "array", items: { type: "string" } },
-      azione: { type: "string" },
-      contattare: { type: "boolean" },
-      messaggio: { type: "string" },
+      scostamenti: { type: "string" },
+      note: { type: "string" },
+      dettagli: { type: "array", items: { type: "string" } },
     },
-    required: ["valutazione", "titolo", "sintesi", "impattoScostamenti", "puntiAttenzione", "puntiForza", "azione", "contattare", "messaggio"],
+    required: ["titolo", "sintesi", "scostamenti", "note", "dettagli"],
   },
 };
 
-// Piano attivo da meno di 7 giorni: niente allarmi né inviti a contattare il
-// paziente, salvo che non abbia mai usato l'app da più di 3 giorni.
-function correggiPianoAppenaIniziato(a, dati) {
-  const giorni = Number(dati && dati.giorniValutati30);
-  const inattivo = Number(dati && dati.usoApp && dati.usoApp.giorniInattivo);
-  if (!(giorni >= 0 && giorni < 7) || inattivo > 3) return a;
-  const out = Object.assign({}, a, { contattare: false, messaggio: "" });
-  if (out.valutazione === "rosso") out.valutazione = "giallo";
-  if (a.contattare) out.azione = "Nessuna azione per ora: il piano è appena iniziato, rivaluta tra qualche giorno.";
-  return out;
+// Frasi da scartare anche se il modello non rispetta le istruzioni: indicazioni
+// al professionista, inviti a contattare il paziente, giudizi e allarmi.
+const RE_VALUTAZIONE_ANALISI = /\b(contatt|sentirl|chiamarl|scrivergli|consigl|suggeri|conviene|converrebbe|dovrebbe|dovresti|occorre|bisogna|sarebbe utile|valuta|rivaluta|approfond|interven|attenzion|preoccup|critic|allarm|rischi|ottim|eccellent|positiv|negativ|insufficien|scars|buon|bene\b|male\b|tenere d'occhio|da monitorare|monitora)\w*/i;
+
+function soloFrasiNeutre(t) {
+  const frasi = String(t || "").match(/[^.!?]+[.!?]*/g) || [];
+  return frasi.filter((f) => !RE_VALUTAZIONE_ANALISI.test(f)).join(" ").replace(/\s{2,}/g, " ").trim();
 }
 
 function normalizzaAnalisi(r) {
   const breve = (t, max) => {
-    const x = String(t == null ? "" : t).replace(/[ \t]+/g, " ").trim();
+    const x = soloFrasiNeutre(String(t == null ? "" : t).replace(/[ \t]+/g, " ").trim());
     if (x.length <= max) return x;
     const taglio = x.slice(0, max);
     const fine = Math.max(taglio.lastIndexOf(". "), taglio.lastIndexOf("! "), taglio.lastIndexOf("? "));
     return fine > max * 0.4 ? taglio.slice(0, fine + 1) : taglio.slice(0, taglio.lastIndexOf(" ")) + "…";
   };
   const elenco = (a, n, max) => (Array.isArray(a) ? a : []).map((x) => breve(x, max)).filter(Boolean).slice(0, n);
-  const contattare = !!r.contattare;
+  r = r || {};
   return {
-    valutazione: ["verde", "giallo", "rosso"].includes(r.valutazione) ? r.valutazione : "giallo",
-    titolo: breve(r.titolo, 140),
+    formato: FORMATO_ANALISI,
+    titolo: breve(r.titolo, 160),
     sintesi: breve(r.sintesi, 600),
-    impattoScostamenti: breve(r.impattoScostamenti, 300),
-    puntiAttenzione: elenco(r.puntiAttenzione, 4, 200),
-    puntiForza: elenco(r.puntiForza, 3, 200),
-    azione: breve(r.azione, 240),
-    contattare,
-    messaggio: contattare ? breve(r.messaggio, 700) : "",
+    scostamenti: breve(r.scostamenti, 320),
+    note: breve(r.note, 320),
+    dettagli: elenco(r.dettagli, 4, 200),
   };
 }
 
@@ -2688,7 +2681,7 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
       headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY.value(), "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         inference_geo: AREA_INFERENZA, model: MODELLO_ANALISI, max_tokens: 1500, system: ISTRUZIONI_ANALISI,
-        tools: [STRUMENTO_ANALISI], tool_choice: { type: "tool", name: "analisi_andamento" },
+        tools: [STRUMENTO_ANALISI], tool_choice: { type: "tool", name: "sintesi_andamento" },
         messages: [{ role: "user", content: `Dati di andamento del paziente (JSON):\n${testo}` }],
       }),
     });
@@ -2701,9 +2694,9 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
     if (err instanceof HttpsError) throw err;
     throw new HttpsError("unavailable", "servizio-ai-non-disponibile");
   }
-  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "analisi_andamento");
+  const blocco = (risposta.content || []).find((c) => c.type === "tool_use" && c.name === "sintesi_andamento");
   if (!blocco || !blocco.input) throw new HttpsError("internal", "risposta-non-valida");
-  const analisi = Object.assign(correggiPianoAppenaIniziato(normalizzaAnalisi(blocco.input), dati), { impronta, creata: Date.now() });
+  const analisi = Object.assign(normalizzaAnalisi(blocco.input), { impronta, creata: Date.now() });
   await pianoRef.collection("analisi").doc("ultima").set(Object.assign({}, analisi, { aggiornata: FieldValue.serverTimestamp() }));
   await utenteRef.set({ analisiAI: { data: oggi, n: usate + 1 } }, { merge: true });
   return analisi;
@@ -2896,5 +2889,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, correggiPianoAppenaIniziato, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
