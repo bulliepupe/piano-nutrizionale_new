@@ -51,4 +51,10 @@ console.log("ok risposta vuota");
 const r = T.normalizzaRiscontro({ impatto: "irrilevante", stima: "Pollo al posto del roastbeef: valori simili", spiegazione: "", suggerimenti: [], messaggio: "Va bene così: domani riprendi con il piano previsto." }, [], true);
 assert.ok(!/ripren/i.test(r.messaggio), "irrilevante senza 'riprendi': " + r.messaggio);
 console.log("ok riscontro irrilevante:", r.messaggio);
-console.log("OK: 5 verifiche superate");
+
+// 6. Taglio dei testi lunghi: mai dopo "es." o dentro una parentesi aperta
+const lungo = "Nelle note ricorrono sostituzioni a pranzo e cena. Gli esempi sono molti (es. \"riso al posto del pane\", \"merluzzo al posto del grana\", " + "\"pasta al sugo al posto del pane\", ".repeat(12) + "\"fine\").";
+const e = T.normalizzaAnalisi({ note: lungo });
+assert.strictEqual(e.note, "Nelle note ricorrono sostituzioni a pranzo e cena.", "taglio alla frase completa: " + e.note);
+console.log("ok taglio a fine frase");
+console.log("OK: 6 verifiche superate");

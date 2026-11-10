@@ -2592,8 +2592,8 @@ COSA SCRIVERE (in italiano, rivolto al professionista, tono sobrio e neutro)
 - titolo: una frase breve che riassume i dati principali con i numeri (es. "Aderenza al 78% in 30 giorni; la cena è il pasto più spesso fatto diversamente").
 - sintesi: 2-3 frasi che descrivono l'andamento: aderenza (7 e 30 giorni, feriali e weekend, andamento per settimana), pasti fatti, in parte o saltati, uso dell'app.
 - scostamenti: una frase che descrive i pasti non come da piano: quanti, su quali pasti, con quali motivi indicati dal paziente, e il conteggio dei riscontri per livello se presente.
-- note: una frase che riporta i temi che ricorrono nelle note del paziente, usando le sue parole (es. "Nelle note ricorrono gli impegni di lavoro e le cene fuori"). Stringa vuota se non ci sono note.
-- dettagli: fino a 4 punti brevi con altri fatti utili: variazione del peso (dall'inizio e dall'ultimo controllo), giorni dall'ultima apertura dell'app, promemoria, giorni al prossimo controllo.
+- note: una frase che riporta i temi che ricorrono nelle note del paziente, usando le sue parole (es. "Nelle note ricorrono gli impegni di lavoro e le cene fuori"). Se c'è una sola nota, riportala semplicemente (es. "Una nota a metà mattina: \"Pane e salame\""), senza dire che ricorre. Stringa vuota se non ci sono note.
+- dettagli: fino a 4 punti brevi con altri fatti utili: variazione del peso (dall'inizio e dall'ultimo controllo), giorni dall'ultima apertura dell'app, promemoria, controllo (giorni al prossimo, oppure da quanti giorni è passato l'ultimo previsto senza un nuovo controllo programmato). Includi solo i fatti per cui ci sono dati: non scrivere punti come "dato non disponibile" o "non indicato". Elenco vuoto se non c'è nulla da aggiungere.
 
 REGOLE
 - Riporta solo quello che c'è nei dati, con i numeri che ricevi. Non inventare e non dedurre cause che il paziente non ha scritto.
@@ -2601,7 +2601,9 @@ REGOLE
 - Nessuna indicazione al professionista: niente azioni suggerite, inviti a contattare o sentire il paziente, proposte di modifica del piano, approfondimenti o messaggi da inviare.
 - Nessuna considerazione clinica o di salute: niente diagnosi, rischi, effetti sul peso o sul percorso, interpretazioni del peso.
 - Non nominare il paziente e non rivolgerti a lui.
-- PIANO APPENA INIZIATO: giorniValutati30 indica da quanti giorni il piano è attivo negli ultimi 30. Riferisci aderenza e uso dell'app solo a quei giorni, mai ai 30 (non scrivere "1 giorno su 30"). Se è inferiore a 7, scrivi nella sintesi che il piano è attivo da pochi giorni e i dati sono ancora pochi.`;
+- Scrivi le date nel formato giorno/mese (es. 6/11), mai come 2026-11-06.
+- Sii conciso: ogni campo al massimo 2 frasi brevi, senza elenchi lunghi tra parentesi; negli esempi tra virgolette riporta al massimo 2 note. Non usare l'abbreviazione "es.".
+- PIANO APPENA INIZIATO: giorniValutati30 indica da quanti giorni il piano è attivo negli ultimi 30. Riferisci aderenza e uso dell'app solo a quei giorni, mai ai 30 (non scrivere "1 giorno su 30"). Solo se è inferiore a 7, scrivi nella sintesi che il piano è attivo da pochi giorni e i dati sono ancora pochi; da 7 giorni in su non dirlo.`;
 
 const STRUMENTO_ANALISI = {
   name: "sintesi_andamento",
@@ -2633,8 +2635,16 @@ function normalizzaAnalisi(r) {
     const x = soloFrasiNeutre(String(t == null ? "" : t).replace(/[ \t]+/g, " ").trim());
     if (x.length <= max) return x;
     const taglio = x.slice(0, max);
-    const fine = Math.max(taglio.lastIndexOf(". "), taglio.lastIndexOf("! "), taglio.lastIndexOf("? "));
-    return fine > max * 0.4 ? taglio.slice(0, fine + 1) : taglio.slice(0, taglio.lastIndexOf(" ")) + "…";
+    // taglio a fine frase, mai dopo un'abbreviazione come "es." o dentro parentesi aperte
+    let fine = -1;
+    for (const m of taglio.matchAll(/[.!?](?=\s)/g)) {
+      const prima = taglio.slice(0, m.index + 1);
+      if (/\b(es|ecc|ca|circa)\.$/i.test(prima)) continue;
+      if ((prima.match(/\(/g) || []).length > (prima.match(/\)/g) || []).length) continue;
+      fine = m.index;
+    }
+    // meglio una frase completa più corta che una frase tagliata a metà
+    return fine > 0 ? taglio.slice(0, fine + 1) : taglio.slice(0, taglio.lastIndexOf(" ")) + "…";
   };
   const elenco = (a, n, max) => (Array.isArray(a) ? a : []).map((x) => breve(x, max)).filter(Boolean).slice(0, n);
   r = r || {};
@@ -2642,8 +2652,8 @@ function normalizzaAnalisi(r) {
     formato: FORMATO_ANALISI,
     titolo: breve(r.titolo, 160),
     sintesi: breve(r.sintesi, 600),
-    scostamenti: breve(r.scostamenti, 320),
-    note: breve(r.note, 320),
+    scostamenti: breve(r.scostamenti, 480),
+    note: breve(r.note, 480),
     dettagli: elenco(r.dettagli, 4, 200),
   };
 }

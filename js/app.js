@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v129";
+  const VERSIONE_APP = "v130";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -6636,9 +6636,9 @@
       pastiNonComeDaPiano: { fattiDiversamente: grp(im.diverso), fattiInParte: grp(im.parziale), saltati: grp(im.saltato) },
       noteDelPaziente: (im.note || []).filter((n) => n.nota).map((n) => ({ giorno: n.giorno, pasto: lbl(n.pasto), stato: n.stato, motivo: motivo(n.motivo), nota: n.nota })),
       riscontriAI: { attivo: !(piano.feedbackAI && piano.feedbackAI.modo === "spento"), conteggioLivelli30giorni: conteggio },
-      peso: rp ? { ultimoKg: rp.ultimo.peso, ultimoIl: rp.ultimo.data, variazioneDallInizioKg: rp.variazioneInizio == null ? null : Math.round(rp.variazioneInizio * 10) / 10, variazioneUltimoControlloKg: rp.variazioneControllo == null ? null : Math.round(rp.variazioneControllo * 10) / 10, obiettivoKg: rp.obiettivo, misurazioni: rp.conPeso.length } : null,
+      peso: rp ? { ultimoKg: rp.ultimo.peso, ultimoIl: rp.ultimo.data, variazioneDallInizioKg: rp.variazioneInizio == null ? null : Math.round(rp.variazioneInizio * 10) / 10, variazioneUltimoControlloKg: rp.variazioneControllo == null ? null : Math.round(rp.variazioneControllo * 10) / 10, misurazioni: rp.conPeso.length } : null,
       usoApp: { ultimaInterazione: r.ultimaInterazione, giorniInattivo: r.giorniInattivo, promemoria: r.notifiche },
-      prossimoControllo: r.prossimoControllo ? { traGiorni: r.prossimoControllo.traGiorni } : null,
+      controllo: !r.prossimoControllo ? null : r.prossimoControllo.traGiorni >= 0 ? { prossimoTraGiorni: r.prossimoControllo.traGiorni } : { ultimoPrevistoGiorniFa: -r.prossimoControllo.traGiorni, nuovoNonProgrammato: true },
     };
   }
 
