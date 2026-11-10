@@ -23,3 +23,12 @@ ok(/meno proteine/.test(a.spiegazione), "descrizione mantenuta: " + a.spiegazion
 const c = normalizza({ impatto: "lieve", stima: "x", spiegazione: "Ti consiglio di bilanciare. Dovresti evitare i dolci.", suggerimenti: [], messaggio: "" }, [], false, true);
 ok(c.spiegazione === "", "solo consigli: spiegazione vuota");
 console.log("OK: " + n + " verifiche superate");
+
+// R6 (v132): il riscontro non invia all'AI i dati degli allenamenti
+{
+  const src = require("fs").readFileSync(require("path").join(__dirname, "../functions/index.js"), "utf8");
+  const i = src.indexOf("exports.valutaVariazione"), j = src.indexOf("\n});", i);
+  const corpo = src.slice(i, j);
+  require("assert").ok(!/collection\("attivita"\)|fcMedia|zoneFC|Allenamenti di oggi/.test(corpo), "valutaVariazione non deve leggere né inviare gli allenamenti");
+  console.log("OK: riscontro senza dati degli allenamenti");
+}

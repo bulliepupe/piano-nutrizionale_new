@@ -1842,7 +1842,7 @@ COSA NON FARE MAI
 - Nessun consiglio, invito o indicazione su cosa mangiare, quando, quanto o come compensare: niente "dovresti", "puoi", "ti consiglio", "conviene", "prova a", "recupera", "compensa", "equilibra", "bilancia".
 - Non parlare dei pasti successivi, di domani o di altri giorni.
 - Nessuna valutazione clinica o di salute (niente patologie, rischi, effetti sul peso o sul percorso), nessun giudizio sul paziente, nessun complimento o rimprovero.
-- Non parlare di attività fisica come compensazione; gli allenamenti indicati servono solo come contesto.
+- Non parlare di attività fisica o allenamenti.
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
 - Tono sobrio e neutro, senza esclamazioni.`;
 
@@ -1994,19 +1994,9 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   }
   const frequente = scostamenti > 5;
 
-  const attivitaOggi = ((await utenteRef.collection("attivita").doc(dateKey).get()).data()) || {};
-  const allenamenti = (Array.isArray(attivitaOggi.allenamenti) ? attivitaOggi.allenamenti : []).slice(0, 4)
-    .map((a) => {
-      const n = (x) => Math.round(Number(x)) || 0;
-      const dati = a.fonte === "file" ? [
-        a.distanzaKm ? `${Number(a.distanzaKm)} km` : "",
-        n(a.dislivelloM) ? `dislivello ${n(a.dislivelloM)} m` : "",
-        n(a.fcMedia) ? `FC media ${n(a.fcMedia)} bpm` : "",
-        Array.isArray(a.zoneFC) && a.zoneFC.length === 5 ? `minuti nelle zone Z1-Z5 ${a.zoneFC.map(n).join("/")}` : "",
-        n(a.kcal) ? `${n(a.kcal)} kcal stimate dal dispositivo` : "",
-      ].filter(Boolean) : [];
-      return `${String(a.tipo || "allenamento").slice(0, 40)}${a.indoor ? " al chiuso" : ""}${a.durata ? ` ${n(a.durata)} min` : ""}${a.intensita ? `, intensità ${String(a.intensita).slice(0, 20)}${a.intensitaFonte ? " (misurata)" : ""}` : ""}${a.ora ? `, alle ${String(a.ora).slice(0, 5)}` : ""}${dati.length ? `, dati dal file: ${dati.join(", ")}` : ""}`;
-    });
+  // Dal 10/11/2026 (v132, parere MDR punto R6) il riscontro non riceve più
+  // i dati degli allenamenti (FC, zone, calorie, distanza...): essendo solo
+  // descrittivo e senza compensazioni, non gli servono.
   const motivo = fatti.motivi && MOTIVI_RISCONTRO[fatti.motivi[pasto]];
   const nota = fatti.note && fatti.note[pasto] ? oscuraIdentificativi(String(fatti.note[pasto]).slice(0, 200)) : "";
   // Macronutrienti stimati del pasto previsto (archivio comune, se già calcolati):
@@ -2035,7 +2025,6 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
     "",
     "Riscontro solo descrittivo: niente consigli e niente riferimenti ai pasti successivi.",
     giorno.kcal ? `Calorie previste per la giornata: circa ${giorno.kcal} kcal.` : "",
-    allenamenti.length ? `Allenamenti di oggi segnati dal paziente: ${allenamenti.join("; ")}.` : "",
     sostituzioni ? `\nSostituzioni approvate dal nutrizionista:\n${sostituzioni}` : "",
     "",
     "Suggerimenti: lascia l'elenco vuoto. Messaggio: lascia una stringa vuota.",

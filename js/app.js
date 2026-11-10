@@ -469,7 +469,7 @@
   // Testo informativo e formula della scelta AI (Cravero, nota del 3/11/2026,
   // punto 10). Versione: le scelte precedenti non valgono più (server: VERSIONE_AI).
   const VERSIONE_AI = "2026-11-05";
-  const TESTO_INFO_AI = "Le funzioni AI usano Claude di Anthropic, con elaborazione negli Stati Uniti. A seconda della funzione vengono inviati il piano, i pasti e le note, i riepiloghi degli allenamenti, i dati utili all’analisi dell’andamento e le immagini che scegli di caricare. Per le etichette fotografa soltanto la tabella nutrizionale. Non aggiungiamo alle richieste nome, email o identificativo del tuo account; testi e immagini possono però contenere informazioni personali o di salute. I controlli di oscuramento non eliminano ogni riferimento: verifica sempre ciò che invii. Puoi usare le altre funzioni dell’app senza attivare l’AI e revocare la scelta in Impostazioni, Privacy. L’informativa descrive finalità, titolari, conservazione e trasferimenti.";
+  const TESTO_INFO_AI = "Le funzioni AI usano Claude di Anthropic, con elaborazione negli Stati Uniti. A seconda della funzione vengono inviati il piano, i pasti e le note, i dati utili alla sintesi dell’andamento per il tuo nutrizionista e le immagini che scegli di caricare. Per le etichette fotografa soltanto la tabella nutrizionale. Non aggiungiamo alle richieste nome, email o identificativo del tuo account; testi e immagini possono però contenere informazioni personali o di salute. I controlli di oscuramento non eliminano ogni riferimento: verifica sempre ciò che invii. Puoi usare le altre funzioni dell’app senza attivare l’AI e revocare la scelta in Impostazioni, Privacy. L’informativa descrive finalità, titolari, conservazione e trasferimenti.";
   const FORMULA_AI = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per le funzioni di intelligenza artificiale descritte qui sopra (lettura del piano, riscontro sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto, analisi dell’andamento per il mio nutrizionista), con elaborazione da parte di Anthropic negli Stati Uniti.";
   function titolareAITesto() {
     return COLLEGATO_NUTRIZIONISTA
@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v131";
+  const VERSIONE_APP = "v132";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
