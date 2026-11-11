@@ -32,3 +32,20 @@ console.log("OK: " + n + " verifiche superate");
   require("assert").ok(!/collection\("attivita"\)|fcMedia|zoneFC|Allenamenti di oggi/.test(corpo), "valutaVariazione non deve leggere né inviare gli allenamenti");
   console.log("OK: riscontro senza dati degli allenamenti");
 }
+
+// v135: alimento mangiato in parte, niente doppio conteggio tra quotaPiano e macroTolti
+{
+  const assert = require("assert");
+  const path = require("path");
+  process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT || "test";
+  const T = require("module").createRequire(path.join(__dirname, "../functions/index.js"))("./index.js")._test;
+  const previsti = { carboidrati: 80, proteine: 20, grassi: 15, alcol: 0, affidabilita: "media" };
+  const farroMeta = { carboidrati: 24, proteine: 5, grassi: 1 };
+  const a = T.macroEffettiviDaRisposta({ quotaPiano: 0.5, macroTolti: farroMeta }, previsti, null, "parziale");
+  assert.strictEqual(Math.round(a.carboidrati), 56, "quota portata a 1, tolto solo il farro: " + JSON.stringify(a));
+  const b = T.macroEffettiviDaRisposta({ quotaPiano: 0.5 }, previsti, null, "parziale");
+  assert.strictEqual(Math.round(b.carboidrati), 40, "metà di tutto il pasto: quota 0,5 resta");
+  const c = T.macroEffettiviDaRisposta({ quotaPiano: 1, macroTolti: farroMeta }, previsti, null, "parziale");
+  assert.strictEqual(Math.round(c.carboidrati), 56);
+  console.log("OK: alimento mangiato in parte senza doppio conteggio (3 verifiche)");
+}
