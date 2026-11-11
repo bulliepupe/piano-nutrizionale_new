@@ -1878,7 +1878,7 @@ COSA FARE
 - messaggio: lascia una stringa vuota: la frase finale la aggiunge l'app.
 - macroEffettivi: stima in grammi di carboidrati, proteine, grassi (e alcol, se c'è) di quello che il paziente ha mangiato davvero in questo pasto. Compilalo solo se la nota del paziente descrive cosa ha mangiato, anche a grandi linee; se ha fatto il pasto "in parte", stima la parte effettivamente mangiata. Se la nota manca o non dice cosa ha mangiato, ometti macroEffettivi. Valori coerenti con le tabelle di composizione italiane (CREA) e le porzioni standard; "affidabilita" alta, media o bassa secondo quanto è precisa la descrizione.
 - quotaPiano: da 0 a 1, SOLO per la porzione di tutto il pasto previsto: 1 = tutto il previsto (anche se ha aggiunto, tolto o sostituito singoli alimenti), 0.5 = metà di tutto il pasto, 0 = nulla del previsto. Leggi la nota prima dello stato: chi segna "in parte" ma scrive di aver aggiunto qualcosa ha mangiato tutto il previsto.
-- macroTolti: stima in grammi di carboidrati, proteine, grassi (e alcol) dei soli ALIMENTI PREVISTI che il paziente NON ha mangiato, quando ha tolto o sostituito singoli alimenti (es. "tacchino al posto del grana": qui va il grana 20 g, cioè circa 0 g di carboidrati, 7 g di proteine, 6 g di grassi). Tutto a 0 se non ha tolto nulla. Non usare quotaPiano per togliere un singolo alimento: ogni alimento ha i suoi macronutrienti.
+- macroTolti: stima in grammi di carboidrati, proteine, grassi (e alcol) dei soli ALIMENTI PREVISTI che il paziente NON ha mangiato, quando ha tolto o sostituito singoli alimenti (es. "tacchino al posto del grana": qui va il grana 20 g, cioè circa 0 g di carboidrati, 7 g di proteine, 6 g di grassi). Tutto a 0 se non ha tolto nulla. Non usare quotaPiano per togliere un singolo alimento: ogni alimento ha i suoi macronutrienti. Se ha mangiato solo una parte di un alimento (es. "metà porzione di farro"), metti in macroTolti solo la parte non mangiata di quell'alimento; gli altri alimenti del pasto, se la nota non dice nulla, si considerano mangiati come previsto e non vanno toccati.
 - macroAggiunti: stima in grammi di carboidrati, proteine, grassi (e alcol) dei soli alimenti mangiati IN PIÙ o AL POSTO del previsto, esclusa la parte del piano già conteggiata in quotaPiano ed esclusi i "Prodotti confezionati con valori dall'etichetta", che l'app ha già calcolato e che non devi ristimare. Tutto a 0 se non c'è altro. I numeri del riepilogo li calcola l'app da quotaPiano, macroAggiunti e prodotti: la spiegazione deve andare nella stessa direzione (se il paziente ha mangiato tutto il previsto più un'aggiunta, l'effetto è in più, non in meno).
 
 COSA NON FARE MAI
@@ -1887,7 +1887,9 @@ COSA NON FARE MAI
 - Nessuna valutazione clinica o di salute (niente patologie, rischi, effetti sul peso o sul percorso), nessun giudizio sul paziente, nessun complimento o rimprovero.
 - Non parlare di attività fisica o allenamenti.
 - Non parlare della frequenza degli scostamenti: ci pensa l'app.
-- Tono sobrio e neutro, senza esclamazioni.`;
+- Tono sobrio e neutro, senza esclamazioni.
+- Il testo lo legge il paziente: non scrivere "il paziente" né "riferisce"; descrivi in forma impersonale (es. "È stata mangiata metà della porzione di farro").
+- La spiegazione deve essere coerente con i numeri: cita solo gli alimenti che hanno davvero portato la differenza.`;
 
 const STRUMENTO_RISCONTRO = {
   name: "riscontro_pasto",
