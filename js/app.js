@@ -828,7 +828,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v132";
+  const VERSIONE_APP = "v136";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -3178,7 +3178,7 @@
     });
     const assunti = M.macroAssunti(g, stati, effettivi);
     const arr = (x) => Math.round((Number(x) || 0) / 10) * 10;
-    return `Con i pasti segnati finora, oggi sei a circa ${numeroIt(arr(assunti.kcal))} kcal sulle ${numeroIt(arr(g.totale.kcal))} previste dal piano.`;
+    return `Con i pasti segnati finora, oggi sei a circa ${numeroIt(arr(assunti.kcal))} kcal sulle ${numeroIt(arr(g.totale.kcal))} ${g.fattore !== 1 ? "previste dal piano" : "stimate per i pasti del piano"}.`;
   }
 
   function riscontroAttivo() {
