@@ -416,14 +416,44 @@ const GIORNI_REGISTRO = 14;
 
 /** Scrive una voce nel registro (non blocca mai l'operazione principale). */
 async function registra(tipo, percorso, extra) {
-  try {
-    const ora = Date.now();
-    await registroDb.collection("voci").add(Object.assign({
-      tipo, percorso, quando: Timestamp.fromMillis(ora), scade: Timestamp.fromMillis(ora + GIORNI_REGISTRO * GIORNO_MS),
-    }, extra || {}));
-  } catch (e) {
-    console.error("Registro: scrittura non riuscita", tipo, e && e.message);
+  const ora = Date.now();
+  const voce = Object.assign({ tipo, percorso, quando: Timestamp.fromMillis(ora), scade: Timestamp.fromMillis(ora + GIORNI_REGISTRO * GIORNO_MS) }, extra || {});
+  for (let tentativo = 1; tentativo <= 2; tentativo++) {
+    try { await registroDb.collection("voci").add(voce); return true; } catch (e) {
+      if (tentativo === 2) {
+        // v137 (R9): registro non disponibile. La voce resta nei log di Cloud
+        // Logging (conservati 30 giorni), da cui si recupera prima di chiudere
+        // un ripristino: cercare "REGISTRO_NON_SCRITTO".
+        console.error("REGISTRO_NON_SCRITTO " + JSON.stringify(Object.assign({ tipo, percorso, quandoMs: ora }, extra || {})), e && e.message);
+      }
+    }
   }
+  return false;
+}
+
+/**
+ * v137 (R9): esito dei consensi AI dopo la riapplicazione del registro.
+ * Per ogni utente conta l'ultima voce: una revoca spegne l'AI; un nuovo
+ * consenso dato DOPO una revoca non riattiva l'AI sulla base della copia
+ * ripristinata: la scelta torna «da richiedere» e l'app la chiede di nuovo.
+ */
+function esitoConsensiDaRegistro(voci) {
+  const esito = {};
+  const revocati = new Set();
+  for (const v of voci) {
+    if (!v || !v.uid) continue;
+    if (v.tipo === "revocaAI") { revocati.add(v.uid); esito[v.uid] = "revocato"; }
+    else if (v.tipo === "consensoAI" && revocati.has(v.uid)) esito[v.uid] = "daRichiedere";
+  }
+  return esito;
+}
+
+/** v137 (R9): la manutenzione si chiude solo dopo una riapplicazione riuscita. */
+function puoChiudereManutenzione(conf, forza) {
+  if (forza) return true;
+  const c = conf || {};
+  if (!c.attiva) return true;
+  return !!(c.riapplicata && msDi(c.riapplicata) >= (msDi(c.quando) || 0));
 }
 
 let manutenzioneCache = { quando: 0, attiva: false };
@@ -431,7 +461,8 @@ let manutenzioneCache = { quando: 0, attiva: false };
 async function inManutenzione() {
   if (Date.now() - manutenzioneCache.quando < 30000) return manutenzioneCache.attiva;
   let attiva = false;
-  try { const d = (await registroDb.collection("config").doc("manutenzione").get()).data(); attiva = !!(d && d.attiva); } catch (e) { attiva = false; }
+  // v137 (R9): se il registro non risponde si considera in manutenzione (AI ferma)
+  try { const d = (await registroDb.collection("config").doc("manutenzione").get()).data(); attiva = !!(d && d.attiva); } catch (e) { attiva = true; }
   manutenzioneCache = { quando: Date.now(), attiva };
   return attiva;
 }
@@ -461,6 +492,8 @@ async function riapplicaRegistro(databaseId, dalMs) {
         await ref.update({ [k]: FieldValue.delete(), [`note.${k}`]: FieldValue.delete(), [`motivi.${k}`]: FieldValue.delete(), [`etichette.${k}`]: FieldValue.delete(), [`etichetteModo.${k}`]: FieldValue.delete() });
       }
       esito.documentiCancellati++;
+    } else if (v.tipo === "consensoAI" && v.uid) {
+      // gestito sotto, con esitoConsensiDaRegistro
     } else if (v.tipo === "revocaAI" && v.uid) {
       const ref = target.collection("users").doc(v.uid);
       if ((await ref.get()).exists) {
@@ -471,6 +504,14 @@ async function riapplicaRegistro(databaseId, dalMs) {
       }
       esito.revoche++;
     }
+  }
+  // v137 (R9): revoca seguita da un nuovo consenso prima del ripristino
+  esito.consensiDaRichiedere = 0;
+  const consensi = esitoConsensiDaRegistro(ordinate);
+  for (const uid of Object.keys(consensi)) {
+    if (consensi[uid] !== "daRichiedere") continue;
+    const ref = target.collection("users").doc(uid);
+    if ((await ref.get()).exists) { await ref.update({ "consensi.ai": FieldValue.delete() }); esito.consensiDaRichiedere++; }
   }
   return esito;
 }
@@ -514,6 +555,23 @@ exports.manutenzioneRegistro = onRequest({ secrets: [MANUTENZIONE_TOKEN], timeou
   if (!atteso || dato !== atteso) { res.status(403).json({ errore: "non autorizzato" }); return; }
   const azione = String(req.query.azione || "stato");
   const conf = registroDb.collection("config").doc("manutenzione");
+  if (azione === "fine" && !puoChiudereManutenzione((await conf.get()).data(), req.query.forza === "1")) {
+    res.status(409).json({ errore: "manutenzione non chiusa: manca una riapplicazione del registro riuscita dopo l'inizio (forza=1 solo se si è certi)" });
+    return;
+  }
+  if (azione === "eliminaPaziente") {
+    // v137 (R11): cancellazione dovuta prima dei termini ordinari (per esempio
+    // prima del giorno 60 dalla fine della licenza): stesso percorso
+    // dell'eliminazione dall'app, registro e RevenueCat compresi.
+    const uidP = String(req.query.uid || "");
+    const u = uidP ? (await db.collection("users").doc(uidP).get()).data() : null;
+    if (!u || u.ruolo !== "paziente") { res.status(404).json({ errore: "paziente non trovato" }); return; }
+    const piano = await pianoDelPaziente(uidP);
+    await cancellaDatiPaziente(uidP, piano ? piano.ref : null);
+    console.log("Eliminazione manuale del paziente", uidP);
+    res.json({ eliminato: uidP });
+    return;
+  }
   if (azione === "inizio" || azione === "fine") {
     await conf.set({ attiva: azione === "inizio", quando: FieldValue.serverTimestamp() });
     manutenzioneCache = { quando: 0, attiva: false };
@@ -524,6 +582,7 @@ exports.manutenzioneRegistro = onRequest({ secrets: [MANUTENZIONE_TOKEN], timeou
     const dal = req.query.dal ? Date.parse(String(req.query.dal)) : Date.now() - GIORNI_REGISTRO * GIORNO_MS;
     if (!Number.isFinite(dal)) { res.status(400).json({ errore: "data non valida" }); return; }
     const esito = await riapplicaRegistro(String(req.query.database || "(default)"), dal);
+    await conf.set({ riapplicata: FieldValue.serverTimestamp(), esitoRiapplicazione: esito }, { merge: true });
     console.log("Registro riapplicato:", JSON.stringify(esito));
     res.json(esito);
     return;
@@ -1095,6 +1154,7 @@ exports.aggiornaConsensoAI = onCall(async (request) => {
   await batch.commit();
   // Revoca (o scelta negativa): si cancellano i riscontri e l'analisi dell'andamento
   let cancellati = false;
+  if (si) await registra("consensoAI", "users/" + uid, { uid });
   if (!si) {
     await registra("revocaAI", "users/" + uid, { uid });
     cancellati = await cancellaDatiAI(uid);
@@ -2943,5 +3003,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoConsensiDaRegistro, puoChiudereManutenzione, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
