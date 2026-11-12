@@ -437,13 +437,14 @@ async function registra(tipo, percorso, extra) {
  * consenso dato DOPO una revoca non riattiva l'AI sulla base della copia
  * ripristinata: la scelta torna «da richiedere» e l'app la chiede di nuovo.
  */
-function esitoConsensiDaRegistro(voci) {
+function esitoConsensiDaRegistro(voci, tipoRevoca, tipoConsenso) {
+  const rev = tipoRevoca || "revocaAI", con = tipoConsenso || "consensoAI";
   const esito = {};
   const revocati = new Set();
   for (const v of voci) {
     if (!v || !v.uid) continue;
-    if (v.tipo === "revocaAI") { revocati.add(v.uid); esito[v.uid] = "revocato"; }
-    else if (v.tipo === "consensoAI" && revocati.has(v.uid)) esito[v.uid] = "daRichiedere";
+    if (v.tipo === rev) { revocati.add(v.uid); esito[v.uid] = "revocato"; }
+    else if (v.tipo === con && revocati.has(v.uid)) esito[v.uid] = "daRichiedere";
   }
   return esito;
 }
@@ -492,8 +493,17 @@ async function riapplicaRegistro(databaseId, dalMs) {
         await ref.update({ [k]: FieldValue.delete(), [`note.${k}`]: FieldValue.delete(), [`motivi.${k}`]: FieldValue.delete(), [`etichette.${k}`]: FieldValue.delete(), [`etichetteModo.${k}`]: FieldValue.delete() });
       }
       esito.documentiCancellati++;
-    } else if (v.tipo === "consensoAI" && v.uid) {
+    } else if ((v.tipo === "consensoAI" || v.tipo === "consensoAINutrizionista") && v.uid) {
       // gestito sotto, con esitoConsensiDaRegistro
+    } else if (v.tipo === "revocaAINutrizionista" && v.uid) {
+      // v140 (R12): revoca della sintesi per il nutrizionista
+      const ref = target.collection("users").doc(v.uid);
+      if ((await ref.get()).exists) {
+        await ref.set({ consensi: { aiNutrizionista: { si: false, versione: VERSIONE_AI_NUTRIZIONISTA, data: v.quando } } }, { merge: true });
+        const pianoQ = await target.collection("piani").where("pazienteUid", "==", v.uid).limit(1).get();
+        if (!pianoQ.empty) await target.recursiveDelete(pianoQ.docs[0].ref.collection("analisi"));
+      }
+      esito.revoche++;
     } else if (v.tipo === "revocaAI" && v.uid) {
       const ref = target.collection("users").doc(v.uid);
       if ((await ref.get()).exists) {
@@ -507,11 +517,13 @@ async function riapplicaRegistro(databaseId, dalMs) {
   }
   // v137 (R9): revoca seguita da un nuovo consenso prima del ripristino
   esito.consensiDaRichiedere = 0;
-  const consensi = esitoConsensiDaRegistro(ordinate);
-  for (const uid of Object.keys(consensi)) {
-    if (consensi[uid] !== "daRichiedere") continue;
-    const ref = target.collection("users").doc(uid);
-    if ((await ref.get()).exists) { await ref.update({ "consensi.ai": FieldValue.delete() }); esito.consensiDaRichiedere++; }
+  for (const [rev, con, campo] of [["revocaAI", "consensoAI", "consensi.ai"], ["revocaAINutrizionista", "consensoAINutrizionista", "consensi.aiNutrizionista"]]) {
+    const consensi = esitoConsensiDaRegistro(ordinate, rev, con);
+    for (const uid of Object.keys(consensi)) {
+      if (consensi[uid] !== "daRichiedere") continue;
+      const ref = target.collection("users").doc(uid);
+      if ((await ref.get()).exists) { await ref.update({ [campo]: FieldValue.delete() }); esito.consensiDaRichiedere++; }
+    }
   }
   return esito;
 }
@@ -643,7 +655,12 @@ async function scollegaPazienteDalProfessionista(pazienteUid, pianoRef) {
   await db.runTransaction(async (t) => {
     const piano = await t.get(pianoRef);
     const ex = piano.exists ? piano.data().professionistaUid : null;
-    t.update(db.collection("users").doc(pazienteUid), { professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp() });
+    t.update(db.collection("users").doc(pazienteUid), { professionistaUid: FieldValue.delete(), scollegato: FieldValue.serverTimestamp(), "consensi.aiNutrizionista": FieldValue.delete() });
+    // v140 (R12): la scelta sulla sintesi era per quel nutrizionista e decade
+    t.set(db.collection("users").doc(pazienteUid).collection("consensiStorico").doc(), {
+      tipo: "aiNutrizionista", si: false, finalita: "sintesi AI dell'andamento per il nutrizionista", titolare: "nutrizionista " + (ex || ""),
+      versione: VERSIONE_AI_NUTRIZIONISTA, data: FieldValue.serverTimestamp(), da: "scollegamento dal nutrizionista",
+    });
     t.update(pianoRef, {
       professionistaUid: null, gestore: "paziente", contattiNutrizionista: FieldValue.delete(), aggiornato: FieldValue.serverTimestamp(),
       exProfessionistaUid: ex || null,
@@ -1121,6 +1138,24 @@ const VERSIONE_CONSENSI = "2026-10-20";
 // del 3/11/2026, punto 10). Le scelte registrate con una versione precedente non
 // valgono più: l'app chiede una nuova scelta e il server blocca l'AI fino ad allora.
 const VERSIONE_AI = "2026-11-05";
+// v140 (DPIA rev. 4, punto R12): per il paziente autonomo collegato a un
+// nutrizionista la sintesi dell'andamento è una scelta separata, con titolare
+// il nutrizionista (consensi.aiNutrizionista: si, versione, data, titolare).
+const VERSIONE_AI_NUTRIZIONISTA = "2026-11-12";
+
+/**
+ * Vero se la sintesi AI dell'andamento va bloccata per questo paziente.
+ * Paziente autonomo: vale solo la scelta separata, data per lo stesso
+ * nutrizionista che chiede la sintesi. Paziente creato dal nutrizionista:
+ * vale il consenso AI unico, come prima.
+ */
+function consensoSintesiNegato(utente, profUid) {
+  if (!utente) return false;
+  if (utente.confermaRichiesta) return true;
+  if (!utente.autonomo) return consensoAINegato(utente);
+  const c = utente.consensi && utente.consensi.aiNutrizionista;
+  return !(c && c.si === true && String(c.versione || "") >= VERSIONE_AI_NUTRIZIONISTA && c.titolare === profUid);
+}
 
 /**
  * Vero se le funzioni AI vanno bloccate per questo paziente:
@@ -1144,29 +1179,52 @@ exports.aggiornaConsensoAI = onCall(async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
   const si = !!(request.data && request.data.si === true);
+  const perNutrizionista = !!(request.data && request.data.finalita === "nutrizionista");
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  const da = request.data && request.data.da === "richiesta" ? "richiesta nell'app" : request.data && request.data.da === "collegamento" ? "collegamento al nutrizionista" : "impostazioni";
   const batch = db.batch();
+  if (perNutrizionista) {
+    // v140 (R12): scelta separata per la sintesi del nutrizionista (solo autonomi collegati)
+    if (!utente.autonomo || !utente.professionistaUid) throw new HttpsError("failed-precondition", "non-collegato");
+    const titolare = utente.professionistaUid;
+    batch.set(utenteRef, { consensi: { aiNutrizionista: { si, versione: VERSIONE_AI_NUTRIZIONISTA, data: FieldValue.serverTimestamp(), titolare } } }, { merge: true });
+    batch.set(utenteRef.collection("consensiStorico").doc(), {
+      tipo: "aiNutrizionista", finalita: "sintesi AI dell'andamento per il nutrizionista", titolare: "nutrizionista " + titolare,
+      si, versione: VERSIONE_AI_NUTRIZIONISTA, data: FieldValue.serverTimestamp(), da,
+    });
+    await batch.commit();
+    await registra(si ? "consensoAINutrizionista" : "revocaAINutrizionista", "users/" + uid, { uid });
+    if (!si) await cancellaDatiAI(uid, { soloAnalisi: true });
+    return { si, finalita: "nutrizionista" };
+  }
   batch.set(utenteRef, { consensi: { versione: VERSIONE_CONSENSI, ai: { si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp() } } }, { merge: true });
-  const da = request.data && request.data.da === "richiesta" ? "richiesta nell'app" : "impostazioni";
-  batch.set(utenteRef.collection("consensiStorico").doc(), { tipo: "ai", si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp(), da });
+  batch.set(utenteRef.collection("consensiStorico").doc(), {
+    tipo: "ai", finalita: utente.autonomo ? "funzioni AI per il paziente" : "funzioni AI per il paziente e sintesi per il nutrizionista",
+    titolare: utente.autonomo ? "Bulli & Pupe S.r.l." : "nutrizionista " + (utente.professionistaUid || ""),
+    si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp(), da,
+  });
   await batch.commit();
-  // Revoca (o scelta negativa): si cancellano i riscontri e l'analisi dell'andamento
+  // Revoca (o scelta negativa): si cancellano i riscontri e, se la scelta copre
+  // anche la sintesi (pazienti del nutrizionista), l'analisi dell'andamento
   let cancellati = false;
   if (si) await registra("consensoAI", "users/" + uid, { uid });
   if (!si) {
     await registra("revocaAI", "users/" + uid, { uid });
-    cancellati = await cancellaDatiAI(uid);
+    cancellati = await cancellaDatiAI(uid, { soloRiscontri: !!utente.autonomo });
   }
   return { si, cancellati };
 });
 
 /** Dopo la revoca del consenso AI: via riscontri del paziente e analisi dell'andamento. */
-async function cancellaDatiAI(uid) {
-  await db.recursiveDelete(db.collection("users").doc(uid).collection("riscontri"));
-  const piano = await pianoDelPaziente(uid);
-  if (piano) await db.recursiveDelete(piano.ref.collection("analisi"));
+async function cancellaDatiAI(uid, opzioni) {
+  const o = opzioni || {};
+  if (!o.soloAnalisi) await db.recursiveDelete(db.collection("users").doc(uid).collection("riscontri"));
+  if (!o.soloRiscontri) {
+    const piano = await pianoDelPaziente(uid);
+    if (piano) await db.recursiveDelete(piano.ref.collection("analisi"));
+  }
   return true;
 }
 
@@ -1337,6 +1395,7 @@ function esitoCancellazioneRC(status, tentativi) {
 
 async function eseguiCancellazioniRevenueCat(chiave) {
   const coda = await db.collection("cancellazioniRevenueCat").limit(200).get();
+  const conteggio = { inCoda: coda.size, cancellati: 0, giaAssenti: 0, daRiprovare: 0, abbandonati: 0 };
   for (const d of coda.docs) {
     let status = 0;
     try {
@@ -1347,12 +1406,14 @@ async function eseguiCancellazioniRevenueCat(chiave) {
       status = r.status;
     } catch (e) { status = 0; }
     const esito = esitoCancellazioneRC(status, d.data().tentativi);
-    if (esito === "riprova") await d.ref.update({ tentativi: FieldValue.increment(1), ultimoStato: status });
+    if (esito === "riprova") { conteggio.daRiprovare++; await d.ref.update({ tentativi: FieldValue.increment(1), ultimoStato: status }); }
     else {
-      if (esito === "abbandona") console.error("cancellaClientiRevenueCat: cancellazione non riuscita dopo 10 tentativi", d.id, status);
+      if (esito === "abbandona") { conteggio.abbandonati++; console.error("cancellaClientiRevenueCat: cancellazione non riuscita dopo 10 tentativi", d.id, status); }
+      else if (status === 404) conteggio.giaAssenti++; else conteggio.cancellati++;
       await d.ref.delete();
     }
   }
+  console.log("cancellaClientiRevenueCat: " + JSON.stringify(conteggio));
 }
 
 exports.cancellaClientiRevenueCat = onSchedule(
@@ -2780,7 +2841,7 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
   if (!piano || piano.professionistaUid !== uid) throw new HttpsError("permission-denied", "Paziente non tuo.");
   if (piano.pazienteUid) {
     const pazienteDoc = (await db.collection("users").doc(piano.pazienteUid).get()).data();
-    if (consensoAINegato(pazienteDoc)) throw new HttpsError("failed-precondition", "consenso-ai-negato");
+    if (consensoSintesiNegato(pazienteDoc, uid)) throw new HttpsError("failed-precondition", pazienteDoc && pazienteDoc.autonomo ? "consenso-sintesi-negato" : "consenso-ai-negato");
   }
 
   const oggi = new Date().toISOString().slice(0, 10);
@@ -3003,5 +3064,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoConsensiDaRegistro, puoChiudereManutenzione, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoConsensiDaRegistro, puoChiudereManutenzione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

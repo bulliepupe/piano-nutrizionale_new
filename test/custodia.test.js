@@ -13,7 +13,7 @@ const NOW = { __now: true };
 let ORA = Date.UTC(2026, 10, 3, 3, 30);
 const ts = (m) => ({ toMillis: () => m, __ts: m });
 const clone = (x) => JSON.parse(JSON.stringify(x, (k, v) => (v && v.__ts !== undefined ? { __ts: v.__ts } : v)), (k, v) => (v && v.__ts !== undefined ? ts(v.__ts) : v));
-function applica(dest, dati) {
+function applica(dest, dati, profondo) {
   for (const k of Object.keys(dati)) {
     const v = dati[k];
     const parti = k.split(".");
@@ -22,7 +22,8 @@ function applica(dest, dati) {
     const ult = parti[parti.length - 1];
     if (v === DEL) delete o[ult];
     else if (v === NOW) o[ult] = ts(ORA);
-    else o[ult] = v && typeof v === "object" && !Array.isArray(v) && v.__ts === undefined ? applica({}, v) : v;
+    // set con merge: le mappe annidate si uniscono, come in Firestore (v140)
+    else o[ult] = v && typeof v === "object" && !Array.isArray(v) && v.__ts === undefined ? applica(profondo && o[ult] && typeof o[ult] === "object" ? o[ult] : {}, v, profondo) : v;
   }
   return dest;
 }
@@ -34,7 +35,7 @@ function ref(path) {
     collection: (c) => col(path + "/" + c),
     async get() { return snap(path); },
     async update(d) { if (!(path in store)) throw new Error("no doc " + path); applica(store[path], d); },
-    async set(d, o) { store[path] = o && o.merge ? applica(store[path] || {}, d) : applica({}, d); },
+    async set(d, o) { store[path] = o && o.merge ? applica(store[path] || {}, d, true) : applica({}, d); },
     async delete() { delete store[path]; },
   };
 }
@@ -216,7 +217,17 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   store["piani/prev/analisi/a1"] = { testo: "analisi" };
   store["piani/prev/misure/m1"] = { peso: 70 };
   const esitoRevoca = await f.aggiornaConsensoAI({ auth: { uid: "rev" }, data: { si: false } });
-  ok(esitoRevoca.cancellati === true && !("users/rev/riscontri/2026-11-05_pranzo" in store) && !("piani/prev/analisi/a1" in store), "revoca: riscontri e analisi cancellati");
+  // v140 (R12): per l'autonomo la revoca dell'AI personale cancella i riscontri, non la sintesi (scelta separata)
+  ok(esitoRevoca.cancellati === true && !("users/rev/riscontri/2026-11-05_pranzo" in store) && ("piani/prev/analisi/a1" in store), "revoca AI personale (autonomo): riscontri cancellati, sintesi no");
+  store["users/rev"].professionistaUid = "profX";
+  const esitoSintesi = await f.aggiornaConsensoAI({ auth: { uid: "rev" }, data: { si: false, finalita: "nutrizionista" } });
+  ok(esitoSintesi.finalita === "nutrizionista" && !("piani/prev/analisi/a1" in store) && store["users/rev"].consensi.aiNutrizionista.titolare === "profX", "revoca della sintesi: analisi cancellata, titolare registrato");
+  store["users/rev2"] = { ruolo: "paziente", professionistaUid: "profX", consensi: { ai: { si: true, versione: "2026-11-05" } } };
+  store["users/rev2/riscontri/2026-11-05_cena"] = { impatto: "lieve" };
+  store["piani/prev2"] = { pazienteUid: "rev2", professionistaUid: "profX" };
+  store["piani/prev2/analisi/a1"] = { testo: "analisi" };
+  await f.aggiornaConsensoAI({ auth: { uid: "rev2" }, data: { si: false } });
+  ok(!("users/rev2/riscontri/2026-11-05_cena" in store) && !("piani/prev2/analisi/a1" in store), "revoca (paziente del nutrizionista): riscontri e analisi cancellati");
   ok("piani/prev/misure/m1" in store && store["users/rev"].consensi.ai.si === false, "revoca: il resto resta, scelta registrata");
 
   // --- Senza conferma entro 90 giorni (vecchie richieste): account cancellato ---

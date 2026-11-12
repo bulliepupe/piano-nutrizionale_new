@@ -471,15 +471,60 @@
   const VERSIONE_AI = "2026-11-05";
   const TESTO_INFO_AI = "Le funzioni AI usano Claude di Anthropic, con elaborazione negli Stati Uniti. A seconda della funzione vengono inviati il piano, i pasti e le note, i dati utili alla sintesi dell’andamento per il tuo nutrizionista e le immagini che scegli di caricare. Per le etichette fotografa soltanto la tabella nutrizionale. Non aggiungiamo alle richieste nome, email o identificativo del tuo account; testi e immagini possono però contenere informazioni personali o di salute. I controlli di oscuramento non eliminano ogni riferimento: verifica sempre ciò che invii. Puoi usare le altre funzioni dell’app senza attivare l’AI e revocare la scelta in Impostazioni, Privacy. L’informativa descrive finalità, titolari, conservazione e trasferimenti.";
   const FORMULA_AI = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per le funzioni di intelligenza artificiale descritte qui sopra (lettura del piano, riscontro sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto, analisi dell’andamento per il mio nutrizionista), con elaborazione da parte di Anthropic negli Stati Uniti.";
+  // v140 (DPIA rev. 4, R12): per il paziente autonomo le funzioni AI che usa lui
+  // e la sintesi per il nutrizionista sono due scelte separate, con titolari diversi.
+  const VERSIONE_AI_NUTRIZIONISTA = "2026-11-12";
+  const FORMULA_AI_PERSONALE = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per le funzioni di intelligenza artificiale descritte qui sopra (lettura del piano, riscontro sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto), con elaborazione da parte di Anthropic negli Stati Uniti.";
+  const TESTO_INFO_SINTESI = "Il tuo nutrizionista può vedere nell’app una sintesi dei tuoi dati degli ultimi 30 giorni scritta con l’intelligenza artificiale (Claude di Anthropic, con elaborazione negli Stati Uniti): aderenza al piano, pasti non come da piano con le tue note, peso e uso dell’app, senza nome né email. La sintesi descrive i dati, senza valutazioni. Per questa funzione il titolare dei dati è il tuo nutrizionista e Bulli &amp; Pupe S.r.l. li tratta per suo conto. È una scelta separata dalle funzioni AI che usi tu: puoi accettarne una e rifiutare l’altra, e cambiarla quando vuoi. Se non acconsenti, il nutrizionista vede comunque i tuoi dati nell’app, senza la sintesi.";
+  const FORMULA_SINTESI = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per la sintesi dell’andamento scritta con l’intelligenza artificiale per il mio nutrizionista, con elaborazione da parte di Anthropic negli Stati Uniti.";
+  // per il paziente autonomo la sintesi per il nutrizionista ha una scelta e un testo a parte
+  const TESTO_INFO_AI_PERSONALE = TESTO_INFO_AI.replace("i pasti e le note, i dati utili alla sintesi dell’andamento per il tuo nutrizionista e le immagini", "i pasti, le note e le immagini");
+  function testoInfoAI() { return AUTONOMO ? TESTO_INFO_AI_PERSONALE : TESTO_INFO_AI; }
+  let SCELTA_SINTESI_REGISTRATA = false;
+  let CONSENSO_SINTESI = false;
+  let SCELTA_SINTESI_CHIESTA = false;
+  function formulaAI() { return AUTONOMO ? FORMULA_AI_PERSONALE : FORMULA_AI; }
   function titolareAITesto() {
+    if (AUTONOMO) return "Per queste funzioni il titolare dei dati è Bulli &amp; Pupe S.r.l.";
     return COLLEGATO_NUTRIZIONISTA
       ? "Mentre ti segue il tuo nutrizionista, per queste funzioni il titolare dei dati è il nutrizionista e Bulli &amp; Pupe S.r.l. li tratta per suo conto."
       : "Per queste funzioni il titolare dei dati è Bulli &amp; Pupe S.r.l.";
   }
   function infoAIHTML() {
-    return `<p class="sheet__nota">${TESTO_INFO_AI} ${titolareAITesto()} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>`;
+    return `<p class="sheet__nota">${testoInfoAI()} ${titolareAITesto()} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>`;
   }
+  function chiediSceltaSintesiAvvio() {
+    if (RUOLO !== "paziente" || !AUTONOMO || !COLLEGATO_NUTRIZIONISTA || SCELTA_SINTESI_REGISTRATA || SCELTA_SINTESI_CHIESTA) return;
+    if (document.getElementById("informativa-primo-accesso") || document.getElementById("continua-da-solo") || document.querySelector("#sheet-overlay:not([hidden])")) { setTimeout(chiediSceltaSintesiAvvio, 3000); return; }
+    SCELTA_SINTESI_CHIESTA = true;
+    apriSheet(`
+      <h2 class="sheet__titolo">Sintesi per il tuo nutrizionista</h2>
+      <p class="sheet__nota">${TESTO_INFO_SINTESI} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>
+      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-sintesi"> <span>${FORMULA_SINTESI}</span></label>
+      <button type="button" class="btn" id="btn-sintesi-si" disabled>Attiva la sintesi</button>
+      <button type="button" class="btn btn--ghost" id="btn-sintesi-no">No, grazie</button>`);
+    const casella = document.getElementById("avvio-consenso-sintesi");
+    const si = document.getElementById("btn-sintesi-si");
+    const no = document.getElementById("btn-sintesi-no");
+    casella.addEventListener("change", () => { si.disabled = !casella.checked; });
+    const registra = async (valore, bottone, testo) => {
+      si.disabled = true; no.disabled = true; bottone.textContent = "Salvo…";
+      try {
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: valore, finalita: "nutrizionista", da: "richiesta" });
+        CONSENSO_SINTESI = valore; SCELTA_SINTESI_REGISTRATA = true;
+        chiudiSheet();
+        mostraToast(valore ? "Sintesi per il nutrizionista attivata" : "Va bene: niente sintesi AI per il nutrizionista. Puoi cambiare idea da Impostazioni → Privacy.", 4000);
+      } catch (e) {
+        bottone.textContent = testo; no.disabled = false; si.disabled = !casella.checked;
+        mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
+      }
+    };
+    si.addEventListener("click", () => registra(true, si, "Attiva la sintesi"));
+    no.addEventListener("click", () => registra(false, no, "No, grazie"));
+  }
+
   function chiediSceltaAIAvvio() {
+    if (RUOLO === "paziente") setTimeout(chiediSceltaSintesiAvvio, 2500);
     if (RUOLO !== "paziente" || SCELTA_AI_REGISTRATA || SCELTA_AI_CHIESTA) return;
     if (document.getElementById("informativa-primo-accesso") || document.getElementById("continua-da-solo")) return;
     if (document.querySelector("#sheet-overlay:not([hidden])")) { setTimeout(chiediSceltaAIAvvio, 3000); return; }
@@ -488,7 +533,7 @@
       <h2 class="sheet__titolo">Funzioni di intelligenza artificiale</h2>
       ${SCELTA_AI_VECCHIA ? `<p class="sheet__nota"><b>Abbiamo aggiornato le informazioni sulle funzioni AI</b>, che ora leggono anche la tabella nutrizionale dei prodotti: per continuare a usarle serve una nuova scelta.</p>` : ""}
       ${infoAIHTML()}
-      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-ai"> <span>${FORMULA_AI}</span></label>
+      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-ai"> <span>${formulaAI()}</span></label>
       <button type="button" class="btn" id="btn-avvio-ai-si" disabled>Attiva le funzioni AI</button>
       <button type="button" class="btn btn--ghost" id="btn-avvio-ai-no">No, grazie</button>`);
     const casella = document.getElementById("avvio-consenso-ai");
@@ -544,7 +589,7 @@
         </ul>
         <label class="auth-check"><input type="checkbox" id="cds-maggiorenne"> <span>Ho almeno 18 anni, accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" class="link-inline">Termini di servizio</a> e ho letto l'<a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa privacy</a></span></label>
         <label class="auth-check"><input type="checkbox" id="cds-salute"> <span>Acconsento al trattamento dei miei dati relativi alla salute (piano alimentare, pasti, peso, misure, allenamenti) per usare Il mio Piano. Posso revocare il consenso in qualsiasi momento.</span></label>
-        <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> ${FORMULA_AI} <span class="stato-pasto__avviso">${TESTO_INFO_AI}</span></span></label>
+        <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> ${FORMULA_AI_PERSONALE} <span class="stato-pasto__avviso">${TESTO_INFO_AI_PERSONALE} Per queste funzioni il titolare dei dati è Bulli &amp; Pupe S.r.l.</span></span></label>
         <p class="auth-error" id="cds-errore" hidden></p>
         <button type="button" class="btn" id="cds-continua" disabled>Continuo da solo</button>
         ${durante ? `<button type="button" class="btn btn--ghost" id="cds-dopo">Decido più tardi</button>` : ""}
@@ -612,6 +657,10 @@
     SCELTA_AI_VECCHIA = !!sceltaAI && !sceltaValida;
     COLLEGATO_NUTRIZIONISTA = !!utenteDati.professionistaUid;
     CONSENSO_AI = !utenteDati.confermaRichiesta && sceltaValida && sceltaAI.si === true;
+    const sceltaSintesi = utenteDati.consensi && utenteDati.consensi.aiNutrizionista;
+    const sintesiValida = !!sceltaSintesi && String(sceltaSintesi.versione || "") >= VERSIONE_AI_NUTRIZIONISTA && sceltaSintesi.titolare === utenteDati.professionistaUid;
+    SCELTA_SINTESI_REGISTRATA = sintesiValida;
+    CONSENSO_SINTESI = sintesiValida && sceltaSintesi.si === true;
     mostraSchermata("paziente");
     aggiornaPremium().then(() => caricaReseAI());
     if (!avviaPaziente.collegato) {
@@ -828,7 +877,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v139";
+  const VERSIONE_APP = "v140";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -1390,15 +1439,32 @@
     return `
       <section class="settings-section" id="sezione-privacy">
         <h2>Privacy</h2>
-        <p class="hint">${TESTO_INFO_AI} ${titolareAITesto()}</p>
-        <label class="check-riga"><input type="checkbox" id="consenso-ai"${CONSENSO_AI ? " checked" : ""}> <span>${FORMULA_AI}</span></label>
+        <p class="hint">${testoInfoAI()} ${titolareAITesto()}</p>
+        <label class="check-riga"><input type="checkbox" id="consenso-ai"${CONSENSO_AI ? " checked" : ""}> <span>${formulaAI()}</span></label>
         <p class="stat-nota">Senza questo consenso l'app funziona, senza le funzioni AI. Puoi cambiarlo quando vuoi.</p>
         <button type="button" class="btn btn--ghost" id="btn-salva-consenso-ai">Salva</button>
+        ${AUTONOMO && COLLEGATO_NUTRIZIONISTA ? `
+        <h3 class="settings-sottotitolo" style="margin-top:18px;">Sintesi per il tuo nutrizionista</h3>
+        <p class="hint">${TESTO_INFO_SINTESI}</p>
+        <label class="check-riga"><input type="checkbox" id="consenso-sintesi"${CONSENSO_SINTESI ? " checked" : ""}> <span>${FORMULA_SINTESI}</span></label>
+        <button type="button" class="btn btn--ghost" id="btn-salva-consenso-sintesi">Salva</button>` : ""}
         <p class="hint" style="margin-top:12px;">Il consenso ai dati sulla salute serve per usare l'app: per revocarlo elimina l'account, qui sotto. Tutti i dettagli sono nell'<a href="https://ilmiopiano.it/privacy.html" target="_blank" rel="noopener" data-link="privacy">Informativa privacy</a>.</p>
       </section>`;
   }
 
   function collegaPrivacyPaziente() {
+    const btnS = document.getElementById("btn-salva-consenso-sintesi");
+    if (btnS) btnS.addEventListener("click", async () => {
+      const si = document.getElementById("consenso-sintesi").checked;
+      if (si === CONSENSO_SINTESI && SCELTA_SINTESI_REGISTRATA) { mostraToast("Nessuna modifica"); return; }
+      btnS.disabled = true;
+      try {
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si, finalita: "nutrizionista" });
+        CONSENSO_SINTESI = si; SCELTA_SINTESI_REGISTRATA = true;
+        mostraToast(si ? "Sintesi per il nutrizionista attivata" : "Sintesi disattivata: non la inviamo più ad Anthropic e abbiamo cancellato quella salvata", 5000);
+      } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
+      finally { btnS.disabled = false; }
+    });
     const btn = document.getElementById("btn-salva-consenso-ai");
     if (!btn) return;
     btn.addEventListener("click", async () => {
@@ -1411,7 +1477,7 @@
         SCELTA_AI_REGISTRATA = true;
         SCELTA_AI_VECCHIA = false;
         if (!si) { RISCONTRI.perPasto = {}; if (typeof render === "function") render(); }
-        mostraToast(si ? "Funzioni AI attivate" : "Funzioni AI disattivate: non inviamo più nulla ad Anthropic e abbiamo cancellato riscontri e analisi", 5000);
+        mostraToast(si ? "Funzioni AI attivate" : AUTONOMO ? "Funzioni AI disattivate: abbiamo cancellato i riscontri. La sintesi per il nutrizionista ha una scelta a parte." : "Funzioni AI disattivate: non inviamo più nulla ad Anthropic e abbiamo cancellato riscontri e analisi", 5000);
       } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
       finally { btn.disabled = false; }
     });
@@ -2131,7 +2197,7 @@
     apriSheet(`
       <h2 class="sheet__titolo">Leggere il piano con l'intelligenza artificiale</h2>
       ${infoAIHTML()}
-      <label class="check-riga rep-consenso"><input type="checkbox" id="jit-consenso-ai"> <span>${FORMULA_AI}</span></label>
+      <label class="check-riga rep-consenso"><input type="checkbox" id="jit-consenso-ai"> <span>${formulaAI()}</span></label>
       <button type="button" class="btn" id="btn-jit-attiva" disabled>Attiva e continua</button>
       ${alternativa ? `<button type="button" class="btn btn--ghost" id="btn-jit-mano">Compilo il piano a mano</button>` : ""}
       <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
@@ -6665,8 +6731,9 @@
         <p>${m === "limite-giornaliero" ? "Per oggi le sintesi disponibili sono esaurite."
           : m === "licenza-non-attiva" ? "Serve una licenza attiva."
           : m === "consenso-ai-negato" ? "Il paziente non ha dato il consenso alle funzioni AI: può attivarlo dall'app, in Impostazioni → Privacy. Le statistiche qui sotto restano disponibili."
+          : m === "consenso-sintesi-negato" ? "Il paziente non ha attivato la sintesi AI per il nutrizionista: è una sua scelta separata, che può cambiare dall'app in Impostazioni → Privacy. Le statistiche qui sotto restano disponibili."
           : "Sintesi non disponibile in questo momento."}</p></div></div>
-        ${m === "consenso-ai-negato" ? "" : `<button type="button" class="btn btn--ghost" id="analisi-riprova">Riprova</button>`}`;
+        ${m === "consenso-ai-negato" || m === "consenso-sintesi-negato" ? "" : `<button type="button" class="btn btn--ghost" id="analisi-riprova">Riprova</button>`}`;
       const b = document.getElementById("analisi-riprova");
       if (b) b.addEventListener("click", () => avviaAnalisiAndamento(piano, r, true));
     }

@@ -2444,3 +2444,6 @@ body.con-informativa { overflow: hidden; }
 .imp-corpo { padding: 0 16px 16px; }
 .imp-corpo > .hint:first-child { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .imp-testa__freccia { transition: none; } }
+
+/* v140: sottotitolo nelle sezioni delle impostazioni */
+.settings-sottotitolo { font-size: 15px; font-weight: 700; margin: 18px 0 6px; }
