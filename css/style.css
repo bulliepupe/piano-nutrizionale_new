@@ -1756,6 +1756,8 @@ body.ruolo-familiare #btn-notifiche { display: none; }
   }
   #view-root[data-vista="oggi"] > * { grid-column: 2; }
   #view-root[data-vista="oggi"] > .timeline { grid-column: 1; grid-row: 1 / span 40; }
+  /* v139: il premietto serale resta nella colonna dei pasti, subito sotto la cena */
+  #view-root[data-vista="oggi"] > .coccola { grid-column: 1; }
   #view-root[data-vista="oggi"] > .empty { grid-column: 1 / -1; }
   #view-root[data-vista="oggi"] > .hero { border-bottom: none; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-m); padding: 16px; }
 
