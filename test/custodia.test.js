@@ -191,6 +191,9 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   await f.confermaContinuaDaSolo({ auth: { uid: "sceglie" }, data: { consensi: { maggiorenne: true, salute: true, ai: true } } });
   ok(store["users/sceglie"].autonomo === true && !store["users/sceglie"].sceltaFineLicenza && store["users/sceglie"].consensi.ai.si === true && store["users/sceglie"].consensi.ai.versione === "2026-11-13", "sceglie di continuare: autonomo con i suoi consensi");
   ok(Object.keys(store).filter((k) => k.startsWith("users/sceglie/consensiStorico/")).length === 3, "consensi nello storico");
+  // v143: cambio di titolare documentato; la scelta sulla sintesi non sopravvive
+  ok(Object.keys(store).filter((k) => k.startsWith("users/sceglie/consensiStorico/")).every((k) => store[k].titolare === "Bulli & Pupe S.r.l." && store[k].finalita), "storico con titolare e finalità");
+  ok(!store["users/sceglie"].consensi.aiNutrizionista, "nessuna scelta sulla sintesi dopo la prosecuzione autonoma");
   ok(T.consensoAINegato(store["users/sceglie"]) === false, "AI disponibile con il consenso nuovo");
   await giorni(30);
   ok(!("users/creato" in store) && !("piani/pc" in store), "a 90 giorni il paziente creato che non ha scelto viene cancellato");

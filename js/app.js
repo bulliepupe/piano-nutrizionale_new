@@ -596,9 +596,11 @@
     box.innerHTML = `
       <div class="informativa-primo__carta">
         <h2 id="continua-titolo">${durante ? `Il tuo nutrizionista non userà più Il mio Piano${entro ? ` dal ${escapeHTML(entro)}` : ""}` : "Il tuo nutrizionista non usa più Il mio Piano"}</h2>
-        <p class="informativa-primo__intro">Puoi continuare a usare l'app da solo: il tuo piano, i pasti segnati, il peso e le misure restano qui. Le note riservate e le analisi del nutrizionista non passano a te.</p>
+        <p class="informativa-primo__intro">Puoi continuare a usare l'app da solo. Se scegli di continuare, cambia il titolare dei tuoi dati: oggi è ${nomeTitolare()}; ${durante ? `dal ${escapeHTML(entro)} sarà` : "da ora è"} <strong>Bulli &amp; Pupe S.r.l.</strong>, che gestisce l'app.</p>
         <ul>
-          <li>${durante ? `Dal ${escapeHTML(entro)} i tuoi dati li tratterà <strong>Bulli &amp; Pupe S.r.l.</strong>, che gestisce l'app e ne sarà titolare.` : `Da ora i tuoi dati sono trattati da <strong>Bulli &amp; Pupe S.r.l.</strong>, che gestisce l'app ed è titolare di questi dati.`}</li>
+          <li><strong>Restano nel tuo account:</strong> il piano, i pasti segnati con le note, i riscontri sui pasti già visibili nel tuo diario, il peso e le misure, gli allenamenti, gli integratori e la lista della spesa.</li>
+          <li><strong>Non passano a te:</strong> le note riservate del nutrizionista, la sintesi dell'andamento e il registro dei report.</li>
+          <li><strong>Funzioni AI:</strong> restano spente finché non scegli qui sotto, o più avanti in Impostazioni → Privacy. Le scelte date durante il percorso con il nutrizionista non valgono per il servizio autonomo.</li>
           <li>Per continuare servono i consensi qui sotto${entro ? `, entro il <strong>${escapeHTML(entro)}</strong>` : ""}. ${durante ? "Se non scegli entro quella data, quel giorno il tuo account e i tuoi dati verranno cancellati." : "Se non continui, il tuo account verrà cancellato."}</li>
         </ul>
         <label class="auth-check"><input type="checkbox" id="cds-maggiorenne"> <span>Ho almeno 18 anni, accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" class="link-inline">Termini di servizio</a> e ho letto l'<a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa privacy</a></span></label>
@@ -891,7 +893,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v142";
+  const VERSIONE_APP = "v143";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 

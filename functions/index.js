@@ -917,12 +917,16 @@ exports.confermaContinuaDaSolo = onCall(async (request) => {
   const batch = db.batch();
   batch.update(utenteRef, {
     autonomo: true, confermaRichiesta: FieldValue.delete(), sceltaFineLicenza: FieldValue.delete(), continuaDaSolo: ora,
-    consensi: { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, versione: VERSIONE_AI, data: ora } },
+    // v143 (Cravero, 13/11): cambio di titolare, nuove scelte; la scelta sulla
+    // sintesi del nutrizionista non vale più e l'AI non si riattiva da sola.
+    consensi: { versione: VERSIONE_CONSENSI, maggiorenne: ora, salute: { si: true, data: ora }, ai: { si: c.ai === true, versione: VERSIONE_AI, data: ora } }, // la mappa intera sostituisce la precedente: aiNutrizionista non c'è più
   });
   ["maggiorenne", "salute", "ai"].forEach((tipo) => batch.set(utenteRef.collection("consensiStorico").doc(), {
     tipo, si: tipo === "ai" ? c.ai === true : true, versione: tipo === "ai" ? VERSIONE_AI : VERSIONE_CONSENSI, data: ora, da: "continua da solo",
+    titolare: "Bulli & Pupe S.r.l.", finalita: tipo === "ai" ? "funzioni AI personali (lettura del piano, riscontri, tabella nutrizionale, stime)" : tipo === "salute" ? "uso del servizio autonomo con dati relativi alla salute" : "accettazione dei termini e dichiarazione di maggiore età",
   }));
   await batch.commit();
+  if (c.ai === true) await registra("consensoAI", "users/" + uid, { uid });
   return { ok: true };
 });
 
