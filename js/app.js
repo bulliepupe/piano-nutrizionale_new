@@ -468,59 +468,76 @@
   let COLLEGATO_NUTRIZIONISTA = false;
   // Testo informativo e formula della scelta AI (Cravero, nota del 3/11/2026,
   // punto 10). Versione: le scelte precedenti non valgono più (server: VERSIONE_AI).
-  const VERSIONE_AI = "2026-11-05";
-  const TESTO_INFO_AI = "Le funzioni AI usano Claude di Anthropic, con elaborazione negli Stati Uniti. A seconda della funzione vengono inviati il piano, i pasti e le note, i dati utili alla sintesi dell’andamento per il tuo nutrizionista e le immagini che scegli di caricare. Per le etichette fotografa soltanto la tabella nutrizionale. Non aggiungiamo alle richieste nome, email o identificativo del tuo account; testi e immagini possono però contenere informazioni personali o di salute. I controlli di oscuramento non eliminano ogni riferimento: verifica sempre ciò che invii. Puoi usare le altre funzioni dell’app senza attivare l’AI e revocare la scelta in Impostazioni, Privacy. L’informativa descrive finalità, titolari, conservazione e trasferimenti.";
-  const FORMULA_AI = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per le funzioni di intelligenza artificiale descritte qui sopra (lettura del piano, riscontro sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto, analisi dell’andamento per il mio nutrizionista), con elaborazione da parte di Anthropic negli Stati Uniti.";
-  // v140 (DPIA rev. 4, R12): per il paziente autonomo le funzioni AI che usa lui
-  // e la sintesi per il nutrizionista sono due scelte separate, con titolari diversi.
-  const VERSIONE_AI_NUTRIZIONISTA = "2026-11-12";
-  const FORMULA_AI_PERSONALE = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per le funzioni di intelligenza artificiale descritte qui sopra (lettura del piano, riscontro sui pasti, lettura della tabella nutrizionale, stime dei macronutrienti e del peso da cotto), con elaborazione da parte di Anthropic negli Stati Uniti.";
-  const TESTO_INFO_SINTESI = "Il tuo nutrizionista può vedere nell’app una sintesi dei tuoi dati degli ultimi 30 giorni scritta con l’intelligenza artificiale (Claude di Anthropic, con elaborazione negli Stati Uniti): aderenza al piano, pasti non come da piano con le tue note, peso e uso dell’app, senza nome né email. La sintesi descrive i dati, senza valutazioni. Per questa funzione il titolare dei dati è il tuo nutrizionista e Bulli &amp; Pupe S.r.l. li tratta per suo conto. È una scelta separata dalle funzioni AI che usi tu: puoi accettarne una e rifiutare l’altra, e cambiarla quando vuoi. Se non acconsenti, il nutrizionista vede comunque i tuoi dati nell’app, senza la sintesi.";
-  const FORMULA_SINTESI = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per la sintesi dell’andamento scritta con l’intelligenza artificiale per il mio nutrizionista, con elaborazione da parte di Anthropic negli Stati Uniti.";
-  // per il paziente autonomo la sintesi per il nutrizionista ha una scelta e un testo a parte
-  const TESTO_INFO_AI_PERSONALE = TESTO_INFO_AI.replace("i pasti e le note, i dati utili alla sintesi dell’andamento per il tuo nutrizionista e le immagini", "i pasti, le note e le immagini");
-  function testoInfoAI() { return AUTONOMO ? TESTO_INFO_AI_PERSONALE : TESTO_INFO_AI; }
+  const VERSIONE_AI = "2026-11-13";
+  // Testo generico usato ancora per l'importazione da parte del professionista
+  const TESTO_INFO_AI = "Le funzioni AI usano Claude di Anthropic, con elaborazione negli Stati Uniti. A seconda della funzione vengono inviati il piano, i pasti e le note, i dati utili alla sintesi dell’andamento per il tuo nutrizionista e le immagini che scegli di caricare.";
+  // v142: testi delle scelte di Cravero (doc. 03 rev8 del 13/11/2026). Le scelte
+  // date con i testi precedenti non valgono più: l'app le chiede di nuovo.
+  const VERSIONE_AI_NUTRIZIONISTA = "2026-11-13";
+  const TESTO_AI_AUTONOMO = "Bulli &amp; Pupe S.r.l. è titolare delle funzioni che usi tu. Se le attivi, Claude può elaborare negli Stati Uniti i dati del piano, le pagine e fotografie che scegli di inviare e le informazioni sui pasti per trascrizioni, riscontri e stime. Le stime dei pasti e del peso crudo/cotto possono partire in sottofondo. Puoi continuare con le funzioni manuali e cambiare scelta in Impostazioni → Privacy.";
+  const FORMULA_AI_PERSONALE = "Acconsento al trattamento dei miei dati, anche relativi alla salute, per usare queste funzioni AI personali di Bulli &amp; Pupe S.r.l., con elaborazione da parte di Anthropic negli Stati Uniti.";
+  const TESTO_INFO_AI_PERSONALE = TESTO_AI_AUTONOMO;
+  /** Nome del nutrizionista o dello studio, da mostrare come titolare (Cravero, 13/11). */
+  function nomeTitolare() {
+    const c = contattiNutrizionistaCorrenti();
+    const n = [c.nome, c.studio].map((x) => String(x || "").trim()).filter(Boolean);
+    return n.length ? escapeHTML(n.join(", ")) : "il tuo nutrizionista";
+  }
+  function testoAISeguito(n) {
+    return `Nel percorso con ${n} puoi usare le funzioni AI dell’app: riscontri sui pasti, lettura della tabella nutrizionale e stime dei macronutrienti e del peso crudo/cotto. Se le attivi, Claude di Anthropic elabora negli Stati Uniti i dati del piano, le foto che scegli di inviare e le informazioni sui pasti. Non vi aggiungiamo il tuo nome né la tua email: inquadra solo ciò che serve. Le stime possono partire in sottofondo. Il titolare dei dati è ${n} e Bulli &amp; Pupe S.r.l. li tratta per suo conto. Puoi continuare con le funzioni manuali e cambiare scelta in Impostazioni → Privacy.`;
+  }
+  function formulaAISeguito(n) {
+    return `Acconsento al trattamento dei miei dati, anche relativi alla salute, per usare le funzioni AI dell’app nel percorso con ${n}, titolare del trattamento, con elaborazione da parte di Anthropic negli Stati Uniti.`;
+  }
+  function testoSintesi() {
+    const n = nomeTitolare();
+    return `Il tuo nutrizionista, ${n}, può vedere nell’app una sintesi dei tuoi dati degli ultimi 30 giorni circa scritta con l’intelligenza artificiale (Claude di Anthropic, con elaborazione negli Stati Uniti): aderenza al piano, pasti non come da piano con le tue note, numero dei riscontri per livello, peso, uso dell’app e data del controllo. Non vi aggiungiamo il tuo nome né la tua email. La sintesi descrive i dati, senza valutazioni. Per questa funzione il titolare dei dati è ${n} e Bulli &amp; Pupe S.r.l. li tratta per suo conto. È una scelta separata dalle funzioni AI che usi tu: puoi accettarne una e rifiutare l’altra, e cambiarla quando vuoi in Impostazioni → Privacy. Se non acconsenti, il nutrizionista vede comunque i tuoi dati nell’app, senza la sintesi. Se revochi, la sintesi salvata viene cancellata; se ti scolleghi dallo studio, la scelta decade.`;
+  }
+  function formulaSintesi() {
+    return `Acconsento al trattamento dei miei dati, anche relativi alla salute, per la sintesi dell’andamento scritta con l’intelligenza artificiale per ${nomeTitolare()}, con elaborazione da parte di Anthropic negli Stati Uniti.`;
+  }
+  /** Il paziente è seguito da un nutrizionista (non autonomo): titolare il nutrizionista. */
+  function seguitoDaNutrizionista() { return !AUTONOMO && COLLEGATO_NUTRIZIONISTA; }
+  function testoInfoAI() { return seguitoDaNutrizionista() ? testoAISeguito(nomeTitolare()) : TESTO_AI_AUTONOMO; }
   let SCELTA_SINTESI_REGISTRATA = false;
   let CONSENSO_SINTESI = false;
   let SCELTA_SINTESI_CHIESTA = false;
-  function formulaAI() { return AUTONOMO ? FORMULA_AI_PERSONALE : FORMULA_AI; }
-  function titolareAITesto() {
-    if (AUTONOMO) return "Per queste funzioni il titolare dei dati è Bulli &amp; Pupe S.r.l.";
-    return COLLEGATO_NUTRIZIONISTA
-      ? "Mentre ti segue il tuo nutrizionista, per queste funzioni il titolare dei dati è il nutrizionista e Bulli &amp; Pupe S.r.l. li tratta per suo conto."
-      : "Per queste funzioni il titolare dei dati è Bulli &amp; Pupe S.r.l.";
+  function formulaAI() { return seguitoDaNutrizionista() ? formulaAISeguito(nomeTitolare()) : FORMULA_AI_PERSONALE; }
+  /** Titolare mostrato, in testo semplice, da registrare con la scelta. */
+  function titolareMostrato(perSintesi) {
+    const d = document.createElement("div");
+    d.innerHTML = perSintesi || seguitoDaNutrizionista() ? nomeTitolare() : "Bulli &amp; Pupe S.r.l.";
+    return d.textContent;
   }
+  function titolareAITesto() { return ""; }
   function infoAIHTML() {
-    return `<p class="sheet__nota">${testoInfoAI()} ${titolareAITesto()} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>`;
+    return `<p class="sheet__nota">${testoInfoAI()} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>`;
   }
   function chiediSceltaSintesiAvvio() {
-    if (RUOLO !== "paziente" || !AUTONOMO || !COLLEGATO_NUTRIZIONISTA || SCELTA_SINTESI_REGISTRATA || SCELTA_SINTESI_CHIESTA) return;
+    if (RUOLO !== "paziente" || !COLLEGATO_NUTRIZIONISTA || SCELTA_SINTESI_REGISTRATA || SCELTA_SINTESI_CHIESTA) return;
     if (document.getElementById("informativa-primo-accesso") || document.getElementById("continua-da-solo") || document.querySelector("#sheet-overlay:not([hidden])")) { setTimeout(chiediSceltaSintesiAvvio, 3000); return; }
     SCELTA_SINTESI_CHIESTA = true;
     apriSheet(`
       <h2 class="sheet__titolo">Sintesi per il tuo nutrizionista</h2>
-      <p class="sheet__nota">${TESTO_INFO_SINTESI} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>
-      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-sintesi"> <span>${FORMULA_SINTESI}</span></label>
-      <button type="button" class="btn" id="btn-sintesi-si" disabled>Attiva la sintesi</button>
-      <button type="button" class="btn btn--ghost" id="btn-sintesi-no">No, grazie</button>`);
-    const casella = document.getElementById("avvio-consenso-sintesi");
+      <p class="sheet__nota">${testoSintesi()} <a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa completa ↗</a></p>
+      <p class="formula-consenso">${formulaSintesi()}</p>
+      <div class="scelta-pari"><button type="button" class="btn" id="btn-sintesi-si">Acconsento</button><button type="button" class="btn" id="btn-sintesi-no">Non acconsento</button></div>`);
     const si = document.getElementById("btn-sintesi-si");
     const no = document.getElementById("btn-sintesi-no");
-    casella.addEventListener("change", () => { si.disabled = !casella.checked; });
     const registra = async (valore, bottone, testo) => {
       si.disabled = true; no.disabled = true; bottone.textContent = "Salvo…";
       try {
-        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: valore, finalita: "nutrizionista", da: "richiesta" });
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: valore, finalita: "nutrizionista", da: "richiesta", titolare: titolareMostrato(true) });
         CONSENSO_SINTESI = valore; SCELTA_SINTESI_REGISTRATA = true;
         chiudiSheet();
         mostraToast(valore ? "Sintesi per il nutrizionista attivata" : "Va bene: niente sintesi AI per il nutrizionista. Puoi cambiare idea da Impostazioni → Privacy.", 4000);
       } catch (e) {
-        bottone.textContent = testo; no.disabled = false; si.disabled = !casella.checked;
+        bottone.textContent = testo; no.disabled = false; si.disabled = false;
         mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
       }
     };
-    si.addEventListener("click", () => registra(true, si, "Attiva la sintesi"));
-    no.addEventListener("click", () => registra(false, no, "No, grazie"));
+    si.addEventListener("click", () => registra(true, si, "Acconsento"));
+    no.addEventListener("click", () => registra(false, no, "Non acconsento"));
   }
 
   function chiediSceltaAIAvvio() {
@@ -531,31 +548,28 @@
     SCELTA_AI_CHIESTA = true;
     apriSheet(`
       <h2 class="sheet__titolo">Funzioni di intelligenza artificiale</h2>
-      ${SCELTA_AI_VECCHIA ? `<p class="sheet__nota"><b>Abbiamo aggiornato le informazioni sulle funzioni AI</b>, che ora leggono anche la tabella nutrizionale dei prodotti: per continuare a usarle serve una nuova scelta.</p>` : ""}
+      ${SCELTA_AI_VECCHIA ? `<p class="sheet__nota"><b>Abbiamo aggiornato le informazioni sulle funzioni AI</b>: per continuare a usarle serve una nuova scelta.</p>` : ""}
       ${infoAIHTML()}
-      <label class="check-riga rep-consenso"><input type="checkbox" id="avvio-consenso-ai"> <span>${formulaAI()}</span></label>
-      <button type="button" class="btn" id="btn-avvio-ai-si" disabled>Attiva le funzioni AI</button>
-      <button type="button" class="btn btn--ghost" id="btn-avvio-ai-no">No, grazie</button>`);
-    const casella = document.getElementById("avvio-consenso-ai");
+      <p class="formula-consenso">${formulaAI()}</p>
+      <div class="scelta-pari"><button type="button" class="btn" id="btn-avvio-ai-si">Acconsento</button><button type="button" class="btn" id="btn-avvio-ai-no">Non acconsento</button></div>`);
     const si = document.getElementById("btn-avvio-ai-si");
     const no = document.getElementById("btn-avvio-ai-no");
-    casella.addEventListener("change", () => { si.disabled = !casella.checked; });
     const registra = async (valore, bottone, testo) => {
       si.disabled = true; no.disabled = true; bottone.textContent = "Salvo…";
       try {
-        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: valore, da: "richiesta" });
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: valore, da: "richiesta", titolare: titolareMostrato(false) });
         CONSENSO_AI = valore;
         SCELTA_AI_REGISTRATA = true;
         chiudiSheet();
         mostraToast(valore ? "Funzioni AI attivate" : "Va bene: le funzioni AI restano spente. Puoi attivarle da Impostazioni → Privacy.", 4000);
         if (valore && typeof render === "function") render();
       } catch (e) {
-        bottone.textContent = testo; no.disabled = false; si.disabled = !casella.checked;
+        bottone.textContent = testo; no.disabled = false; si.disabled = false;
         mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
       }
     };
-    si.addEventListener("click", () => registra(true, si, "Attiva le funzioni AI"));
-    no.addEventListener("click", () => registra(false, no, "No, grazie"));
+    si.addEventListener("click", () => registra(true, si, "Acconsento"));
+    no.addEventListener("click", () => registra(false, no, "Non acconsento"));
   }
 
   // ---------------------------------------------------------------------
@@ -589,7 +603,7 @@
         </ul>
         <label class="auth-check"><input type="checkbox" id="cds-maggiorenne"> <span>Ho almeno 18 anni, accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" class="link-inline">Termini di servizio</a> e ho letto l'<a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa privacy</a></span></label>
         <label class="auth-check"><input type="checkbox" id="cds-salute"> <span>Acconsento al trattamento dei miei dati relativi alla salute (piano alimentare, pasti, peso, misure, allenamenti) per usare Il mio Piano. Posso revocare il consenso in qualsiasi momento.</span></label>
-        <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> ${FORMULA_AI_PERSONALE} <span class="stato-pasto__avviso">${TESTO_INFO_AI_PERSONALE} Per queste funzioni il titolare dei dati è Bulli &amp; Pupe S.r.l.</span></span></label>
+        <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> ${FORMULA_AI_PERSONALE} <span class="stato-pasto__avviso">${TESTO_INFO_AI_PERSONALE}</span></span></label>
         <p class="auth-error" id="cds-errore" hidden></p>
         <button type="button" class="btn" id="cds-continua" disabled>Continuo da solo</button>
         ${durante ? `<button type="button" class="btn btn--ghost" id="cds-dopo">Decido più tardi</button>` : ""}
@@ -877,7 +891,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v140";
+  const VERSIONE_APP = "v142";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -1443,10 +1457,10 @@
         <label class="check-riga"><input type="checkbox" id="consenso-ai"${CONSENSO_AI ? " checked" : ""}> <span>${formulaAI()}</span></label>
         <p class="stat-nota">Senza questo consenso l'app funziona, senza le funzioni AI. Puoi cambiarlo quando vuoi.</p>
         <button type="button" class="btn btn--ghost" id="btn-salva-consenso-ai">Salva</button>
-        ${AUTONOMO && COLLEGATO_NUTRIZIONISTA ? `
+        ${COLLEGATO_NUTRIZIONISTA ? `
         <h3 class="settings-sottotitolo" style="margin-top:18px;">Sintesi per il tuo nutrizionista</h3>
-        <p class="hint">${TESTO_INFO_SINTESI}</p>
-        <label class="check-riga"><input type="checkbox" id="consenso-sintesi"${CONSENSO_SINTESI ? " checked" : ""}> <span>${FORMULA_SINTESI}</span></label>
+        <p class="hint">${testoSintesi()}</p>
+        <label class="check-riga"><input type="checkbox" id="consenso-sintesi"${CONSENSO_SINTESI ? " checked" : ""}> <span>${formulaSintesi()}</span></label>
         <button type="button" class="btn btn--ghost" id="btn-salva-consenso-sintesi">Salva</button>` : ""}
         <p class="hint" style="margin-top:12px;">Il consenso ai dati sulla salute serve per usare l'app: per revocarlo elimina l'account, qui sotto. Tutti i dettagli sono nell'<a href="https://ilmiopiano.it/privacy.html" target="_blank" rel="noopener" data-link="privacy">Informativa privacy</a>.</p>
       </section>`;
@@ -1459,7 +1473,7 @@
       if (si === CONSENSO_SINTESI && SCELTA_SINTESI_REGISTRATA) { mostraToast("Nessuna modifica"); return; }
       btnS.disabled = true;
       try {
-        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si, finalita: "nutrizionista" });
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si, finalita: "nutrizionista", titolare: titolareMostrato(true) });
         CONSENSO_SINTESI = si; SCELTA_SINTESI_REGISTRATA = true;
         mostraToast(si ? "Sintesi per il nutrizionista attivata" : "Sintesi disattivata: non la inviamo più ad Anthropic e abbiamo cancellato quella salvata", 5000);
       } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
@@ -1472,12 +1486,12 @@
       if (si === CONSENSO_AI) { mostraToast("Nessuna modifica"); return; }
       btn.disabled = true;
       try {
-        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si });
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si, titolare: titolareMostrato(false) });
         CONSENSO_AI = si;
         SCELTA_AI_REGISTRATA = true;
         SCELTA_AI_VECCHIA = false;
         if (!si) { RISCONTRI.perPasto = {}; if (typeof render === "function") render(); }
-        mostraToast(si ? "Funzioni AI attivate" : AUTONOMO ? "Funzioni AI disattivate: abbiamo cancellato i riscontri. La sintesi per il nutrizionista ha una scelta a parte." : "Funzioni AI disattivate: non inviamo più nulla ad Anthropic e abbiamo cancellato riscontri e analisi", 5000);
+        mostraToast(si ? "Funzioni AI attivate" : COLLEGATO_NUTRIZIONISTA ? "Funzioni AI disattivate: abbiamo cancellato i riscontri. La sintesi per il nutrizionista ha una scelta a parte." : "Funzioni AI disattivate: abbiamo cancellato i riscontri.", 5000);
       } catch (e) { mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000); }
       finally { btn.disabled = false; }
     });
@@ -2197,23 +2211,21 @@
     apriSheet(`
       <h2 class="sheet__titolo">Leggere il piano con l'intelligenza artificiale</h2>
       ${infoAIHTML()}
-      <label class="check-riga rep-consenso"><input type="checkbox" id="jit-consenso-ai"> <span>${formulaAI()}</span></label>
-      <button type="button" class="btn" id="btn-jit-attiva" disabled>Attiva e continua</button>
+      <p class="formula-consenso">${formulaAI()}</p>
+      <div class="scelta-pari"><button type="button" class="btn" id="btn-jit-attiva">Acconsento</button><button type="button" class="btn" data-chiudi-sheet>Non acconsento</button></div>
       ${alternativa ? `<button type="button" class="btn btn--ghost" id="btn-jit-mano">Compilo il piano a mano</button>` : ""}
-      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
-    const casella = document.getElementById("jit-consenso-ai");
+      `);
     const attiva = document.getElementById("btn-jit-attiva");
-    casella.addEventListener("change", () => { attiva.disabled = !casella.checked; });
     attiva.addEventListener("click", async () => {
       attiva.disabled = true; attiva.textContent = "Attivo…";
       try {
-        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: true, da: "richiesta" });
+        await window.cloud.chiamaFunzione("aggiornaConsensoAI", { si: true, da: "richiesta", titolare: titolareMostrato(false) });
         CONSENSO_AI = true;
         SCELTA_AI_REGISTRATA = true;
         chiudiSheet();
         if (poi) poi();
       } catch (e) {
-        attiva.disabled = false; attiva.textContent = "Attiva e continua";
+        attiva.disabled = false; attiva.textContent = "Acconsento";
         mostraToast(msgErroreScrittura(e, "Non salvato: controlla la connessione"), 4000);
       }
     });
@@ -3328,7 +3340,7 @@
         ${r.spiegazione ? `<p class="riscontro__testo">${escapeHTML(r.spiegazione)}</p>` : ""}
         ${(() => { const b = bilancioGiornoTesto(giorno, fatti); return b ? `<p class="riscontro__testo riscontro__bilancio">${escapeHTML(b)}</p>` : ""; })()}
         <p class="riscontro__messaggio">${escapeHTML(r.descrittivo ? r.messaggio : "Il piano resta il riferimento per il resto della giornata.")}</p>
-        ${r.frequente ? `<p class="riscontro__frequente">Negli ultimi giorni i pasti non come da piano sono stati diversi: può essere utile parlarne con il tuo nutrizionista.</p>` : ""}
+        ${r.frequente && COLLEGATO_NUTRIZIONISTA ? `<p class="riscontro__frequente">Negli ultimi giorni i pasti non come da piano sono stati diversi: può essere utile parlarne con il tuo nutrizionista.</p>` : ""}
         ${AVVERTENZA_AI_PASTI}
       </div>`;
   }

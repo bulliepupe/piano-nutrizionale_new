@@ -887,6 +887,13 @@ async function eseguiCustodia(adesso) {
     await db.recursiveDelete(inv.ref);
     esito.invitiScaduti++;
   }
+
+  // 6) Lista d'attesa (v141): le iscrizioni mai confermate si cancellano dopo 7 giorni
+  esito.iscrizioniNonConfermate = 0;
+  const nonConfermate = await db.collection("listaAttesa").where("confermata", "==", false).get();
+  for (const d of nonConfermate.docs) {
+    if ((msDi(d.data().creato) || adesso) <= adesso - 7 * GIORNO_MS) { await d.ref.delete(); esito.iscrizioniNonConfermate++; }
+  }
   console.log("Custodia dei dati:", JSON.stringify(esito));
   return esito;
 }
@@ -1137,22 +1144,21 @@ const VERSIONE_CONSENSI = "2026-10-20";
 // Versione del testo informativo e della formula della scelta AI (Cravero, nota
 // del 3/11/2026, punto 10). Le scelte registrate con una versione precedente non
 // valgono più: l'app chiede una nuova scelta e il server blocca l'AI fino ad allora.
-const VERSIONE_AI = "2026-11-05";
+const VERSIONE_AI = "2026-11-13"; // v142: testi di Cravero del 13/11 (doc. 03 rev8)
 // v140 (DPIA rev. 4, punto R12): per il paziente autonomo collegato a un
 // nutrizionista la sintesi dell'andamento è una scelta separata, con titolare
 // il nutrizionista (consensi.aiNutrizionista: si, versione, data, titolare).
-const VERSIONE_AI_NUTRIZIONISTA = "2026-11-12";
+const VERSIONE_AI_NUTRIZIONISTA = "2026-11-13";
 
 /**
  * Vero se la sintesi AI dell'andamento va bloccata per questo paziente.
- * Paziente autonomo: vale solo la scelta separata, data per lo stesso
- * nutrizionista che chiede la sintesi. Paziente creato dal nutrizionista:
- * vale il consenso AI unico, come prima.
+ * Dalla v142 (parere integrativo di Cravero del 13/11, R12) vale per tutti i
+ * pazienti la scelta separata, data per lo stesso nutrizionista che chiede la
+ * sintesi; il consenso alle funzioni AI personali non la attiva.
  */
 function consensoSintesiNegato(utente, profUid) {
   if (!utente) return false;
   if (utente.confermaRichiesta) return true;
-  if (!utente.autonomo) return consensoAINegato(utente);
   const c = utente.consensi && utente.consensi.aiNutrizionista;
   return !(c && c.si === true && String(c.versione || "") >= VERSIONE_AI_NUTRIZIONISTA && c.titolare === profUid);
 }
@@ -1183,16 +1189,18 @@ exports.aggiornaConsensoAI = onCall(async (request) => {
   const utenteRef = db.collection("users").doc(uid);
   const utente = (await utenteRef.get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  // v142: il nome del titolare mostrato nella schermata, come prova di cosa ha letto il paziente
+  const titoloMostrato = String((request.data && request.data.titolare) || "").slice(0, 160);
   const da = request.data && request.data.da === "richiesta" ? "richiesta nell'app" : request.data && request.data.da === "collegamento" ? "collegamento al nutrizionista" : "impostazioni";
   const batch = db.batch();
   if (perNutrizionista) {
-    // v140 (R12): scelta separata per la sintesi del nutrizionista (solo autonomi collegati)
-    if (!utente.autonomo || !utente.professionistaUid) throw new HttpsError("failed-precondition", "non-collegato");
+    // v140-v142 (R12): scelta separata per la sintesi del nutrizionista, per ogni paziente collegato
+    if (!utente.professionistaUid) throw new HttpsError("failed-precondition", "non-collegato");
     const titolare = utente.professionistaUid;
     batch.set(utenteRef, { consensi: { aiNutrizionista: { si, versione: VERSIONE_AI_NUTRIZIONISTA, data: FieldValue.serverTimestamp(), titolare } } }, { merge: true });
     batch.set(utenteRef.collection("consensiStorico").doc(), {
       tipo: "aiNutrizionista", finalita: "sintesi AI dell'andamento per il nutrizionista", titolare: "nutrizionista " + titolare,
-      si, versione: VERSIONE_AI_NUTRIZIONISTA, data: FieldValue.serverTimestamp(), da,
+      titolareMostrato: titoloMostrato, si, versione: VERSIONE_AI_NUTRIZIONISTA, data: FieldValue.serverTimestamp(), da,
     });
     await batch.commit();
     await registra(si ? "consensoAINutrizionista" : "revocaAINutrizionista", "users/" + uid, { uid });
@@ -1201,18 +1209,18 @@ exports.aggiornaConsensoAI = onCall(async (request) => {
   }
   batch.set(utenteRef, { consensi: { versione: VERSIONE_CONSENSI, ai: { si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp() } } }, { merge: true });
   batch.set(utenteRef.collection("consensiStorico").doc(), {
-    tipo: "ai", finalita: utente.autonomo ? "funzioni AI per il paziente" : "funzioni AI per il paziente e sintesi per il nutrizionista",
-    titolare: utente.autonomo ? "Bulli & Pupe S.r.l." : "nutrizionista " + (utente.professionistaUid || ""),
-    si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp(), da,
+    tipo: "ai", finalita: "funzioni AI personali (lettura del piano, riscontri, tabella nutrizionale, stime)",
+    titolare: utente.autonomo || !utente.professionistaUid ? "Bulli & Pupe S.r.l." : "nutrizionista " + utente.professionistaUid,
+    titolareMostrato: titoloMostrato, si, versione: VERSIONE_AI, data: FieldValue.serverTimestamp(), da,
   });
   await batch.commit();
-  // Revoca (o scelta negativa): si cancellano i riscontri e, se la scelta copre
-  // anche la sintesi (pazienti del nutrizionista), l'analisi dell'andamento
+  // Revoca (o scelta negativa): si cancellano i riscontri. La sintesi ha una
+  // scelta a parte per tutti i pazienti (v142)
   let cancellati = false;
   if (si) await registra("consensoAI", "users/" + uid, { uid });
   if (!si) {
     await registra("revocaAI", "users/" + uid, { uid });
-    cancellati = await cancellaDatiAI(uid, { soloRiscontri: !!utente.autonomo });
+    cancellati = await cancellaDatiAI(uid, { soloRiscontri: true });
   }
   return { si, cancellati };
 });
@@ -2158,7 +2166,8 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
     const f = i === 0 ? fatti : (((await utenteRef.collection("pastiFatti").doc(chiaveData(d)).get()).data()) || {});
     MEAL_KEYS.forEach((k) => { if (STATI_NON_COME_PIANO[f[k]]) scostamenti++; });
   }
-  const frequente = scostamenti > 5;
+  // v142: l'avviso rinvia al nutrizionista, quindi solo per i pazienti seguiti
+  const frequente = !!piano.professionistaUid && scostamenti > 5;
 
   // Dal 10/11/2026 (v132, parere MDR punto R6) il riscontro non riceve più
   // i dati degli allenamenti (FC, zone, calorie, distanza...): essendo solo
@@ -2569,6 +2578,73 @@ exports.registraDispositivo = onCall(async (request) => {
 });
 
 // =========================================================================
+// LISTA D'ATTESA DEL SITO (v141)
+// =========================================================================
+// Il modulo «Avvisami al lancio» di ilmiopiano.it chiama questa funzione.
+// Doppia conferma: si salva l'iscrizione non confermata e si manda un'email
+// con il link di conferma e quello di cancellazione. Le iscrizioni non
+// confermate si cancellano dopo 7 giorni (custodiaDati). Raccolta
+// /listaAttesa/{impronta dell'email}, leggibile solo dal server.
+const VERSIONE_CONSENSO_LISTA = "2026-11-13";
+const TESTO_CONSENSO_LISTA = "Voglio ricevere un'email quando Il mio Piano sarà disponibile. Ho letto l'informativa privacy.";
+const URL_LISTA = "https://listaattesa-al7jqt7y6a-ew.a.run.app";
+const URL_SITO = "https://ilmiopiano.it/";
+
+function validaIscrizione(dati) {
+  const d = dati || {};
+  if (d.sito) return { errore: "spam" }; // campo nascosto: lo compilano solo i robot
+  const email = String(d.email || "").trim().toLowerCase();
+  const nome = String(d.nome || "").replace(/\s+/g, " ").trim().slice(0, 60);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email) || email.length > 120) return { errore: "email" };
+  if (d.consenso !== true) return { errore: "consenso" };
+  return { email, nome };
+}
+
+exports.listaAttesa = onRequest({ cors: ["https://ilmiopiano.it", "https://www.ilmiopiano.it"] }, async (req, res) => {
+  const crypto = require("crypto");
+  if (req.method === "GET") {
+    const azione = String(req.query.azione || "");
+    const token = String(req.query.t || "");
+    if (!/^[a-f0-9]{48}$/.test(token) || !["conferma", "cancella"].includes(azione)) { res.redirect(302, URL_SITO + "?lista=errore#pazienti"); return; }
+    const q = await db.collection("listaAttesa").where("token", "==", token).limit(1).get();
+    if (q.empty) { res.redirect(302, URL_SITO + "?lista=" + (azione === "cancella" ? "cancellata" : "errore") + "#pazienti"); return; }
+    if (azione === "cancella") await q.docs[0].ref.delete();
+    else await q.docs[0].ref.update({ confermata: true, confermataIl: FieldValue.serverTimestamp() });
+    res.redirect(302, URL_SITO + "?lista=" + (azione === "cancella" ? "cancellata" : "confermata") + "#pazienti");
+    return;
+  }
+  if (req.method !== "POST") { res.status(405).json({ errore: "metodo" }); return; }
+  const v = validaIscrizione(req.body);
+  if (v.errore === "spam") { res.json({ ok: true }); return; }
+  if (v.errore) { res.status(400).json({ errore: v.errore }); return; }
+  const ref = db.collection("listaAttesa").doc(crypto.createHash("sha256").update(v.email).digest("hex").slice(0, 32));
+  const prima = (await ref.get()).data();
+  if (prima && prima.confermata) { res.json({ ok: true, giaIscritto: true }); return; }
+  if (prima && (msDi(prima.creato) || 0) > Date.now() - 10 * 60000) { res.json({ ok: true }); return; } // niente doppi invii ravvicinati
+  const token = crypto.randomBytes(24).toString("hex");
+  await ref.set({
+    nome: v.nome, email: v.email, confermata: false, token, origine: "sito",
+    consenso: { si: true, testo: TESTO_CONSENSO_LISTA, versione: VERSIONE_CONSENSO_LISTA, data: FieldValue.serverTimestamp() },
+    creato: FieldValue.serverTimestamp(),
+  });
+  const conferma = URL_LISTA + "?azione=conferma&t=" + token;
+  const cancella = URL_LISTA + "?azione=cancella&t=" + token;
+  const saluto = v.nome ? "Ciao " + v.nome + "," : "Ciao,";
+  await accodaEmail({
+    to: v.email,
+    subject: "Conferma la tua iscrizione: ti avvisiamo al lancio di Il mio Piano",
+    text: saluto + "\n\nhai chiesto di ricevere un'email quando Il mio Piano sarà disponibile. Per confermare apri questo link:\n" + conferma +
+      "\n\nSe non sei stato tu, ignora questa email: senza conferma l'iscrizione si cancella da sola entro 7 giorni.\nPer cancellarti subito: " + cancella +
+      "\n\nTi scriveremo solo per avvisarti del lancio.\n\nIl mio Piano · Bulli & Pupe S.r.l. · ilmiopiano.it · Informativa: https://ilmiopiano.it/privacy.html",
+    html: "<p>" + saluto.replace(/</g, "&lt;") + "</p><p>hai chiesto di ricevere un'email quando <b>Il mio Piano</b> sarà disponibile.</p>" +
+      "<p><a href=\"" + conferma + "\" style=\"display:inline-block;background:#2F5142;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600\">Conferma l'iscrizione</a></p>" +
+      "<p style=\"color:#5B6B5D\">Se non sei stato tu, ignora questa email: senza conferma l'iscrizione si cancella da sola entro 7 giorni. <a href=\"" + cancella + "\">Cancellami subito</a>.</p>" +
+      "<p style=\"color:#5B6B5D\">Ti scriveremo solo per avvisarti del lancio.</p><p style=\"color:#8B9A8C;font-size:13px\">Il mio Piano · Bulli &amp; Pupe S.r.l. · <a href=\"https://ilmiopiano.it/privacy.html\">Informativa privacy</a></p>",
+  });
+  res.json({ ok: true });
+});
+
+// =========================================================================
 // EMAIL (SMTP di Register.it su authsmtp.securemail.pro, casella info@ilmiopiano.it)
 // =========================================================================
 // Il server scrive un documento in /mail con accodaEmail(); questa funzione lo
@@ -2841,7 +2917,7 @@ exports.analizzaAndamento = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSecond
   if (!piano || piano.professionistaUid !== uid) throw new HttpsError("permission-denied", "Paziente non tuo.");
   if (piano.pazienteUid) {
     const pazienteDoc = (await db.collection("users").doc(piano.pazienteUid).get()).data();
-    if (consensoSintesiNegato(pazienteDoc, uid)) throw new HttpsError("failed-precondition", pazienteDoc && pazienteDoc.autonomo ? "consenso-sintesi-negato" : "consenso-ai-negato");
+    if (consensoSintesiNegato(pazienteDoc, uid)) throw new HttpsError("failed-precondition", "consenso-sintesi-negato");
   }
 
   const oggi = new Date().toISOString().slice(0, 10);
@@ -3064,5 +3140,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoConsensiDaRegistro, puoChiudereManutenzione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

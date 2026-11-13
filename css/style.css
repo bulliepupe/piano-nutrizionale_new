@@ -2447,3 +2447,8 @@ body.con-informativa { overflow: hidden; }
 
 /* v140: sottotitolo nelle sezioni delle impostazioni */
 .settings-sottotitolo { font-size: 15px; font-weight: 700; margin: 18px 0 6px; }
+
+/* v142: scelte di consenso con due pulsanti di pari evidenza (Cravero, 13/11) */
+.formula-consenso { font-size: 14px; line-height: 1.5; margin: 10px 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--paper, #F7F9F3); border: 1px solid var(--line, #DCE3D4); }
+.scelta-pari { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.scelta-pari .btn { width: 100%; }

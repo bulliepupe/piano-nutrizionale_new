@@ -189,7 +189,7 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   // --- Conferma durante la chiusura: continua da solo ---
   await assert.rejects(f.confermaContinuaDaSolo({ auth: { uid: "sceglie" }, data: { consensi: { maggiorenne: true } } }), /consensi-mancanti/); n++;
   await f.confermaContinuaDaSolo({ auth: { uid: "sceglie" }, data: { consensi: { maggiorenne: true, salute: true, ai: true } } });
-  ok(store["users/sceglie"].autonomo === true && !store["users/sceglie"].sceltaFineLicenza && store["users/sceglie"].consensi.ai.si === true && store["users/sceglie"].consensi.ai.versione === "2026-11-05", "sceglie di continuare: autonomo con i suoi consensi");
+  ok(store["users/sceglie"].autonomo === true && !store["users/sceglie"].sceltaFineLicenza && store["users/sceglie"].consensi.ai.si === true && store["users/sceglie"].consensi.ai.versione === "2026-11-13", "sceglie di continuare: autonomo con i suoi consensi");
   ok(Object.keys(store).filter((k) => k.startsWith("users/sceglie/consensiStorico/")).length === 3, "consensi nello storico");
   ok(T.consensoAINegato(store["users/sceglie"]) === false, "AI disponibile con il consenso nuovo");
   await giorni(30);
@@ -211,7 +211,7 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   ok(!("custodiaRestituzioni/r1" in store) && !("custodiaRestituzioni/r1/noteMisure/a" in store), "copia scaduta cancellata");
 
   // --- Revoca del consenso AI: riscontri e analisi cancellati ---
-  store["users/rev"] = { ruolo: "paziente", autonomo: true, consensi: { ai: { si: true, versione: "2026-11-05" } } };
+  store["users/rev"] = { ruolo: "paziente", autonomo: true, consensi: { ai: { si: true, versione: "2026-11-13" } } };
   store["users/rev/riscontri/2026-11-05_pranzo"] = { impatto: "lieve" };
   store["piani/prev"] = { pazienteUid: "rev", professionistaUid: null };
   store["piani/prev/analisi/a1"] = { testo: "analisi" };
@@ -222,12 +222,13 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   store["users/rev"].professionistaUid = "profX";
   const esitoSintesi = await f.aggiornaConsensoAI({ auth: { uid: "rev" }, data: { si: false, finalita: "nutrizionista" } });
   ok(esitoSintesi.finalita === "nutrizionista" && !("piani/prev/analisi/a1" in store) && store["users/rev"].consensi.aiNutrizionista.titolare === "profX", "revoca della sintesi: analisi cancellata, titolare registrato");
-  store["users/rev2"] = { ruolo: "paziente", professionistaUid: "profX", consensi: { ai: { si: true, versione: "2026-11-05" } } };
+  store["users/rev2"] = { ruolo: "paziente", professionistaUid: "profX", consensi: { ai: { si: true, versione: "2026-11-13" } } };
   store["users/rev2/riscontri/2026-11-05_cena"] = { impatto: "lieve" };
   store["piani/prev2"] = { pazienteUid: "rev2", professionistaUid: "profX" };
   store["piani/prev2/analisi/a1"] = { testo: "analisi" };
   await f.aggiornaConsensoAI({ auth: { uid: "rev2" }, data: { si: false } });
-  ok(!("users/rev2/riscontri/2026-11-05_cena" in store) && !("piani/prev2/analisi/a1" in store), "revoca (paziente del nutrizionista): riscontri e analisi cancellati");
+  // v142: anche per il paziente del nutrizionista la sintesi ha una scelta separata
+  ok(!("users/rev2/riscontri/2026-11-05_cena" in store) && ("piani/prev2/analisi/a1" in store), "revoca AI personale (paziente del nutrizionista): riscontri cancellati, sintesi no");
   ok("piani/prev/misure/m1" in store && store["users/rev"].consensi.ai.si === false, "revoca: il resto resta, scelta registrata");
 
   // --- Senza conferma entro 90 giorni (vecchie richieste): account cancellato ---
@@ -259,7 +260,7 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   Object.assign(store, {
     "piani/pr": { pazienteUid: "ur" }, "piani/pr/misure/m1": { peso: 70 }, "piani/pr/misure/m2": { peso: 71 },
     "piani/pr/analisi/a": { testo: "analisi" },
-    "users/ur": { ruolo: "paziente", consensi: { ai: { si: true, versione: "2026-11-05" } } }, "users/ur/riscontri/r1": { impatto: "lieve" },
+    "users/ur": { ruolo: "paziente", consensi: { ai: { si: true, versione: "2026-11-13" } } }, "users/ur/riscontri/r1": { impatto: "lieve" },
   });
   const esitoRip = await T.riapplicaRegistro("(default)", ORA - 14 * G);
   ok(esitoRip.documentiCancellati === 1 && esitoRip.revoche === 1, "riapplicate una cancellazione e una revoca: " + JSON.stringify(esitoRip));

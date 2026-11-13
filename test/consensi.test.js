@@ -53,10 +53,10 @@ let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; };
   // Paziente creato dal nutrizionista senza scelta registrata: dalla v114 bloccato
   const t = f._test.consensoAINegato;
   ok(t({ ruolo: "paziente" }) === true, "paziente seguito senza scelta: bloccato (v114)");
-  ok(t({ ruolo: "paziente", consensi: { ai: { si: true, versione: "2026-11-05" } } }) === false, "paziente seguito con consenso nuovo: non bloccato");
+  ok(t({ ruolo: "paziente", consensi: { ai: { si: true, versione: "2026-11-13" } } }) === false, "paziente seguito con consenso nuovo: non bloccato");
   ok(t({ ruolo: "paziente", consensi: { ai: { si: true } } }) === true, "consenso dato con il testo precedente: bloccato (v122)");
-  ok(t({ ruolo: "paziente", autonomo: true, consensi: { ai: { si: true, versione: "2026-11-05" } }, confermaRichiesta: { motivo: "fine-licenza" } }) === true, "in attesa di conferma: bloccato");
+  ok(t({ ruolo: "paziente", autonomo: true, consensi: { ai: { si: true, versione: "2026-11-13" } }, confermaRichiesta: { motivo: "fine-licenza" } }) === true, "in attesa di conferma: bloccato");
   ok(t({ ruolo: "paziente", consensi: { ai: { si: false } } }) === true, "paziente seguito con revoca: bloccato");
-  ok(t({ ruolo: "paziente", autonomo: true, consensi: { ai: { si: true, versione: "2026-11-05" } } }) === false, "autonomo con consenso: non bloccato");
+  ok(t({ ruolo: "paziente", autonomo: true, consensi: { ai: { si: true, versione: "2026-11-13" } } }) === false, "autonomo con consenso: non bloccato");
   console.log("OK: " + n + " verifiche superate");
 })().catch((e) => { console.error(e); process.exit(1); });
