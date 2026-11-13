@@ -893,7 +893,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v143";
+  const VERSIONE_APP = "v144";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -2478,7 +2478,11 @@
     const prossimo = MEAL_KEYS.find((k) => !statoDi(k));
     const circ = 2 * Math.PI * 27;
     const quota = (numFatti + 0.5 * (numDiversi + numParziali)) / tot;
-    const dettagli = [numDiversi ? `${numDiversi} ${numDiversi === 1 ? "diverso" : "diversi"}` : "", numParziali ? `${numParziali} in parte` : ""].filter(Boolean).join(", ");
+    // v144: il titolo conta i pasti segnati; il dettaglio dice come sono andati
+    const stati = MEAL_KEYS.map((k) => statoDi(k));
+    const numSegnati = stati.filter(Boolean).length;
+    const numSaltati = stati.filter((s) => s === "saltato").length;
+    const dettagli = [numFatti ? `${numFatti} come da piano` : "", numDiversi ? `${numDiversi} ${numDiversi === 1 ? "diverso" : "diversi"}` : "", numParziali ? `${numParziali} in parte` : "", numSaltati ? `${numSaltati} ${numSaltati === 1 ? "saltato" : "saltati"}` : ""].filter(Boolean).join(", ");
     return `
       <section class="oggi-riepilogo" aria-label="Riepilogo della giornata">
         <div class="oggi-riepilogo__segmenti" aria-hidden="true">${MEAL_KEYS.map((k) => `<span class="seg seg--${statoDi(k) || (k === prossimo ? "prossimo" : "vuoto")}"></span>`).join("")}</div>
@@ -2486,11 +2490,11 @@
           <svg class="oggi-riepilogo__anello" width="60" height="60" viewBox="0 0 64 64" aria-hidden="true">
             <circle cx="32" cy="32" r="27" fill="none" stroke-width="7" class="anello__fondo"></circle>
             <circle cx="32" cy="32" r="27" fill="none" stroke-width="7" stroke-linecap="round" class="anello__valore" stroke-dasharray="${(quota * circ).toFixed(1)} ${circ.toFixed(1)}" transform="rotate(-90 32 32)"></circle>
-            <text x="32" y="37" text-anchor="middle" class="anello__testo">${numFatti}/${tot}</text>
+            <text x="32" y="37" text-anchor="middle" class="anello__testo">${numSegnati}/${tot}</text>
           </svg>
           <div class="oggi-riepilogo__testi">
             <span class="oggi-riepilogo__eyebrow">Settimana ${settimana} · ${escapeHTML(giornoNome)}</span>
-            <span class="oggi-riepilogo__titolo">${numFatti === tot ? "Tutti i pasti fatti" : `${numFatti} ${numFatti === 1 ? "pasto" : "pasti"} su ${tot} fatti`}${dettagli ? `<small>, ${dettagli}</small>` : ""}</span>
+            <span class="oggi-riepilogo__titolo">${numFatti === tot ? "Tutti i pasti fatti come da piano" : numSegnati === 0 ? `Nessun pasto segnato su ${tot}` : `${numSegnati} ${numSegnati === 1 ? "pasto segnato" : "pasti segnati"} su ${tot}`}${numFatti !== tot && dettagli ? `<small>: ${dettagli}</small>` : ""}</span>
             <span class="oggi-riepilogo__prossimo">${prossimo ? `Prossimo: ${MEAL_META[prossimo].label.toLowerCase()}${orari[prossimo] ? ` alle ${orari[prossimo]}` : ""}` : "Giornata completata"}</span>
           </div>
           <span class="oggi-riepilogo__numero" aria-hidden="true"><b>${numFatti}</b>/${tot}</span>
