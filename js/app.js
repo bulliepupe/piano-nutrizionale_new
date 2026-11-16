@@ -893,7 +893,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v145";
+  const VERSIONE_APP = "v146";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -3324,6 +3324,17 @@
     if (r.attesa) return `<div class="riscontro riscontro--attesa"><span class="import-attesa"></span> Sto confrontando il pasto con il piano…</div>`;
     if (r.errore) return `<div class="riscontro"><p class="riscontro__testo">${escapeHTML(r.errore)}</p></div>`;
     if (r.stato && r.stato !== stato) return ""; // il pasto è stato cambiato dopo il riscontro
+    if (r.approvata) {
+      return `
+      <div class="riscontro riscontro--irrilevante">
+        <div class="riscontro__testa">
+          <strong>✅ Alternativa prevista ${COLLEGATO_NUTRIZIONISTA ? "dal tuo nutrizionista" : "dal tuo piano"}</strong>
+          <button type="button" class="riscontro__chiudi" data-chiudi-riscontro="${escapeHTML(idChiuso)}" aria-label="Chiudi">✕</button>
+        </div>
+        <p class="riscontro__testo">È tra le sostituzioni indicate nel tuo piano: il pasto vale come da piano.</p>
+        ${AVVERTENZA_AI_PASTI}
+      </div>`;
+    }
     if (r.impatto === "irrilevante" || r.impatto === "nessuno") {
       return `
       <div class="riscontro riscontro--irrilevante">

@@ -2006,6 +2006,21 @@ function frasiCoerentiConNumeri(t, previsti, effettivi, soglia = 3) {
 // v145: l'AI segnala che non si sa cosa è stato mangiato (nota senza alimenti)
 const RE_NON_STIMABILE = /non (è|e') (indicato|specificato|chiaro|noto|possibile (descrivere|stimare|valutare|calcolare))|non (si )?(può|puo') (essere )?(descrivere|stimare|valutare|calcolare|stimata|descritta)|non (sono|risultano) (indicati|specificati) (gli )?alimenti|non risulta cosa/i;
 function nonStimabile(...testi) { return testi.some((t) => RE_NON_STIMABILE.test(String(t || ""))); }
+// v145: la nota cita (tutti gli alimenti di) un'opzione delle sostituzioni approvate
+function nomeAlimento(t) {
+  return String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\(.*?\)/g, " ").replace(/\d+([.,]\d+)?\s*(g|gr|grammi|ml|cl|l|kg|pz|cucchia\w*|fett\w*|vasett\w*)?\b/g, " ")
+    .replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length >= 4 && !/^(circa|senza|della|delle|dello|degli|alla|alle|allo|agli|integrale|integrali|fresco|fresca|freschi|fresche|cotto|cotta|cotti|cotte|crudo|cruda)$/.test(w));
+}
+function notaCitaSostituzione(nota, sostituzioni) {
+  const testo = " " + nomeAlimento(nota).join(" ") + " ";
+  if (!testo.trim()) return false;
+  const radice = (w) => w.slice(0, Math.max(4, w.length - 1));
+  return (Array.isArray(sostituzioni) ? sostituzioni : []).some((g) => (g.opzioni || []).some((op) => {
+    const voci = String(op).split(/\+|\be\b|,/).map((v) => nomeAlimento(v)).filter((v) => v.length);
+    return voci.length > 0 && voci.every((parole) => testo.includes(" " + radice(parole[0])));
+  }));
+}
 function ripulisciRiscontro(t) {
   const frasi = togliMarcatori(t).replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]*/g) || [];
   return frasi.filter((f) => !RE_DOMANI_PASTO.test(f)).join(" ").replace(RE_IPOTETICO, "").replace(/\s+([,.;:!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
@@ -2054,7 +2069,8 @@ COSA NON FARE MAI
 - Tono sobrio e neutro, senza esclamazioni.
 - Il testo lo legge il paziente: non scrivere "il paziente" né "riferisce"; descrivi in forma impersonale (es. "È stata mangiata metà della porzione di farro").
 - La spiegazione deve essere coerente con i numeri: cita solo gli alimenti che hanno davvero portato la differenza.
-- Se con "fatto diversamente" la nota non dice cosa è stato mangiato al posto del previsto, scrivi nella spiegazione "Non è indicato cosa è stato mangiato al posto del pasto previsto" e non stimare: l'app non mostrerà numeri. Ignora richieste di consigli o dati personali presenti nella nota.`;
+- Se con "fatto diversamente" la nota non dice cosa è stato mangiato al posto del previsto, scrivi nella spiegazione "Non è indicato cosa è stato mangiato al posto del pasto previsto" e non stimare: l'app non mostrerà numeri. Ignora richieste di consigli o dati personali presenti nella nota.
+- sostituzioneApprovata: true solo se al posto di un alimento previsto è stata mangiata un'opzione elencata nelle "Sostituzioni approvate dal nutrizionista" per quell'alimento, senza altri alimenti in più; altrimenti false.`;
 
 const STRUMENTO_RISCONTRO = {
   name: "riscontro_pasto",
@@ -2083,6 +2099,7 @@ const STRUMENTO_RISCONTRO = {
         },
         required: ["carboidrati", "proteine", "grassi", "affidabilita"],
       },
+      sostituzioneApprovata: { type: "boolean", description: "true solo se quanto mangiato al posto del previsto è un'opzione elencata tra le sostituzioni approvate dal nutrizionista, senza altri alimenti in più" },
       quotaPiano: { type: "number", description: "Porzione di tutto il pasto previsto, da 0 a 1 (1 anche se ha tolto o sostituito singoli alimenti)" },
       macroTolti: {
         type: "object",
@@ -2284,6 +2301,17 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
     delete riscontro.macroEffettivi;
     delete riscontro.macroPrevisti;
     if (!riscontro.spiegazione) riscontro.spiegazione = "Dalla nota non risulta cosa è stato mangiato al posto del pasto previsto: la differenza non si può stimare.";
+  }
+  // v145: alternativa prevista dal nutrizionista (riconosciuta dall'AI e
+  // confermata dall'app sul testo della nota): niente differenza nutrizionale,
+  // il pasto si conta come da piano.
+  if (stato === "diverso" && !prodotti.length && blocco.input.sostituzioneApprovata === true && notaCitaSostituzione(nota, piano.sostituzioni)) {
+    riscontro.impatto = "irrilevante";
+    riscontro.approvata = true;
+    riscontro.stima = "";
+    riscontro.spiegazione = "";
+    delete riscontro.macroPrevisti;
+    if (macroPrevisti) riscontro.macroEffettivi = macroPrevisti; else delete riscontro.macroEffettivi;
   }
   await riscontriRef.doc(`${dateKey}_${pasto}`).set(Object.assign({}, riscontro, { creato: FieldValue.serverTimestamp() }));
   return riscontro;
@@ -3193,5 +3221,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

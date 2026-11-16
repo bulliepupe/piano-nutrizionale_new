@@ -24,4 +24,12 @@ ok(!ns("Le zucchine risultano invariate rispetto al previsto."), "invariato non 
 const pl = eval(pick("function paroleLivelli", "function normalizzaAnalisi") + ";paroleLivelli");
 ok(pl("il riscontro associato risulta di livello irrilevante.") === "il riscontro associato risulta in linea con il piano.", "sintesi: irrilevante → in linea");
 ok(pl("2 riscontri di livello moderato") === "2 riscontri con differenza moderata", "sintesi: moderato");
+// v145: alternativa prevista riconosciuta dall'app sul testo della nota
+const ncs = eval(pick("function nomeAlimento", "function ripulisciRiscontro") + ";notaCitaSostituzione");
+const SOST = [{ nome: "Fonti di carboidrati (pasta/riso/cereali)", opzioni: ["Pasta 70 g", "Farro 70 g", "Pane integrale 90 g"] }, { nome: "Yogurt", opzioni: ["Yogurt greco 125 g", "Yogurt bianco 125 g + Frutta secca 10 g"] }];
+ok(ncs("Yogurt bianco 125 g + Frutta secca 10 g", SOST), "opzione composta citata");
+ok(ncs("Pasta al pomodoro al posto del riso", SOST), "pasta citata");
+ok(!ncs("Pizza margherita al posto del riso", SOST), "pizza non è un'opzione");
+ok(!ncs("Yogurt bianco", [SOST[1]].map((g) => ({ nome: g.nome, opzioni: [g.opzioni[1]] }))), "opzione composta incompleta non basta");
+ok(!ncs("", SOST) && !ncs("Pasta", null), "senza nota o senza sostituzioni: no");
 console.log("coerenza-riscontro: " + n + " verifiche ok");
