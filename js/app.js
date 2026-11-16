@@ -893,7 +893,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v144";
+  const VERSIONE_APP = "v145";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -9212,6 +9212,15 @@
     document.getElementById("prof-header-titolo").textContent = piano.pazienteNome || "Paziente";
 
     const disponibili = [1, 2, 3, 4, 5].filter((n) => Array.isArray(piano.settimane[n]));
+    // v145: l'editor si apre sulla settimana e sul giorno che il paziente segue oggi
+    if (typeof EDITOR_PROF.settSel !== "number" || typeof EDITOR_PROF.giornoSel !== "number") {
+      try {
+        const oggiPaz = window.weekLogic.calcolaSettimanaGiorno(new Date(), CONFIG, piano);
+        const s = disponibili.includes(oggiPaz.settimana) ? oggiPaz.settimana : ((oggiPaz.settimana - 1) % 4) + 1;
+        if (typeof EDITOR_PROF.settSel !== "number" && oggiPaz.pianoIniziato !== false && disponibili.includes(s)) EDITOR_PROF.settSel = s;
+        if (typeof EDITOR_PROF.giornoSel !== "number" && oggiPaz.pianoIniziato !== false) EDITOR_PROF.giornoSel = oggiPaz.giornoIndex;
+      } catch (e) { /* si resta su settimana 1, lunedì */ }
+    }
     if (typeof EDITOR_PROF.settSel !== "number" || !disponibili.includes(EDITOR_PROF.settSel)) {
       EDITOR_PROF.settSel = disponibili[0] || 1;
     }

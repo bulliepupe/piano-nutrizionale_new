@@ -1975,8 +1975,36 @@ const RE_DOMANI_PASTO = /\bdomani\b[^.!?]*\b(colazione|pranzo|cena|spuntin|meren
 // Frasi ipotetiche sul piano ("se presenti nel tuo piano"): l'AI riceve già tutto quello che può usare.
 const RE_IPOTETICO = /,?\s*\(?\s*(?:se|qualora|purché)\s+(?:(?:è|sono|li|lo|la|le|ce\s+l[oaie]|c'è)\s+)?(?:present|previst|inclus|indicat|consentit)\w*(?:\s+(?:nel|dal|in|nella\s+tua)\s+(?:tuo\s+)?(?:piano|dieta))?\s*\)?/gi;
 /** Toglie le frasi che nominano i pasti di domani e le condizioni ipotetiche sul piano. */
+// v145: a volte nel testo dell'AI finiscono pezzi della chiamata allo
+// strumento ("</spiegazione> <parameter name=...>"): da lì in poi si scarta.
+function togliMarcatori(t) {
+  const x = String(t == null ? "" : t);
+  const i = x.search(/<\/?[a-z_][\w-]*(\s[^>]*)?>|<\/?parameter\b|<\/?invoke\b/i);
+  return (i >= 0 ? x.slice(0, i) : x).trim();
+}
+// v145: frasi che contraddicono i numeri dell'app (es. "proteine inferiori"
+// con 10 g di proteine in più) si scartano. Il confronto è per inciso.
+const NUTRIENTI_COERENZA = { carboidrati: /carboidrat|zuccher|amid/i, proteine: /protein/i, grassi: /grass|lipid/i };
+const RE_MENO = /\b(meno|minor|inferior|ridott|scars|manca|assent|non sono presenti|non è presente|si riduc|cala|diminu)/i;
+const RE_PIU = /\b(più|maggior|superior|aggiung|apport|in eccesso|eccedent|aument|extra)/i;
+function frasiCoerentiConNumeri(t, previsti, effettivi, soglia = 3) {
+  if (!t || !previsti || !effettivi) return t || "";
+  const delta = {};
+  Object.keys(NUTRIENTI_COERENZA).forEach((k) => { delta[k] = (Number(effettivi[k]) || 0) - (Number(previsti[k]) || 0); });
+  const frasi = String(t).match(/[^.!?]+[.!?]*/g) || [];
+  return frasi.filter((f) => {
+    const incisi = f.split(/[,;:]|\bmentre\b|\bma\b|\bperché\b/i);
+    return !incisi.some((c) => Object.keys(NUTRIENTI_COERENZA).some((k) => {
+      if (!NUTRIENTI_COERENZA[k].test(c)) return false;
+      const meno = RE_MENO.test(c), piu = RE_PIU.test(c);
+      if (meno && !piu) return delta[k] >= soglia;
+      if (piu && !meno) return delta[k] <= -soglia;
+      return false;
+    }));
+  }).join(" ").replace(/\s{2,}/g, " ").trim();
+}
 function ripulisciRiscontro(t) {
-  const frasi = String(t == null ? "" : t).replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]*/g) || [];
+  const frasi = togliMarcatori(t).replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]*/g) || [];
   return frasi.filter((f) => !RE_DOMANI_PASTO.test(f)).join(" ").replace(RE_IPOTETICO, "").replace(/\s+([,.;:!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
 }
 // Dati identificativi nei testi liberi (note, indicazioni): prima dell'invio
@@ -2244,6 +2272,7 @@ exports.valutaVariazione = onCall({ secrets: [ANTHROPIC_API_KEY], timeoutSeconds
   // L'etichetta della differenza la calcola l'app sulla giornata, non l'AI (v119)
   riscontro.impatto = impattoSullaGiornata(riscontro.impatto, macroPrevisti, riscontro.macroEffettivi, Number(giorno.kcal) || 0);
   if (stimaNumerica) { riscontro.stima = stimaNumerica; riscontro.macroPrevisti = macroPrevisti; }
+  if (macroPrevisti && riscontro.macroEffettivi) riscontro.spiegazione = frasiCoerentiConNumeri(riscontro.spiegazione, macroPrevisti, riscontro.macroEffettivi);
   await riscontriRef.doc(`${dateKey}_${pasto}`).set(Object.assign({}, riscontro, { creato: FieldValue.serverTimestamp() }));
   return riscontro;
 });
@@ -3144,5 +3173,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
