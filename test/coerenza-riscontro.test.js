@@ -21,4 +21,7 @@ const ns = eval(pick("const RE_NON_STIMABILE", "function ripulisciRiscontro") + 
 ok(ns("Non è indicato quale alimento sia stato consumato al posto dello yogurt greco previsto, quindi non è possibile descrivere la differenza nutrizionale."), "nota senza alimenti riconosciuta");
 ok(!ns("La pizza aggiunge soprattutto grassi."), "testo normale non toccato");
 ok(!ns("Le zucchine risultano invariate rispetto al previsto."), "invariato non è non stimabile");
+const pl = eval(pick("function paroleLivelli", "function normalizzaAnalisi") + ";paroleLivelli");
+ok(pl("il riscontro associato risulta di livello irrilevante.") === "il riscontro associato risulta in linea con il piano.", "sintesi: irrilevante → in linea");
+ok(pl("2 riscontri di livello moderato") === "2 riscontri con differenza moderata", "sintesi: moderato");
 console.log("coerenza-riscontro: " + n + " verifiche ok");

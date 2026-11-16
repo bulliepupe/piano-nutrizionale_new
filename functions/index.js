@@ -2883,7 +2883,7 @@ REGOLE
 - Nessuna indicazione al professionista: niente azioni suggerite, inviti a contattare o sentire il paziente, proposte di modifica del piano, approfondimenti o messaggi da inviare.
 - Nessuna considerazione clinica o di salute: niente diagnosi, rischi, effetti sul peso o sul percorso, interpretazioni del peso.
 - Non nominare il paziente e non rivolgerti a lui.
-- Riscontri: se il conteggio dei riscontri è tutto a zero, non parlarne. Il livello "non_stimato" indica riscontri senza livello (piano senza calorie della giornata).
+- Riscontri: se il conteggio dei riscontri è tutto a zero, non parlarne. Il livello "non_stimato" indica riscontri senza livello (piano senza calorie della giornata). Usa le stesse parole che vede il paziente: "irrilevante" = "in linea con il piano", "lieve" = "differenza lieve", "moderato" = "differenza moderata", "rilevante" = "differenza marcata", "non_stimato" = "differenza senza livello". Mai le parole "irrilevante" o "rilevante".
 - Scrivi le date nel formato giorno/mese (es. 6/11), mai come 2026-11-06.
 - Sii conciso: ogni campo al massimo 2 frasi brevi, senza elenchi lunghi tra parentesi; negli esempi tra virgolette riporta al massimo 2 note. Non usare l'abbreviazione "es.".
 - PIANO APPENA INIZIATO: giorniValutati30 indica da quanti giorni il piano è attivo negli ultimi 30. Riferisci aderenza e uso dell'app solo a quei giorni, mai ai 30 (non scrivere "1 giorno su 30"). Solo se è inferiore a 7, scrivi nella sintesi che il piano è attivo da pochi giorni e i dati sono ancora pochi; da 7 giorni in su non dirlo.`;
@@ -2916,9 +2916,17 @@ function soloFrasiNeutre(t) {
   return frasi.filter((f) => !RE_VALUTAZIONE_ANALISI.test(f)).join(" ").replace(/\s{2,}/g, " ").trim();
 }
 
+// v145: i livelli dei riscontri con le parole che vede il paziente
+function paroleLivelli(t) {
+  return String(t == null ? "" : t)
+    .replace(/\b(di )?livello irrilevante\b/gi, "in linea con il piano")
+    .replace(/\birrilevant[ei]\b/gi, "in linea con il piano")
+    .replace(/\b(di )?livello rilevante\b/gi, "con differenza marcata")
+    .replace(/\b(di )?livello (lieve|moderato)\b/gi, (m, a, l) => "con differenza " + (l.toLowerCase() === "lieve" ? "lieve" : "moderata"));
+}
 function normalizzaAnalisi(r) {
   const breve = (t, max) => {
-    const x = soloFrasiNeutre(String(t == null ? "" : t).replace(/[ \t]+/g, " ").trim());
+    const x = soloFrasiNeutre(paroleLivelli(String(t == null ? "" : t)).replace(/[ \t]+/g, " ").trim());
     if (x.length <= max) return x;
     const taglio = x.slice(0, max);
     // taglio a fine frase, mai dopo un'abbreviazione come "es." o dentro parentesi aperte
@@ -3185,5 +3193,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
