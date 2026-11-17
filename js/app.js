@@ -683,6 +683,7 @@
       avviaPaziente.collegato = true;
       document.addEventListener("click", (e) => {
         if (e.target.closest("[data-premium]")) { apriPremium(); return; }
+        if (e.target.closest("[data-recesso]")) { apriRecesso(); return; }
         if (e.target.closest("[data-pausa-riprendi]")) { riprendiDallaPausa(); return; }
         if (e.target.closest("[data-pausa-apri]")) { apriPausa(); return; }
         if (e.target.closest("[data-piano-visto]")) { segnaNuovoPianoVisto(false); return; }
@@ -893,7 +894,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v146";
+  const VERSIONE_APP = "v147";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -910,7 +911,7 @@
       if (!window.cloud.chiamaFunzione) throw { code: "app-non-aggiornata" };
       const r = await window.cloud.chiamaFunzione("statoPremium");
       if (!r || typeof r.attivo !== "boolean") throw { code: "risposta-non-valida" };
-      Object.assign(PREMIUM, { rinnovo: undefined, abbonamentoTerminato: undefined }, r, { noto: true, errore: null });
+      Object.assign(PREMIUM, { rinnovo: undefined, abbonamentoTerminato: undefined, prodotto: undefined, primoAcquisto: undefined, recedibile: undefined }, r, { noto: true, errore: null });
       TENTATIVI_PREMIUM = 0;
     } catch (e) {
       PREMIUM.errore = String((e && (e.code || e.message)) || "errore");
@@ -991,6 +992,56 @@
     return P;
   }
 
+  // v147 · Esecuzione immediata e recesso (consulenza dell'11/11/2026).
+  // Testi provvisori: si allineano alla sezione 6 dei termini rivista dall'avvocato.
+  const VERSIONE_CONSENSO_ESECUZIONE = "2026-11-17";
+  const TESTO_CONSENSO_ESECUZIONE = "Chiedo che il Premium si attivi subito, prima della fine dei 14 giorni per il recesso. So che, se recedo entro 14 giorni, mi viene rimborsata solo la parte non ancora goduta.";
+
+  /** Il pulsante di recesso compare con un abbonamento pagato (attivo o terminato da meno di 30 giorni). */
+  function recessoDisponibile() {
+    if (RUOLO !== "paziente" || !PREMIUM.noto || !PREMIUM.prodotto || PREMIUM.recedibile === false) return false;
+    if (PREMIUM.attivo && PREMIUM.origine === "abbonamento") return true;
+    return !!PREMIUM.abbonamentoTerminato && Date.now() - PREMIUM.abbonamentoTerminato < 30 * 86400000;
+  }
+
+  function pulsanteRecessoHTML() {
+    return recessoDisponibile() ? `<button type="button" class="btn btn--ghost" data-recesso style="margin-top:8px;">Recedi dal contratto qui</button>` : "";
+  }
+
+  function apriRecesso() {
+    const annuale = /annu|anno|year/i.test(PREMIUM.prodotto || "");
+    const email = (window.cloud.utenteCorrente && window.cloud.utenteCorrente() && window.cloud.utenteCorrente().email) || "";
+    apriSheet(`
+      <h2 class="sheet__titolo">Recesso dal contratto Premium</h2>
+      <p class="sheet__nota">Contratto: Il mio Piano Premium ${annuale ? "annuale" : "mensile"}${PREMIUM.primoAcquisto ? `, acquistato il ${escapeHTML(formattaDataIt(new Date(PREMIUM.primoAcquisto)))}` : ""}, con Google Play.</p>
+      <p class="hint">Confermando, ricevi subito all'indirizzo <strong>${escapeHTML(email)}</strong> un'email con data e ora della richiesta. Entro 14 giorni ti rispondiamo con l'esito:</p>
+      <ul class="hint">
+        <li>entro 14 giorni dall'acquisto ti rimborsiamo l'importo pagato, oppure la sola parte non goduta se avevi chiesto di attivare subito il Premium;</li>
+        <li>oltre i 14 giorni il recesso non è più possibile, ma puoi sempre disdire il rinnovo da Google Play.</li>
+      </ul>
+      <p class="hint">Il rimborso lo esegue Google Play sullo stesso metodo di pagamento. Se il recesso viene accolto, chiudiamo noi l'abbonamento.</p>
+      <p class="auth-error" id="errore-recesso" hidden></p>
+      <button type="button" class="btn btn--pericolo" id="btn-conferma-recesso">Conferma il recesso</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    const btn = document.getElementById("btn-conferma-recesso");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true; btn.textContent = "Invio in corso…";
+      try {
+        const r = await window.cloud.chiamaFunzione("richiediRecesso", {});
+        const quando = new Date(r.data).toLocaleString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+        apriSheet(`
+          <h2 class="sheet__titolo">Richiesta di recesso ricevuta</h2>
+          <p class="sheet__nota">${r.giaPresente ? "Avevi già inviato una richiesta" : "Abbiamo ricevuto la tua richiesta"} il ${escapeHTML(quando)}.</p>
+          <p class="hint">Ti abbiamo inviato un'email di conferma con data e ora. Entro 14 giorni ricevi l'esito per email.</p>
+          <button type="button" class="btn" data-chiudi-sheet>Chiudi</button>`);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Conferma il recesso";
+        const err = document.getElementById("errore-recesso");
+        if (err) { err.hidden = false; err.textContent = "Invio non riuscito: controlla la connessione e riprova. Se il problema continua scrivi a info@ilmiopiano.it: anche l'email vale come richiesta di recesso."; }
+      }
+    });
+  }
+
   function zonaAcquistoHTML() {
     if (PREMIUM.attivo && PREMIUM.origine === "nutrizionista") return "";
     if (PREMIUM.attivo && PREMIUM.origine === "abbonamento") {
@@ -999,7 +1050,8 @@
         ? `Abbonamento disdetto: resta attivo fino a ${quando}, poi non si rinnova.`
         : `Il periodo in corso termina ${quando}; se non lo disdici, si rinnova da solo.`;
       return `${fino ? `<p class="hint">${escapeHTML(fino)}</p>` : ""}
-        ${pluginAcquisti() ? `<button type="button" class="btn btn--ghost" id="premium-gestisci">Gestisci o disdici su Google Play</button>` : `<p class="hint">Puoi gestire o disdire l'abbonamento dallo store da cui l'hai attivato.</p>`}`;
+        ${pluginAcquisti() ? `<button type="button" class="btn btn--ghost" id="premium-gestisci">Gestisci o disdici su Google Play</button>` : `<p class="hint">Puoi gestire o disdire l'abbonamento dallo store da cui l'hai attivato.</p>`}
+        ${pulsanteRecessoHTML()}`;
     }
     if (!pluginAcquisti()) return `<p class="hint">L'abbonamento si attiva dall'app Il mio Piano per Android, su Google Play; su iPhone arriverà a breve.</p>`;
     return `<div id="premium-acquisti"><p class="hint">Carico le offerte…</p></div>`;
@@ -1021,9 +1073,12 @@
       return;
     }
     box.innerHTML = `
-      ${pacchetti.map((p, i) => `<button type="button" class="btn${i ? " btn--ghost" : ""}" data-pacchetto="${i}" style="margin-top:8px;">${p.packageType === "ANNUAL" ? "Annuale" : "Mensile"} · ${escapeHTML(p.product.priceString || "")}</button>`).join("")}
-      <p class="hint">Il pagamento avviene con Google Play. L'abbonamento si rinnova da solo; puoi disdirlo quando vuoi da Google Play e resta attivo fino alla fine del periodo pagato.${CONFIG.linkTermini ? ` Acquistando accetti i <a href="${escapeHTML(CONFIG.linkTermini)}" target="_blank" rel="noopener">termini di servizio</a>.` : ""}</p>
+      <label class="consenso-esecuzione"><input type="checkbox" id="premium-esecuzione"> <span>${escapeHTML(TESTO_CONSENSO_ESECUZIONE)}</span></label>
+      ${pacchetti.map((p, i) => `<button type="button" class="btn${i ? " btn--ghost" : ""}" data-pacchetto="${i}" style="margin-top:8px;" disabled>${p.packageType === "ANNUAL" ? "Annuale" : "Mensile"} · ${escapeHTML(p.product.priceString || "")}</button>`).join("")}
+      <p class="hint">Il pagamento avviene con Google Play. L'abbonamento si rinnova da solo; puoi disdirlo quando vuoi da Google Play e resta attivo fino alla fine del periodo pagato. Entro 14 giorni dall'acquisto puoi recedere con il pulsante «Recedi dal contratto qui» in Impostazioni.${CONFIG.linkTermini ? ` Acquistando accetti i <a href="${escapeHTML(CONFIG.linkTermini)}" target="_blank" rel="noopener">termini di servizio</a>.` : ""}</p>
       <button type="button" class="btn btn--ghost" id="premium-ripristina">Ripristina acquisti</button>`;
+    const spunta = document.getElementById("premium-esecuzione");
+    spunta.addEventListener("change", () => box.querySelectorAll("[data-pacchetto]").forEach((b) => { b.disabled = !spunta.checked; }));
     box.querySelectorAll("[data-pacchetto]").forEach((b) => b.addEventListener("click", () => compraPremium(pacchetti[Number(b.dataset.pacchetto)], b)));
     document.getElementById("premium-ripristina").addEventListener("click", (e) => ripristinaAcquisti(e.currentTarget));
   }
@@ -1035,7 +1090,7 @@
   async function dopoAcquisto(messaggio) {
     try {
       const r = await window.cloud.chiamaFunzione("sincronizzaAbbonamento");
-      if (r && typeof r.attivo === "boolean") Object.assign(PREMIUM, { rinnovo: undefined, abbonamentoTerminato: undefined }, r, { noto: true, errore: null });
+      if (r && typeof r.attivo === "boolean") Object.assign(PREMIUM, { rinnovo: undefined, abbonamentoTerminato: undefined, prodotto: undefined, primoAcquisto: undefined, recedibile: undefined }, r, { noto: true, errore: null });
     } catch (e) {
       mostraToast("Acquisto registrato: il Premium si attiva entro pochi minuti", 5000);
       setTimeout(() => aggiornaPremium(true), 60000);
@@ -1049,7 +1104,17 @@
   }
 
   async function compraPremium(pacchetto, btn) {
+    const spunta = document.getElementById("premium-esecuzione");
+    if (!spunta || !spunta.checked) { mostraToast("Spunta la casella sull'attivazione immediata per procedere", 4000); return; }
     document.querySelectorAll("#premium-acquisti button").forEach((b) => { b.disabled = true; });
+    // v147: il consenso all'esecuzione immediata lo registra il server prima dell'acquisto
+    try {
+      await window.cloud.chiamaFunzione("registraConsensoEsecuzione", { versione: VERSIONE_CONSENSO_ESECUZIONE, pacchetto: pacchetto.packageType });
+    } catch (e) {
+      document.querySelectorAll("#premium-acquisti button").forEach((b) => { b.disabled = false; });
+      mostraToast(e && /app-non-aggiornata/.test(e.message || "") ? "Aggiorna l'app per procedere" : "Non riesco a registrare la scelta: controlla la connessione e riprova", 4500);
+      return;
+    }
     try {
       const P = await preparaAcquisti();
       await P.purchasePackage({ aPackage: pacchetto });
@@ -4822,6 +4887,7 @@
           : "Stai usando la versione gratuita."}</p>
         ${!PREMIUM.noto && PREMIUM.errore ? `<button type="button" class="btn btn--ghost" id="btn-verifica-premium" style="margin-bottom:8px;">Verifica di nuovo</button>` : ""}
         <button type="button" class="btn btn--ghost" data-premium>Cosa include Premium</button>
+        ${pulsanteRecessoHTML()}
         <p class="stat-nota" style="margin-top:8px;">Accesso come ${escapeHTML((window.cloud.utenteCorrente && window.cloud.utenteCorrente() && window.cloud.utenteCorrente().email) || "—")}</p>
       </section>` : ""}
       ${gestisceIlPiano() ? `

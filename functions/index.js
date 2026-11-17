@@ -1085,13 +1085,19 @@ function statoPremiumServer(premium, licenzaProf, adesso) {
     if (scadenza == null || scadenza > adesso) {
       if (premium.stato === "prova") return { attivo: true, origine: "prova", scadenza, provaUsata };
       // rinnovo: false dopo una disdetta (resta attivo fino a scadenza)
-      return { attivo: true, origine: "abbonamento", scadenza, provaUsata, rinnovo: premium.rinnovo !== false };
+      return Object.assign({ attivo: true, origine: "abbonamento", scadenza, provaUsata, rinnovo: premium.rinnovo !== false }, datiRecesso(premium));
     }
   }
   // abbonamento dello store terminato: l'app lo dice con un messaggio suo
   const fine = premium && premium.prodotto ? millisDi(premium.scadenza) : null;
-  if (fine != null && fine <= adesso) return { attivo: false, origine: null, scadenza: null, provaUsata, abbonamentoTerminato: fine };
+  if (fine != null && fine <= adesso) return Object.assign({ attivo: false, origine: null, scadenza: null, provaUsata, abbonamentoTerminato: fine }, datiRecesso(premium));
   return { attivo: false, origine: null, scadenza: null, provaUsata };
+}
+
+/** v147: per il pulsante «Recedi dal contratto qui» (abbonamento pagato). */
+function datiRecesso(premium) {
+  if (!premium || !premium.prodotto) return {};
+  return { prodotto: String(premium.prodotto), primoAcquisto: millisDi(premium.primoAcquisto), recedibile: !premium.rimborsato };
 }
 
 async function statoPremiumPaziente(utente, adesso) {
@@ -1352,7 +1358,16 @@ function premiumDaRevenueCat(subscriber, adesso) {
     scadenza: scadenza == null ? null : Timestamp.fromMillis(scadenza),
     rinnovo: attivo && !sub.unsubscribe_detected_at && !sub.refunded_at,
     problemaPagamento: !!sub.billing_issues_detected_at,
+    // v147 (recesso): data del primo acquisto e dell'ultimo rinnovo, prezzo pagato
+    primoAcquisto: tsDaIso(sub.original_purchase_date),
+    ultimoAcquisto: tsDaIso(sub.purchase_date),
+    prezzo: sub.price && Number(sub.price.amount) > 0 ? { importo: Number(sub.price.amount), valuta: String(sub.price.currency || "EUR").slice(0, 3) } : null,
+    rimborsato: !!sub.refunded_at,
   };
+}
+function tsDaIso(x) {
+  const ms = x ? Date.parse(x) : NaN;
+  return Number.isFinite(ms) ? Timestamp.fromMillis(ms) : null;
 }
 
 /** Legge l'abbonamento da RevenueCat e aggiorna users/{uid}.premium. */
@@ -1389,6 +1404,231 @@ exports.sincronizzaAbbonamento = onCall({ secrets: [REVENUECAT_SECRET_KEY] }, as
   }
   const utente = (await db.collection("users").doc(uid).get()).data() || {};
   return statoPremiumPaziente(utente, Date.now());
+});
+
+// ---------------------------------------------------------------------
+// v147 · Recesso dal Premium (consulenza Legal for Digital dell'11/11/2026;
+// direttiva (UE) 2023/2673, funzione di recesso). Testi provvisori, da
+// allineare alla sezione 6 dei termini rivista dall'avvocato.
+// ---------------------------------------------------------------------
+const VERSIONE_CONSENSO_ESECUZIONE = "2026-11-17";
+const TESTO_CONSENSO_ESECUZIONE = "Chiedo che il Premium si attivi subito, prima della fine dei 14 giorni per il recesso. So che, se recedo entro 14 giorni, mi viene rimborsata solo la parte non ancora goduta.";
+const GIORNI_RECESSO = 14;
+const EMAIL_GESTIONE = "info@ilmiopiano.it";
+const URL_RECESSI = "https://gestionerecessi-al7jqt7y6a-ew.a.run.app";
+
+/** Prima dell'acquisto: consenso all'esecuzione immediata (registrato dal server). */
+exports.registraConsensoEsecuzione = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const d = request.data || {};
+  if (d.versione !== VERSIONE_CONSENSO_ESECUZIONE) throw new HttpsError("failed-precondition", "app-non-aggiornata");
+  const pacchetto = ["ANNUAL", "MONTHLY"].includes(d.pacchetto) ? d.pacchetto : "";
+  const ref = db.collection("users").doc(uid);
+  await db.runTransaction(async (t) => {
+    const u = (await t.get(ref)).data() || {};
+    if (u.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+    const elenco = (Array.isArray(u.consensiEsecuzione) ? u.consensiEsecuzione : []).slice(-19);
+    elenco.push({ versione: VERSIONE_CONSENSO_ESECUZIONE, testo: TESTO_CONSENSO_ESECUZIONE, pacchetto, data: Timestamp.now() });
+    t.update(ref, { consensiEsecuzione: elenco });
+  });
+  return { ok: true };
+});
+
+function periodoGiorni(prodotto) {
+  return /annu|anno|year|12m/i.test(String(prodotto || "")) ? 365 : 30;
+}
+function nomeAbbonamento(prodotto) {
+  return periodoGiorni(prodotto) === 365 ? "Il mio Piano Premium annuale" : "Il mio Piano Premium mensile";
+}
+function dataOraIt(ms) {
+  return new Date(ms).toLocaleString("it-IT", { timeZone: "Europe/Rome", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function euro(x) { return (Math.round(Number(x) * 100) / 100).toFixed(2).replace(".", ",") + " €"; }
+
+/**
+ * Esito proposto (regole della consulenza): oltre 14 giorni dal primo acquisto
+ * → rifiuto; entro 14 giorni con consenso all'esecuzione immediata → rimborso
+ * della parte non goduta; senza consenso → rimborso totale.
+ */
+function esitoRecessoProposto(r) {
+  const giorno = 86400000;
+  const primo = Number(r.primoAcquisto) || null;
+  if (!primo) return { esito: "da_verificare", motivo: "data di acquisto non disponibile" };
+  const trascorsi = (r.richiesta - primo) / giorno;
+  if (trascorsi > GIORNI_RECESSO) return { esito: "rifiuto", giorniDallAcquisto: Math.floor(trascorsi) };
+  if (!r.consenso) return { esito: "totale", giorniDallAcquisto: Math.floor(trascorsi), importo: r.prezzo ? r.prezzo.importo : null };
+  const inizio = Number(r.ultimoAcquisto) || primo;
+  const periodo = periodoGiorni(r.prodotto);
+  const goduti = Math.min(periodo, Math.max(1, Math.ceil((r.richiesta - inizio) / giorno)));
+  const importo = r.prezzo ? Math.round(r.prezzo.importo * (periodo - goduti) / periodo * 100) / 100 : null;
+  return { esito: "parziale", giorniDallAcquisto: Math.floor(trascorsi), giorniGoduti: goduti, giorniPeriodo: periodo, importo };
+}
+
+/** Consenso all'esecuzione immediata valido per l'acquisto: l'ultimo dato prima dell'acquisto (entro un'ora dopo, per i ritardi dello store). */
+function consensoPerAcquisto(consensi, primoAcquistoMs) {
+  const elenco = (Array.isArray(consensi) ? consensi : []).map((c) => Object.assign({}, c, { ms: millisDi(c.data) })).filter((c) => c.ms);
+  const limite = primoAcquistoMs ? primoAcquistoMs + 3600000 : Infinity;
+  const validi = elenco.filter((c) => c.ms <= limite).sort((a, b) => b.ms - a.ms);
+  return validi.length ? { versione: validi[0].versione, testo: validi[0].testo, data: validi[0].ms } : null;
+}
+
+/** «Recedi dal contratto qui»: registra la richiesta e invia subito la conferma con data e ora. */
+exports.richiediRecesso = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const utente = (await db.collection("users").doc(uid).get()).data() || {};
+  if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
+  const premium = utente.premium || {};
+  if (!premium.prodotto) throw new HttpsError("failed-precondition", "nessun-abbonamento");
+  const email = (request.auth.token && request.auth.token.email) || "";
+  if (!email) throw new HttpsError("failed-precondition", "email-mancante");
+  // una sola richiesta aperta per volta: si rimanda la conferma di quella
+  const aperte = await db.collection("recessi").where("uid", "==", uid).where("stato", "==", "ricevuta").limit(1).get();
+  if (!aperte.empty) {
+    const r = aperte.docs[0].data();
+    return { data: r.richiestaMs, giaPresente: true };
+  }
+  const adesso = Date.now();
+  const crypto = require("crypto");
+  const rec = {
+    uid, email,
+    prodotto: String(premium.prodotto), store: String(premium.origine || ""),
+    primoAcquisto: millisDi(premium.primoAcquisto), ultimoAcquisto: millisDi(premium.ultimoAcquisto),
+    scadenza: millisDi(premium.scadenza), prezzo: premium.prezzo || null,
+    richiesta: adesso,
+  };
+  rec.consenso = consensoPerAcquisto(utente.consensiEsecuzione, rec.primoAcquisto);
+  const proposta = esitoRecessoProposto(rec);
+  const token = crypto.randomBytes(24).toString("hex");
+  const ref = await db.collection("recessi").add(Object.assign({}, rec, {
+    richiestaMs: adesso, richiestaIl: Timestamp.fromMillis(adesso), stato: "ricevuta", proposta, token,
+  }));
+  const quando = dataOraIt(adesso);
+  await accodaEmail({
+    to: email,
+    subject: "Il mio Piano - abbiamo ricevuto la tua richiesta di recesso",
+    text: [
+      "Ciao,",
+      "",
+      `abbiamo ricevuto la tua richiesta di recesso dal contratto ${nomeAbbonamento(rec.prodotto)} il ${quando} (ora italiana).`,
+      "Questa email conferma la ricezione e la data della richiesta.",
+      "",
+      "Contratto: " + nomeAbbonamento(rec.prodotto) + (rec.store === "play_store" ? ", acquistato con Google Play" : ""),
+      rec.primoAcquisto ? "Data di acquisto: " + dataIt(rec.primoAcquisto) : null,
+      "Account: " + email,
+      "Codice della richiesta: " + ref.id,
+      "",
+      "Verifichiamo la richiesta e ti rispondiamo per email entro 14 giorni con l'esito. Se il recesso viene accolto, il rimborso lo esegue " + (rec.store === "play_store" ? "Google Play" : "lo store") + " sullo stesso metodo di pagamento usato per l'acquisto e chiudiamo noi l'abbonamento.",
+      "",
+      "Per qualsiasi domanda puoi rispondere a questa email.",
+      "",
+      "Il mio Piano - Bulli & Pupe S.r.l.",
+    ].filter((x) => x !== null).join("\n"),
+  });
+  const p = proposta;
+  await accodaEmail({
+    to: EMAIL_GESTIONE,
+    subject: `Recesso Premium da gestire - ${ref.id}`,
+    text: [
+      `Nuova richiesta di recesso ricevuta il ${quando}.`,
+      "",
+      "Account: " + email + " (uid " + uid + ")",
+      "Contratto: " + nomeAbbonamento(rec.prodotto) + " (" + rec.prodotto + ", " + (rec.store || "store") + ")",
+      "Primo acquisto: " + (rec.primoAcquisto ? dataOraIt(rec.primoAcquisto) : "non disponibile"),
+      "Ultimo rinnovo: " + (rec.ultimoAcquisto ? dataOraIt(rec.ultimoAcquisto) : "non disponibile"),
+      "Prezzo: " + (rec.prezzo ? euro(rec.prezzo.importo) : "non disponibile"),
+      "Consenso all'esecuzione immediata: " + (rec.consenso ? "sì, " + dataOraIt(rec.consenso.data) : "no"),
+      "",
+      "Esito proposto: " + ({ totale: "rimborso totale", parziale: "rimborso parziale della parte non goduta", rifiuto: "rifiuto (oltre 14 giorni)", da_verificare: "da verificare" }[p.esito] || p.esito)
+        + (p.importo != null ? " - " + euro(p.importo) : "") + (p.giorniGoduti ? ` (${p.giorniGoduti} giorni goduti su ${p.giorniPeriodo})` : ""),
+      "",
+      "Per confermare l'esito e inviare l'email al paziente apri:",
+      `${URL_RECESSI}?id=${ref.id}&t=${token}`,
+      "",
+      "Il rimborso e la revoca dell'abbonamento si fanno dal Play Console (Gestione ordini).",
+    ].join("\n"),
+  });
+  console.log("Recesso richiesto:", ref.id, p.esito);
+  return { data: adesso };
+});
+
+/** Testi delle tre email di esito (provvisori, da far validare all'avvocato). */
+function emailEsitoRecesso(r, esito, importo) {
+  const contratto = nomeAbbonamento(r.prodotto);
+  const store = r.store === "play_store" ? "Google Play" : "lo store";
+  const richiesta = dataOraIt(r.richiestaMs);
+  const righe = { totale: [
+    `abbiamo accolto la tua richiesta di recesso dal contratto ${contratto}, ricevuta il ${richiesta}.`,
+    "",
+    `Ti rimborsiamo l'intero importo pagato${r.prezzo ? ` (${euro(r.prezzo.importo)})` : ""}. Il rimborso lo esegue ${store} sullo stesso metodo di pagamento usato per l'acquisto, entro 14 giorni dalla tua richiesta.`,
+    "L'abbonamento è chiuso: il Premium si disattiva e puoi continuare a usare la versione gratuita.",
+  ], parziale: [
+    `abbiamo accolto la tua richiesta di recesso dal contratto ${contratto}, ricevuta il ${richiesta}.`,
+    "",
+    "Al momento dell'acquisto avevi chiesto di attivare subito il Premium, prima della fine dei 14 giorni per il recesso: per questo ti rimborsiamo la parte non ancora goduta" + (importo != null ? `, pari a ${euro(importo)}` : "") + ".",
+    `Il rimborso lo esegue ${store} sullo stesso metodo di pagamento usato per l'acquisto, entro 14 giorni dalla tua richiesta.`,
+    "L'abbonamento è chiuso: il Premium si disattiva e puoi continuare a usare la versione gratuita.",
+  ], rifiuto: [
+    `abbiamo esaminato la tua richiesta di recesso dal contratto ${contratto}, ricevuta il ${richiesta}.`,
+    "",
+    `La richiesta è arrivata oltre i 14 giorni dall'acquisto${r.primoAcquisto ? ` del ${dataIt(r.primoAcquisto)}` : ""}: il diritto di recesso non si può più esercitare e non è previsto un rimborso.`,
+    `Puoi comunque disdire il rinnovo in qualsiasi momento da ${store}: l'abbonamento resta attivo fino alla fine del periodo già pagato${r.scadenza ? ` (${dataIt(r.scadenza)})` : ""} e poi non si rinnova.`,
+  ] }[esito];
+  return {
+    subject: esito === "rifiuto" ? "Il mio Piano - esito della tua richiesta di recesso" : "Il mio Piano - recesso accolto",
+    text: ["Ciao,", "", ...righe, "", "Codice della richiesta: " + (r.id || ""), "Per qualsiasi domanda puoi rispondere a questa email.", "", "Il mio Piano - Bulli & Pupe S.r.l."].join("\n"),
+  };
+}
+
+function htmlSicuro(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+/** Pagina di gestione (link nell'email a info@ilmiopiano.it): conferma dell'esito. */
+exports.gestioneRecessi = onRequest(async (req, res) => {
+  const id = String((req.method === "POST" ? req.body && req.body.id : req.query.id) || "");
+  const t = String((req.method === "POST" ? req.body && req.body.t : req.query.t) || "");
+  const pagina = (corpo) => res.set("Content-Type", "text/html; charset=utf-8").send(`<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Recesso Premium</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:24px auto;padding:0 16px;color:#222;line-height:1.5}label{display:block;margin:8px 0}button{padding:10px 18px;font-size:16px;margin-top:12px}dt{font-weight:600}dd{margin:0 0 6px}</style></head><body>${corpo}</body></html>`);
+  if (!/^[A-Za-z0-9]{10,40}$/.test(id) || !/^[a-f0-9]{48}$/.test(t)) { res.status(400); pagina("<p>Link non valido.</p>"); return; }
+  const ref = db.collection("recessi").doc(id);
+  const snap = await ref.get();
+  const r = snap.exists ? Object.assign({ id }, snap.data()) : null;
+  const crypto = require("crypto");
+  if (!r || !r.token || !crypto.timingSafeEqual(Buffer.from(r.token), Buffer.from(t))) { res.status(403); pagina("<p>Link non valido.</p>"); return; }
+  const p = r.proposta || {};
+  const dettagli = `<dl><dt>Richiesta</dt><dd>${htmlSicuro(dataOraIt(r.richiestaMs))}</dd><dt>Account</dt><dd>${htmlSicuro(r.email)}</dd><dt>Contratto</dt><dd>${htmlSicuro(nomeAbbonamento(r.prodotto))} (${htmlSicuro(r.prodotto)})</dd><dt>Primo acquisto</dt><dd>${r.primoAcquisto ? htmlSicuro(dataOraIt(r.primoAcquisto)) : "non disponibile"}</dd><dt>Prezzo</dt><dd>${r.prezzo ? htmlSicuro(euro(r.prezzo.importo)) : "non disponibile"}</dd><dt>Consenso all'esecuzione immediata</dt><dd>${r.consenso ? "sì, " + htmlSicuro(dataOraIt(r.consenso.data)) : "no"}</dd></dl>`;
+  if (r.stato !== "ricevuta") { pagina(`<h1>Recesso già gestito</h1>${dettagli}<p>Esito inviato: <strong>${htmlSicuro(r.esito)}</strong>${r.importoRimborso != null ? " - " + htmlSicuro(euro(r.importoRimborso)) : ""}, il ${htmlSicuro(dataOraIt(r.esitoMs))}.</p>`); return; }
+  if (req.method === "GET") {
+    const scelta = (v) => (p.esito === v ? " checked" : "");
+    pagina(`<h1>Recesso Premium</h1>${dettagli}
+      <p><strong>Esito proposto:</strong> ${htmlSicuro({ totale: "rimborso totale", parziale: `rimborso parziale (${p.giorniGoduti} giorni goduti su ${p.giorniPeriodo})`, rifiuto: `rifiuto: ${p.giorniDallAcquisto} giorni dall'acquisto`, da_verificare: "da verificare: " + (p.motivo || "") }[p.esito] || "")}</p>
+      <form method="post"><input type="hidden" name="id" value="${htmlSicuro(id)}"><input type="hidden" name="t" value="${htmlSicuro(t)}">
+      <label><input type="radio" name="esito" value="totale"${scelta("totale")}> Rimborso totale</label>
+      <label><input type="radio" name="esito" value="parziale"${scelta("parziale")}> Rimborso parziale della parte non goduta: <input type="text" name="importo" inputmode="decimal" size="7" value="${p.importo != null ? htmlSicuro(String(p.importo).replace(".", ",")) : ""}"> €</label>
+      <label><input type="radio" name="esito" value="rifiuto"${scelta("rifiuto")}> Rifiuto (oltre 14 giorni)</label>
+      <button type="submit">Invia l'esito al paziente</button></form>
+      <p>Prima o subito dopo, esegui il rimborso e revoca l'abbonamento dal Play Console (Gestione ordini). Con il rifiuto non serve fare nulla.</p>`);
+    return;
+  }
+  if (req.method !== "POST") { res.status(405).send(""); return; }
+  const esito = String(req.body.esito || "");
+  if (!["totale", "parziale", "rifiuto"].includes(esito)) { res.status(400); pagina("<p>Scegli un esito.</p>"); return; }
+  let importo = null;
+  if (esito === "parziale") {
+    importo = Number(String(req.body.importo || "").replace(",", "."));
+    if (!(importo > 0) || (r.prezzo && importo > r.prezzo.importo)) { res.status(400); pagina("<p>Importo non valido.</p>"); return; }
+    importo = Math.round(importo * 100) / 100;
+  } else if (esito === "totale" && r.prezzo) importo = r.prezzo.importo;
+  const ok = await db.runTransaction(async (tx) => {
+    const ora = (await tx.get(ref)).data() || {};
+    if (ora.stato !== "ricevuta") return false;
+    tx.update(ref, { stato: "esitata", esito, importoRimborso: importo, esitoMs: Date.now(), esitoIl: FieldValue.serverTimestamp() });
+    return true;
+  });
+  if (!ok) { pagina("<p>Recesso già gestito.</p>"); return; }
+  const mail = emailEsitoRecesso(r, esito, importo);
+  await accodaEmail({ to: r.email, subject: mail.subject, text: mail.text });
+  console.log("Recesso esitato:", id, esito, importo);
+  pagina(`<h1>Esito inviato</h1><p>Il paziente riceve l'email di esito (${htmlSicuro(esito)}${importo != null ? ", " + htmlSicuro(euro(importo)) : ""}).</p>${esito !== "rifiuto" ? "<p><strong>Ricorda:</strong> rimborso e revoca dell'abbonamento dal Play Console, se non li hai già fatti.</p>" : ""}`);
 });
 
 /**
@@ -3221,5 +3461,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoRecessoProposto, consensoPerAcquisto, emailEsitoRecesso, datiRecesso, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

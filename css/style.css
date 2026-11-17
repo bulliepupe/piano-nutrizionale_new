@@ -2452,3 +2452,7 @@ body.con-informativa { overflow: hidden; }
 .formula-consenso { font-size: 14px; line-height: 1.5; margin: 10px 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--paper, #F7F9F3); border: 1px solid var(--line, #DCE3D4); }
 .scelta-pari { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .scelta-pari .btn { width: 100%; }
+
+/* v147: consenso all'esecuzione immediata prima dell'acquisto del Premium */
+.consenso-esecuzione { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0 4px; font-size: 0.92rem; line-height: 1.4; text-align: left; cursor: pointer; }
+.consenso-esecuzione input { margin-top: 3px; width: 18px; height: 18px; flex: 0 0 auto; }
