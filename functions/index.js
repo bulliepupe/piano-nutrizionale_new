@@ -1548,7 +1548,7 @@ exports.richiediRecesso = onCall(async (request) => {
       "Consenso all'esecuzione immediata: " + (rec.consenso ? "sì, " + dataOraIt(rec.consenso.data) : "no"),
       "",
       "Esito proposto: " + ({ totale: "rimborso totale", parziale: "rimborso parziale della parte non goduta", rifiuto: "rifiuto (oltre 14 giorni)", da_verificare: "da verificare" }[p.esito] || p.esito)
-        + (p.importo != null ? " - " + euro(p.importo) : "") + (p.giorniGoduti ? ` (${p.giorniGoduti} giorni goduti su ${p.giorniPeriodo})` : ""),
+        + (p.importo != null ? " - " + euro(p.importo) : "") + (p.giorniGoduti ? ` (${p.giorniGoduti === 1 ? "1 giorno goduto" : p.giorniGoduti + " giorni goduti"} su ${p.giorniPeriodo})` : ""),
       "",
       "Per confermare l'esito e inviare l'email al paziente apri:",
       `${URL_RECESSI}?id=${ref.id}&t=${token}`,

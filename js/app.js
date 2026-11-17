@@ -350,10 +350,15 @@
       const password = document.getElementById("signup-password").value;
       const errEl = document.getElementById("signup-error");
       errEl.hidden = true;
+      const professione = document.getElementById("signup-professione").value;
+      const partitaIva = partitaIvaValida(document.getElementById("signup-piva").value);
+      if (!PROFESSIONI.includes(professione)) { mostraErroreIn("signup-error", "Scegli la tua professione."); return; }
+      if (!partitaIva) { mostraErroreIn("signup-error", "La partita IVA non è valida: controlla le 11 cifre."); return; }
+      if (!document.getElementById("signup-professionale").checked) { mostraErroreIn("signup-error", "Conferma che ti registri nell'esercizio della tua attività professionale."); return; }
       const btn = e.target.querySelector('button[type="submit"]');
       btn.disabled = true;
       try {
-        await window.cloud.registraProfessionista(email, password, nome);
+        await window.cloud.registraProfessionista(email, password, nome, { professione, partitaIva, dichiarazione: new Date().toISOString(), versione: VERSIONE_DATI_PROFESSIONALI });
       } catch (err) {
         mostraErroreIn("signup-error", traduciErroreAuth(err));
       } finally {
@@ -376,6 +381,26 @@
     if (unsubProfilo) { unsubProfilo(); unsubProfilo = null; }
     pulisciListenerCloud();
     await window.cloud.logout();
+  }
+
+  // v147 · Professione e partita IVA dei professionisti (consulenza legale dell'11/11/2026)
+  const PROFESSIONI = ["Biologa nutrizionista", "Biologo nutrizionista", "Dietista", "Medica", "Medico"];
+  const VERSIONE_DATI_PROFESSIONALI = "2026-11-17";
+  /** Partita IVA italiana: 11 cifre con cifra di controllo. */
+  function partitaIvaValida(x) {
+    const p = String(x || "").replace(/\s/g, "").replace(/^IT/i, "");
+    if (!/^[0-9]{11}$/.test(p) || /^0{11}$/.test(p)) return null;
+    let somma = 0;
+    for (let i = 0; i < 10; i++) {
+      let c = Number(p[i]);
+      if (i % 2 === 1) { c *= 2; if (c > 9) c -= 9; }
+      somma += c;
+    }
+    return (10 - (somma % 10)) % 10 === Number(p[10]) ? p : null;
+  }
+  /** Qualifica mostrata ai pazienti: professione e, se c'è, specializzazione. */
+  function qualificaComposta(professione, specializzazione) {
+    return [professione, specializzazione].map((x) => String(x || "").trim()).filter(Boolean).join(" · ").slice(0, 160);
   }
 
   function mostraErroreIn(id, msg) {
@@ -894,7 +919,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v147";
+  const VERSIONE_APP = "v148";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -5819,6 +5844,7 @@
     overlay.id = "sheet-overlay";
     overlay.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
     overlay.addEventListener("click", (e) => {
+      if (overlay.dataset.bloccato) return; // v148: schermate che non si chiudono senza una scelta
       if (e.target === overlay || e.target.closest("[data-chiudi-sheet]")) chiudiSheet();
     });
     document.body.appendChild(overlay);
@@ -5827,12 +5853,23 @@
     return overlay;
   }
 
-  function chiudiSheet() {
+  function chiudiSheet(forza) {
     const o = document.getElementById("sheet-overlay");
-    if (o) o.remove();
+    if (!o) return;
+    o.remove();
+    // una schermata bloccata sostituita da un'altra si ripresenta dopo
+    if (o.dataset.bloccato && forza !== true && o.dataset.bloccato === "datiProfessionali") {
+      datiProfInRichiesta = false;
+      setTimeout(() => { if (RUOLO === "professionista" && UID && !PROFILO_PROF.datiProfessionali) chiediDatiProfessionali(); }, 400);
+    }
   }
 
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") chiudiSheet(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const o = document.getElementById("sheet-overlay");
+    if (o && o.dataset.bloccato) return;
+    chiudiSheet();
+  });
 
   // ---------------------------------------------------------------------
   // Contatto del nutrizionista (lato paziente)
@@ -7807,6 +7844,52 @@
   // =======================================================================
   // LATO PROFESSIONISTA
   // =======================================================================
+  /** Professionisti iscritti prima della v147: professione e partita IVA obbligatorie. */
+  let datiProfInRichiesta = false;
+  function chiediDatiProfessionali() {
+    if (datiProfInRichiesta) return;
+    datiProfInRichiesta = true;
+    apriSheet(`
+      <h2 class="sheet__titolo">Completa i tuoi dati professionali</h2>
+      <p class="sheet__nota">Per continuare a usare Il mio Piano come professionista ci servono la tua professione e la partita IVA. La professione compare ai tuoi pazienti; la partita IVA no.</p>
+      <label class="editor-campo"><span>Professione</span><select id="dp-professione"><option value="">Scegli…</option>${PROFESSIONI.map((p) => `<option>${escapeHTML(p)}</option>`).join("")}</select></label>
+      <label class="editor-campo"><span>Partita IVA</span><input type="text" id="dp-piva" inputmode="numeric" maxlength="13" placeholder="11 cifre"></label>
+      <label class="check-riga"><input type="checkbox" id="dp-dichiaro"> <span>Uso Il mio Piano nell'esercizio della mia attività professionale, non come consumatore</span></label>
+      <p class="auth-error" id="dp-errore" hidden></p>
+      <button type="button" class="btn" id="dp-salva">Salva e continua</button>
+      <button type="button" class="link-btn" id="dp-esci">Esci</button>`);
+    // la schermata non si chiude senza dati: niente chiusura con il tocco fuori o con Esc
+    const overlay = document.getElementById("sheet-overlay");
+    if (overlay) overlay.dataset.bloccato = "datiProfessionali";
+    document.getElementById("dp-esci").addEventListener("click", () => { datiProfInRichiesta = false; chiudiSheet(true); eseguiLogout(); });
+    document.getElementById("dp-salva").addEventListener("click", async (e) => {
+      const err = document.getElementById("dp-errore");
+      const professione = document.getElementById("dp-professione").value;
+      const partitaIva = partitaIvaValida(document.getElementById("dp-piva").value);
+      const errore = !PROFESSIONI.includes(professione) ? "Scegli la tua professione."
+        : !partitaIva ? "La partita IVA non è valida: controlla le 11 cifre."
+        : !document.getElementById("dp-dichiaro").checked ? "Conferma che usi l'app nell'esercizio della tua attività professionale." : "";
+      if (errore) { err.hidden = false; err.textContent = errore; return; }
+      e.currentTarget.disabled = true;
+      const c = PROFILO_PROF.contatti || {};
+      const contatti = Object.assign({}, c, {
+        nome: c.nome || PROFILO_PROF.nome || "",
+        professione,
+        specializzazione: c.specializzazione != null ? c.specializzazione : (c.qualifica || ""),
+      });
+      contatti.qualifica = qualificaComposta(professione, contatti.specializzazione);
+      try {
+        await window.cloud.salvaProfiloProfessionista(UID, contatti, { professione, partitaIva, dichiarazione: new Date().toISOString(), versione: VERSIONE_DATI_PROFESSIONALI });
+        datiProfInRichiesta = false;
+        chiudiSheet(true);
+        mostraToast("Dati professionali salvati");
+      } catch (x) {
+        e.currentTarget.disabled = false;
+        err.hidden = false; err.textContent = "Salvataggio non riuscito: controlla la connessione e riprova.";
+      }
+    });
+  }
+
   function avviaProfessionista(utenteDati) {
     mostraSchermata("professionista");
     if (!window.temaApp) applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
@@ -7820,6 +7903,7 @@
       if (!dati) return;
       PROFILO_PROF = dati;
       if (vistaProfCorrente === "lista") renderListaPazienti();
+      if (!dati.datiProfessionali) chiediDatiProfessionali();
     });
 
     collegaRichiesteProfessionista();
@@ -9877,7 +9961,9 @@
         <p class="hint">Questi dati compaiono nell'app di tutti i tuoi pazienti, con il pulsante Contatta. Quando li salvi si aggiornano ovunque.</p>
         <div class="editor-pasti" id="form-profilo">
           <label class="editor-campo"><span>Nome e cognome</span><input type="text" data-campo="nome" value="${escapeHTML(nome)}" placeholder="Dott.ssa Maria Rossi" autocomplete="name"></label>
-          <label class="editor-campo"><span>Qualifica</span><input type="text" data-campo="qualifica" value="${escapeHTML(c.qualifica || "")}" placeholder="Biologa nutrizionista"></label>
+          <label class="editor-campo"><span>Professione</span><select data-prof="professione"><option value="">Scegli…</option>${PROFESSIONI.map((p) => `<option ${((PROFILO_PROF.datiProfessionali || {}).professione || c.professione) === p ? "selected" : ""}>${escapeHTML(p)}</option>`).join("")}</select></label>
+          <label class="editor-campo"><span>Specializzazione (facoltativa)</span><input type="text" data-campo="specializzazione" value="${escapeHTML(c.specializzazione != null ? c.specializzazione : (c.professione ? "" : (c.qualifica || "")))}" placeholder="Nutrizione sportiva"></label>
+          <label class="editor-campo"><span>Partita IVA (non visibile ai pazienti)</span><input type="text" data-prof="piva" value="${escapeHTML((PROFILO_PROF.datiProfessionali || {}).partitaIva || "")}" inputmode="numeric" maxlength="13"></label>
           <label class="editor-campo"><span>Studio e indirizzo</span><input type="text" data-campo="studio" value="${escapeHTML(c.studio || "")}" placeholder="Studio Nutrizione, Via Roma 10, Milano"></label>
           <label class="editor-campo"><span>Ordine o albo di iscrizione</span><input type="text" data-albo="ordine" value="${escapeHTML((c.albo && c.albo.ordine) || "")}" placeholder="Ordine dei Biologi della Lombardia"></label>
           <label class="editor-campo"><span>Numero di iscrizione</span><input type="text" data-albo="numero" value="${escapeHTML((c.albo && c.albo.numero) || "")}" placeholder="AA_012345"></label>
@@ -9963,10 +10049,19 @@
     if (albo.numero && !dichiaro) { mostraToast("Per mostrare l'iscrizione ai pazienti spunta la dichiarazione", 4000); return; }
     const precedente = (PROFILO_PROF.contatti && PROFILO_PROF.contatti.albo) || {};
     const stessa = precedente.numero === albo.numero && precedente.ordine === albo.ordine && precedente.dichiarato;
+    const professione = document.querySelector('#form-profilo [data-prof="professione"]').value;
+    const partitaIva = partitaIvaValida(document.querySelector('#form-profilo [data-prof="piva"]').value);
+    if (!PROFESSIONI.includes(professione)) { mostraToast("Scegli la tua professione", 3500); return; }
+    if (!partitaIva) { mostraToast("La partita IVA non è valida: controlla le 11 cifre", 4000); return; }
+    const dpPrima = PROFILO_PROF.datiProfessionali || {};
+    const datiProfessionali = dpPrima.professione === professione && dpPrima.partitaIva === partitaIva ? null
+      : { professione, partitaIva, dichiarazione: dpPrima.dichiarazione || new Date().toISOString(), versione: VERSIONE_DATI_PROFESSIONALI };
     const contatti = {
       albo: albo.numero ? Object.assign(albo, { dichiarato: stessa ? precedente.dichiarato : new Date().toISOString() }) : null,
       nome: campi.nome,
-      qualifica: campi.qualifica,
+      professione,
+      specializzazione: campi.specializzazione,
+      qualifica: qualificaComposta(professione, campi.specializzazione),
       studio: campi.studio,
       email: campi.email,
       telefono: campi.telefono,
@@ -9978,8 +10073,8 @@
     btn.disabled = true;
     btn.textContent = "Salvataggio…";
     try {
-      const n = await window.cloud.salvaProfiloProfessionista(UID, contatti);
-      PROFILO_PROF = Object.assign({}, PROFILO_PROF, { contatti, nome: contatti.nome });
+      const n = await window.cloud.salvaProfiloProfessionista(UID, contatti, datiProfessionali);
+      PROFILO_PROF = Object.assign({}, PROFILO_PROF, { contatti, nome: contatti.nome }, datiProfessionali ? { datiProfessionali } : {});
       mostraToast(n === 1 ? "Dati salvati e aggiornati per 1 paziente" : `Dati salvati e aggiornati per ${n} pazienti`);
     } catch (e) {
       mostraToast(msgErroreScrittura(e, "Salvataggio non riuscito: controlla la connessione"), 4000);

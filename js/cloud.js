@@ -131,7 +131,7 @@
     },
 
     /** Registrazione self-service per il professionista (dietista/nutrizionista). */
-    async registraProfessionista(email, password, nome) {
+    async registraProfessionista(email, password, nome, datiProfessionali) {
       const cred = await auth.createUserWithEmailAndPassword(email.trim(), password);
       // Prova gratuita: 30 giorni, fino a 3 pazienti. È l'unica licenza che
       // l'app può scrivere da sola (lo impongono le regole Firestore); gli
@@ -142,6 +142,9 @@
         nome: (nome || "").trim(),
         email: email.trim().toLowerCase(),
         creato: FieldValue.serverTimestamp(),
+        // v147: professione e partita IVA (consulenza legale dell'11/11/2026)
+        datiProfessionali,
+        contatti: { nome: (nome || "").trim(), professione: datiProfessionali.professione, qualifica: datiProfessionali.professione },
         licenza: {
           piano: "prova",
           maxPazienti: 3,
@@ -239,8 +242,8 @@
      * sicurezza), ma può leggere il proprio piano — così vede sempre i
      * contatti aggiornati senza toccare le regole Firestore.
      */
-    async salvaProfiloProfessionista(uid, contatti) {
-      await db.collection("users").doc(uid).update({ contatti, nome: contatti.nome || "" });
+    async salvaProfiloProfessionista(uid, contatti, datiProfessionali) {
+      await db.collection("users").doc(uid).update(Object.assign({ contatti, nome: contatti.nome || "" }, datiProfessionali ? { datiProfessionali } : {}));
       const snap = await db.collection("piani").where("professionistaUid", "==", uid).get();
       // Scritture a blocchi (limite Firestore: 500 operazioni per batch).
       for (let i = 0; i < snap.docs.length; i += 400) {

@@ -54,6 +54,14 @@ service cloud.firestore {
         && l.scadenza <= request.time + duration.value(31, "d");
     }
 
+    // v147: professione da elenco chiuso e partita IVA di 11 cifre
+    function datiProfessionaliValidi(d) {
+      return d is map && d.keys().hasOnly(["professione", "partitaIva", "dichiarazione", "versione"])
+        && d.professione in ["Biologa nutrizionista", "Biologo nutrizionista", "Dietista", "Medica", "Medico"]
+        && d.partitaIva is string && d.partitaIva.matches("^[0-9]{11}$")
+        && d.dichiarazione is string && d.dichiarazione.size() <= 40;
+    }
+
     match /users/{userId} {
       // Ognuno legge il proprio documento; il professionista legge anche
       // quelli dei SUOI pazienti (non quelli di altri professionisti).
@@ -66,7 +74,8 @@ service cloud.firestore {
       // prova gratuita). I profili dei pazienti li crea il server (funzione
       // creaPaziente), che controlla il limite della licenza.
       allow create: if isSignedIn() && request.auth.uid == userId && (
-        (request.resource.data.ruolo == "professionista" && provaValida(request.resource.data.licenza)) ||
+        (request.resource.data.ruolo == "professionista" && provaValida(request.resource.data.licenza)
+          && datiProfessionaliValidi(request.resource.data.datiProfessionali)) ||
         // Familiare: solo lista della spesa condivisa, niente licenza né professionista
         (request.resource.data.ruolo == "familiare"
           && !("licenza" in request.resource.data) && !("professionistaUid" in request.resource.data)
@@ -75,7 +84,9 @@ service cloud.firestore {
 
       // Aggiornare i propri dati sì, ma mai ruolo e licenza.
       allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato", "stimeRese", "stimeMacro", "lettureEtichette", "consensi", "confermaRichiesta", "sceltaFineLicenza", "continuaDaSolo", "datiProfessionistaCancellati", "custodia"]);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["ruolo", "licenza", "professionistaUid", "listaCasa", "importazioniAI", "analisiAI", "premium", "autonomo", "codiceStudio", "collegato", "scollegato", "stimeRese", "stimeMacro", "lettureEtichette", "consensi", "confermaRichiesta", "sceltaFineLicenza", "continuaDaSolo", "datiProfessionistaCancellati", "custodia", "consensiEsecuzione"])
+        && (!("datiProfessionali" in request.resource.data.diff(resource.data).affectedKeys())
+          || (resource.data.ruolo == "professionista" && datiProfessionaliValidi(request.resource.data.datiProfessionali)));
       allow delete: if false;
 
       // Spunte "pasto fatto": le scrive solo il paziente. Il SUO professionista
