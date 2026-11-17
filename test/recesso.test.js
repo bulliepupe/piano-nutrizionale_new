@@ -26,4 +26,14 @@ ok(/oltre i 14 giorni/.test(T.emailEsitoRecesso(r, "rifiuto").text) && /disdire 
 // stato Premium: dati per il pulsante
 const s = T.statoPremiumServer({ stato: "attivo", prodotto: "premium:annuale", scadenza: ts(Date.now() + 100 * g), primoAcquisto: ts(t0) }, null, Date.now());
 ok(s.origine === "abbonamento" && s.recedibile === true && s.primoAcquisto === t0, "stato con dati di recesso");
+// v147: piano base di Google Play e date dall'abbonamento
+const iso = (ms) => new Date(ms).toISOString();
+const pr = T.premiumDaRevenueCat({
+  entitlements: { il_mio_piano_premium: { expires_date: iso(Date.now() + 30 * g), product_identifier: "premium", product_plan_identifier: "annuale", purchase_date: iso(t0) } },
+  subscriptions: { premium: { store: "play_store", original_purchase_date: iso(t0), purchase_date: iso(t0), price: { amount: 19.99, currency: "EUR" } } },
+}, Date.now());
+ok(pr.prodotto === "premium:annuale" && pr.origine === "play_store", "prodotto con il piano: " + pr.prodotto);
+ok(pr.primoAcquisto.toMillis() === t0 && pr.prezzo.importo === 19.99, "date e prezzo letti");
+const pr2 = T.premiumDaRevenueCat({ entitlements: { il_mio_piano_premium: { expires_date: iso(Date.now() + 30 * g), product_identifier: "premium", purchase_date: iso(t0) } }, subscriptions: { premium: { store: "play_store" } } }, Date.now());
+ok(pr2.primoAcquisto && pr2.primoAcquisto.toMillis() === t0, "data dall'entitlement se manca nell'abbonamento");
 console.log("recesso: " + n + " verifiche ok");

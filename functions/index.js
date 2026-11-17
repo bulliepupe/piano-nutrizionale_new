@@ -1348,8 +1348,13 @@ function premiumDaRevenueCat(subscriber, adesso) {
   if (!ent) return null;
   const scadenza = ent.expires_date ? Date.parse(ent.expires_date) : null;
   if (ent.expires_date && isNaN(scadenza)) return null;
-  const prodotto = String(ent.product_identifier || "").slice(0, 100);
-  const sub = (subscriber.subscriptions && subscriber.subscriptions[prodotto]) || {};
+  // v147: con i piani base di Google Play il prodotto è "premium" e il piano
+  // (mensile/annuale) sta in product_plan_identifier: si tengono insieme.
+  const idProdotto = String(ent.product_identifier || "");
+  const subs = subscriber.subscriptions || {};
+  const piano = String(ent.product_plan_identifier || "");
+  const prodotto = (idProdotto.includes(":") || !piano ? idProdotto : idProdotto + ":" + piano).slice(0, 100);
+  const sub = subs[idProdotto] || subs[prodotto] || {};
   const attivo = scadenza == null || scadenza > adesso;
   return {
     stato: attivo ? "attivo" : "scaduto",
@@ -1359,8 +1364,8 @@ function premiumDaRevenueCat(subscriber, adesso) {
     rinnovo: attivo && !sub.unsubscribe_detected_at && !sub.refunded_at,
     problemaPagamento: !!sub.billing_issues_detected_at,
     // v147 (recesso): data del primo acquisto e dell'ultimo rinnovo, prezzo pagato
-    primoAcquisto: tsDaIso(sub.original_purchase_date),
-    ultimoAcquisto: tsDaIso(sub.purchase_date),
+    primoAcquisto: tsDaIso(sub.original_purchase_date || sub.purchase_date || ent.purchase_date),
+    ultimoAcquisto: tsDaIso(sub.purchase_date || ent.purchase_date),
     prezzo: sub.price && Number(sub.price.amount) > 0 ? { importo: Number(sub.price.amount), valuta: String(sub.price.currency || "EUR").slice(0, 3) } : null,
     rimborsato: !!sub.refunded_at,
   };
@@ -1495,7 +1500,9 @@ exports.richiediRecesso = onCall(async (request) => {
     uid, email,
     prodotto: String(premium.prodotto), store: String(premium.origine || ""),
     primoAcquisto: millisDi(premium.primoAcquisto), ultimoAcquisto: millisDi(premium.ultimoAcquisto),
-    scadenza: millisDi(premium.scadenza), prezzo: premium.prezzo || null,
+    scadenza: millisDi(premium.scadenza),
+    // prezzo pagato da RevenueCat; se manca (per esempio negli acquisti di prova) il listino
+    prezzo: premium.prezzo || { importo: periodoGiorni(premium.prodotto) === 365 ? 19.99 : 2.99, valuta: "EUR", listino: true },
     richiesta: adesso,
   };
   rec.consenso = consensoPerAcquisto(utente.consensiEsecuzione, rec.primoAcquisto);
@@ -1537,7 +1544,7 @@ exports.richiediRecesso = onCall(async (request) => {
       "Contratto: " + nomeAbbonamento(rec.prodotto) + " (" + rec.prodotto + ", " + (rec.store || "store") + ")",
       "Primo acquisto: " + (rec.primoAcquisto ? dataOraIt(rec.primoAcquisto) : "non disponibile"),
       "Ultimo rinnovo: " + (rec.ultimoAcquisto ? dataOraIt(rec.ultimoAcquisto) : "non disponibile"),
-      "Prezzo: " + (rec.prezzo ? euro(rec.prezzo.importo) : "non disponibile"),
+      "Prezzo: " + (rec.prezzo ? euro(rec.prezzo.importo) + (rec.prezzo.listino ? " (di listino: verifica l'importo nell'ordine del Play Console)" : "") : "non disponibile"),
       "Consenso all'esecuzione immediata: " + (rec.consenso ? "sì, " + dataOraIt(rec.consenso.data) : "no"),
       "",
       "Esito proposto: " + ({ totale: "rimborso totale", parziale: "rimborso parziale della parte non goduta", rifiuto: "rifiuto (oltre 14 giorni)", da_verificare: "da verificare" }[p.esito] || p.esito)
