@@ -920,7 +920,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v149";
+  const VERSIONE_APP = "v150";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -1271,10 +1271,52 @@
     });
   }
 
+  // v150 · Reclami e segnalazioni (data certa, risposta entro 30 giorni)
+  function reclamoHTML() {
+    return `<p class="hint">Hai un problema con l'app o con un acquisto? Scrivici: ricevi subito un'email di conferma e ti rispondiamo entro 30 giorni.</p>
+      <button type="button" class="btn btn--ghost" data-reclamo>Reclami e segnalazioni</button>`;
+  }
+  function apriReclamo() {
+    apriSheet(`
+      <h2 class="sheet__titolo">Reclami e segnalazioni</h2>
+      <p class="sheet__nota">Descrivi il problema: cosa è successo, quando e, se riguarda un acquisto, quale. Ricevi subito un'email con la data del reclamo; ti rispondiamo per email entro 30 giorni.</p>
+      <label class="editor-campo"><textarea id="reclamo-testo" rows="7" maxlength="4000" placeholder="Scrivi qui il tuo reclamo"></textarea></label>
+      <p class="stat-nota">Non inserire dati sulla salute che non servono a descrivere il problema.</p>
+      <p class="auth-error" id="reclamo-errore" hidden></p>
+      <button type="button" class="btn" id="btn-invia-reclamo">Invia il reclamo</button>
+      <button type="button" class="btn btn--ghost" data-chiudi-sheet>Annulla</button>`);
+    const btn = document.getElementById("btn-invia-reclamo");
+    btn.addEventListener("click", async () => {
+      const testo = document.getElementById("reclamo-testo").value.trim();
+      const err = document.getElementById("reclamo-errore");
+      if (testo.length < 10) { err.hidden = false; err.textContent = "Scrivi qualche parola in più per descrivere il problema."; return; }
+      btn.disabled = true; btn.textContent = "Invio in corso…";
+      try {
+        const r = await window.cloud.chiamaFunzione("inviaReclamo", { testo });
+        const quando = new Date(r.data).toLocaleString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+        apriSheet(`
+          <h2 class="sheet__titolo">Reclamo ricevuto</h2>
+          <p class="sheet__nota">Abbiamo ricevuto il tuo reclamo il ${escapeHTML(quando)}.</p>
+          <p class="hint">Ti abbiamo inviato un'email di conferma. Ti rispondiamo entro il ${escapeHTML(formattaDataIt(new Date(r.scadenza)))}.</p>
+          <button type="button" class="btn" data-chiudi-sheet>Chiudi</button>`);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Invia il reclamo";
+        err.hidden = false;
+        err.textContent = /troppi/.test((e && e.message) || "") ? "Hai già inviato diversi reclami oggi: ti rispondiamo su quelli. Puoi anche scrivere a info@ilmiopiano.it."
+          : "Invio non riuscito: controlla la connessione e riprova, oppure scrivi a info@ilmiopiano.it.";
+      }
+    });
+  }
+  document.addEventListener("click", (e) => { if (e.target.closest && e.target.closest("[data-reclamo]")) apriReclamo(); });
+
   // ---- Eliminazione dell'account (paziente e familiare) ----
   function eliminaAccountSezioneHTML() {
     if (RUOLO !== "paziente" && RUOLO !== "familiare") return "";
     return `
+      <section class="settings-section">
+        <h2>Reclami e segnalazioni</h2>
+        ${reclamoHTML()}
+      </section>
       <section class="settings-section">
         <h2>Il tuo account</h2>
         <p class="hint">Puoi eliminare il tuo account in qualsiasi momento: vengono cancellati${RUOLO === "paziente" ? " il piano, i pasti segnati, le note, le misure" : ""} e i dati di accesso. L'operazione non si può annullare.</p>
@@ -10015,6 +10057,10 @@
         <button type="button" class="btn" id="btn-salva-profilo" style="margin-top:16px;">Salva dati di contatto</button>
       </section>
       ${codiceStudioSezioneHTML()}
+      <section class="settings-section">
+        <h2>Reclami e segnalazioni</h2>
+        ${reclamoHTML()}
+      </section>
     `;
     organizzaSezioni(profRoot, GRUPPI_PROFILO_PROF, (t) => riepilogoSezioneProf(t, null), "profilo", []);
     document.getElementById("btn-torna-lista").addEventListener("click", renderListaPazienti);

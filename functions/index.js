@@ -1636,6 +1636,139 @@ exports.inviaAvvisoTermini = onDocumentCreated({ document: "avvisiTermini/{id}",
   console.log("Avviso termini inviato:", event.params.id, a.destinatari, inviate);
 });
 
+// ---------------------------------------------------------------------
+// v150 · Reclami (consulenza dell'11/11/2026): data certa con email di
+// conferma, risposta entro 30 giorni, email interlocutoria se serve più
+// tempo, promemoria giornaliero al titolare.
+// ---------------------------------------------------------------------
+const GIORNI_RISPOSTA_RECLAMO = 30;
+const URL_RECLAMI = "https://gestionereclami-al7jqt7y6a-ew.a.run.app";
+
+exports.inviaReclamo = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const testo = String((request.data && request.data.testo) || "").trim().slice(0, 4000);
+  if (testo.length < 10) throw new HttpsError("invalid-argument", "testo-breve");
+  const email = (request.auth.token && request.auth.token.email) || "";
+  if (!email) throw new HttpsError("failed-precondition", "email-mancante");
+  const utente = (await db.collection("users").doc(uid).get()).data() || {};
+  // al massimo 5 reclami al giorno per account (abusi)
+  const adesso = Date.now();
+  const miei = await db.collection("reclami").where("uid", "==", uid).get();
+  if (miei.docs.filter((d) => (d.data().ricevutoMs || 0) > adesso - 86400000).length >= 5) throw new HttpsError("resource-exhausted", "troppi-reclami");
+  const token = require("crypto").randomBytes(24).toString("hex");
+  const scadenzaMs = adesso + GIORNI_RISPOSTA_RECLAMO * 86400000;
+  const ref = await db.collection("reclami").add({
+    uid, email, ruolo: String(utente.ruolo || ""), testo,
+    ricevutoMs: adesso, ricevutoIl: Timestamp.fromMillis(adesso), scadenzaMs, stato: "aperto", token, storico: [],
+  });
+  const quando = dataOraIt(adesso);
+  await accodaEmail({
+    to: email,
+    subject: "Il mio Piano - abbiamo ricevuto il tuo reclamo",
+    text: [
+      "Ciao,",
+      "",
+      `abbiamo ricevuto il tuo reclamo il ${quando} (ora italiana). Questa email conferma la ricezione e la data.`,
+      "",
+      "Codice del reclamo: " + ref.id,
+      "",
+      "Il tuo messaggio:",
+      testo,
+      "",
+      `Ti rispondiamo per email entro ${GIORNI_RISPOSTA_RECLAMO} giorni, cioè entro il ${dataIt(scadenzaMs)}. Se per risponderti servono verifiche più lunghe, ti scriviamo prima di quella data per spiegarti il motivo e i nuovi tempi.`,
+      "",
+      "Il mio Piano - Bulli & Pupe S.r.l.",
+    ].join("\n"),
+  });
+  await accodaEmail({
+    to: EMAIL_GESTIONE,
+    subject: `Reclamo da gestire - ${ref.id}`,
+    text: [
+      `Nuovo reclamo ricevuto il ${quando}.`,
+      "",
+      `Da: ${email} (${utente.ruolo || "utente"}, uid ${uid})`,
+      `Risposta dovuta entro: ${dataIt(scadenzaMs)}`,
+      "",
+      testo,
+      "",
+      "Per rispondere (risposta definitiva o email interlocutoria) apri:",
+      `${URL_RECLAMI}?id=${ref.id}&t=${token}`,
+    ].join("\n"),
+  });
+  console.log("Reclamo ricevuto:", ref.id);
+  return { id: ref.id, data: adesso, scadenza: scadenzaMs };
+});
+
+function emailRispostaReclamo(r, tipo, testo, nuovaScadenzaMs) {
+  const righe = tipo === "interlocutoria" ? [
+    `ti scriviamo a proposito del tuo reclamo del ${dataOraIt(r.ricevutoMs)} (codice ${r.id}).`,
+    "",
+    testo,
+    "",
+    `Per completare le verifiche ci serve ancora del tempo: ti daremo una risposta definitiva entro il ${dataIt(nuovaScadenzaMs)}.`,
+  ] : [
+    `rispondiamo al tuo reclamo del ${dataOraIt(r.ricevutoMs)} (codice ${r.id}).`,
+    "",
+    testo,
+  ];
+  return {
+    subject: tipo === "interlocutoria" ? "Il mio Piano - aggiornamento sul tuo reclamo" : "Il mio Piano - risposta al tuo reclamo",
+    text: ["Ciao,", "", ...righe, "", "Per qualsiasi domanda puoi rispondere a questa email.", "", "Il mio Piano - Bulli & Pupe S.r.l."].join("\n"),
+  };
+}
+
+/** Pagina di gestione dei reclami (link nell'email a info@ilmiopiano.it). */
+exports.gestioneReclami = onRequest(async (req, res) => {
+  const corpo = req.method === "POST" ? (req.body || {}) : req.query;
+  const id = String(corpo.id || ""), t = String(corpo.t || "");
+  const pagina = (html) => res.set("Content-Type", "text/html; charset=utf-8").send(`<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Reclamo</title><style>body{font-family:system-ui,sans-serif;max-width:680px;margin:24px auto;padding:0 16px;color:#222;line-height:1.5}textarea{width:100%;min-height:160px;font:inherit;padding:8px;box-sizing:border-box}label{display:block;margin:8px 0}button{padding:10px 18px;font-size:16px;margin-top:12px}.testo{white-space:pre-wrap;background:#f5f2ec;padding:12px;border-radius:8px}</style></head><body>${html}</body></html>`);
+  if (!/^[A-Za-z0-9]{10,40}$/.test(id) || !/^[a-f0-9]{48}$/.test(t)) { res.status(400); pagina("<p>Link non valido.</p>"); return; }
+  const ref = db.collection("reclami").doc(id);
+  const snap = await ref.get();
+  const r = snap.exists ? Object.assign({ id }, snap.data()) : null;
+  if (!r || !r.token || !require("crypto").timingSafeEqual(Buffer.from(r.token), Buffer.from(t))) { res.status(403); pagina("<p>Link non valido.</p>"); return; }
+  const storico = (r.storico || []).map((x) => `<li>${htmlSicuro(dataOraIt(x.quando))}: ${x.tipo === "interlocutoria" ? "email interlocutoria" : "risposta definitiva"}</li>`).join("");
+  const testa = `<h1>Reclamo ${htmlSicuro(id)}</h1><p><strong>Da:</strong> ${htmlSicuro(r.email)} · <strong>ricevuto:</strong> ${htmlSicuro(dataOraIt(r.ricevutoMs))} · <strong>risposta entro:</strong> ${htmlSicuro(dataIt(r.scadenzaMs))}</p><div class="testo">${htmlSicuro(r.testo)}</div>${storico ? `<p><strong>Già inviato:</strong></p><ul>${storico}</ul>` : ""}`;
+  if (r.stato === "chiuso") { pagina(testa + "<p>Reclamo chiuso: la risposta definitiva è stata inviata.</p>"); return; }
+  if (req.method === "GET") {
+    pagina(testa + `<form method="post"><input type="hidden" name="id" value="${htmlSicuro(id)}"><input type="hidden" name="t" value="${htmlSicuro(t)}">
+      <label><input type="radio" name="tipo" value="definitiva" checked> Risposta definitiva (chiude il reclamo)</label>
+      <label><input type="radio" name="tipo" value="interlocutoria"> Email interlocutoria: servono altre verifiche, nuova data entro <input type="number" name="giorni" value="15" min="1" max="60" style="width:4em"> giorni</label>
+      <label>Testo per l'utente:<textarea name="testo" required></textarea></label>
+      <button type="submit">Invia all'utente</button></form>
+      <p>L'email parte da info@ilmiopiano.it; l'intestazione e i saluti li aggiunge il sistema.</p>`);
+    return;
+  }
+  if (req.method !== "POST") { res.status(405).send(""); return; }
+  const tipo = corpo.tipo === "interlocutoria" ? "interlocutoria" : "definitiva";
+  const testo = String(corpo.testo || "").trim().slice(0, 6000);
+  if (testo.length < 10) { res.status(400); pagina(testa + "<p>Scrivi il testo della risposta.</p>"); return; }
+  const giorni = Math.min(60, Math.max(1, Number(corpo.giorni) || 15));
+  const nuovaScadenza = tipo === "interlocutoria" ? Date.now() + giorni * 86400000 : r.scadenzaMs;
+  const voce = { tipo, quando: Date.now(), testo };
+  await ref.update(Object.assign({ storico: FieldValue.arrayUnion(voce) }, tipo === "definitiva" ? { stato: "chiuso", chiusoMs: Date.now() } : { scadenzaMs: nuovaScadenza, stato: "aperto" }));
+  const mail = emailRispostaReclamo(r, tipo, testo, nuovaScadenza);
+  await accodaEmail({ to: r.email, subject: mail.subject, text: mail.text });
+  console.log("Reclamo", id, tipo);
+  pagina(`<h1>Inviato</h1><p>${tipo === "definitiva" ? "Risposta definitiva inviata: il reclamo è chiuso." : `Email interlocutoria inviata: nuova data di risposta ${htmlSicuro(dataIt(nuovaScadenza))}.`}</p>`);
+});
+
+/** Ogni mattina: reclami aperti con risposta dovuta entro 5 giorni (o scaduta). */
+exports.promemoriaReclami = onSchedule({ schedule: "40 8 * * *", timeZone: "Europe/Rome" }, async () => {
+  const limite = Date.now() + 5 * 86400000;
+  const q = await db.collection("reclami").where("stato", "==", "aperto").get();
+  const vicini = q.docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((r) => r.scadenzaMs <= limite).sort((a, b) => a.scadenzaMs - b.scadenzaMs);
+  if (!vicini.length) return;
+  await accodaEmail({
+    to: EMAIL_GESTIONE,
+    subject: `Reclami da rispondere: ${vicini.length}`,
+    text: ["Reclami aperti con risposta dovuta entro 5 giorni o già scaduta:", "",
+      ...vicini.map((r) => `- ${r.id} da ${r.email}: entro il ${dataIt(r.scadenzaMs)}${r.scadenzaMs < Date.now() ? " (SCADUTO)" : ""}\n  ${URL_RECLAMI}?id=${r.id}&t=${r.token}`),
+      "", "Se servono altre verifiche, invia l'email interlocutoria dalla pagina del reclamo."].join("\n"),
+  });
+});
+
 /** Testi delle tre email di esito (provvisori, da far validare all'avvocato). */
 function emailEsitoRecesso(r, esito, importo) {
   const contratto = nomeAbbonamento(r.prodotto);
@@ -3544,5 +3677,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoRecessoProposto, consensoPerAcquisto, emailEsitoRecesso, datiRecesso, erroreAvvisoTermini, emailAvvisoTermini, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoRecessoProposto, consensoPerAcquisto, emailEsitoRecesso, datiRecesso, erroreAvvisoTermini, emailAvvisoTermini, emailRispostaReclamo, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
