@@ -1560,6 +1560,82 @@ exports.richiediRecesso = onCall(async (request) => {
   return { data: adesso };
 });
 
+// ---------------------------------------------------------------------
+// v149 · Avviso di modifica dei termini (consulenza dell'11/11/2026): 30 giorni
+// di preavviso, avviso nell'app ed email a tutti gli interessati. Si crea un
+// documento in /avvisiTermini dalla console: { destinatari: "pazienti" |
+// "professionisti" | "tutti", inVigoreDal: "AAAA-MM-GG", sintesi, link? }.
+// ---------------------------------------------------------------------
+const GIORNI_PREAVVISO_TERMINI = 30;
+const DESTINATARI_TERMINI = { pazienti: ["paziente"], professionisti: ["professionista"], tutti: ["paziente", "professionista", "familiare"] };
+
+/** Controlla l'avviso creato dalla console; restituisce l'errore o null. */
+function erroreAvvisoTermini(a, adesso) {
+  if (!a || !DESTINATARI_TERMINI[a.destinatari]) return "destinatari deve essere pazienti, professionisti o tutti";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.inVigoreDal || ""))) return "inVigoreDal deve essere una data AAAA-MM-GG";
+  const inizio = Date.parse(a.inVigoreDal + "T00:00:00+01:00");
+  if (!Number.isFinite(inizio)) return "data non valida";
+  if (inizio - adesso < GIORNI_PREAVVISO_TERMINI * 86400000 - 3600000) return `servono almeno ${GIORNI_PREAVVISO_TERMINI} giorni di preavviso`;
+  const sintesi = String(a.sintesi || "").trim();
+  if (sintesi.length < 20 || sintesi.length > 1500) return "sintesi tra 20 e 1500 caratteri";
+  if (a.link && !/^https:\/\/(www\.)?ilmiopiano\.it\//.test(String(a.link))) return "link deve essere una pagina di ilmiopiano.it";
+  return null;
+}
+
+function emailAvvisoTermini(a) {
+  const quando = new Date(a.inVigoreDal + "T12:00:00+01:00").toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Rome" });
+  const link = a.link || "https://ilmiopiano.it/termini.html";
+  return {
+    subject: "Il mio Piano - modifiche ai termini di servizio dal " + quando,
+    text: [
+      "Ciao,",
+      "",
+      `dal ${quando} cambiano i termini di servizio di Il mio Piano. Ecco in sintesi cosa cambia:`,
+      "",
+      String(a.sintesi).trim(),
+      "",
+      "Puoi leggere i termini aggiornati qui: " + link,
+      "",
+      "Se continui a usare l'app dopo quella data, si applicano i nuovi termini. Se non li accetti puoi eliminare l'account in qualsiasi momento dalle Impostazioni dell'app; se le modifiche riducono il servizio di un abbonamento Premium già pagato, puoi recedere con il rimborso della parte non goduta.",
+      "",
+      "Ricevi questa email perché hai un account su Il mio Piano. Per qualsiasi domanda puoi rispondere a questa email.",
+      "",
+      "Il mio Piano - Bulli & Pupe S.r.l.",
+    ].join("\n"),
+  };
+}
+
+exports.inviaAvvisoTermini = onDocumentCreated({ document: "avvisiTermini/{id}", timeoutSeconds: 540 }, async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const a = snap.data() || {};
+  const errore = erroreAvvisoTermini(a, Date.now());
+  if (errore) { await snap.ref.update({ stato: "errore", errore }); console.error("Avviso termini non inviato:", errore); return; }
+  const ruoli = DESTINATARI_TERMINI[a.destinatari];
+  const uids = [];
+  if (a.prova) {
+    // prova: solo l'utente indicato (uid), senza scrivere agli altri
+    const u = await db.collection("users").doc(String(a.prova)).get();
+    if (u.exists && ruoli.includes((u.data() || {}).ruolo)) uids.push(u.id);
+  } else {
+    for (const ruolo of ruoli) {
+      const q = await db.collection("users").where("ruolo", "==", ruolo).select().get();
+      q.docs.forEach((d) => uids.push(d.id));
+    }
+  }
+  // email dall'account di accesso (la fonte più affidabile)
+  const email = new Set();
+  for (let i = 0; i < uids.length; i += 100) {
+    const r = await getAuth().getUsers(uids.slice(i, i + 100).map((uid) => ({ uid })));
+    r.users.forEach((u) => { if (u.email && !u.disabled) email.add(u.email.toLowerCase()); });
+  }
+  const mail = emailAvvisoTermini(a);
+  let inviate = 0;
+  for (const to of email) { await accodaEmail({ to, subject: mail.subject, text: mail.text }); inviate++; }
+  await snap.ref.update({ stato: "inviato", inviate, inviatoIl: FieldValue.serverTimestamp(), creato: a.creato || FieldValue.serverTimestamp() });
+  console.log("Avviso termini inviato:", event.params.id, a.destinatari, inviate);
+});
+
 /** Testi delle tre email di esito (provvisori, da far validare all'avvocato). */
 function emailEsitoRecesso(r, esito, importo) {
   const contratto = nomeAbbonamento(r.prodotto);
@@ -3468,5 +3544,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoRecessoProposto, consensoPerAcquisto, emailEsitoRecesso, datiRecesso, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoRecessoProposto, consensoPerAcquisto, emailEsitoRecesso, datiRecesso, erroreAvvisoTermini, emailAvvisoTermini, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }

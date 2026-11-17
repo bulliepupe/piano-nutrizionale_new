@@ -704,6 +704,7 @@
     CONSENSO_SINTESI = sintesiValida && sceltaSintesi.si === true;
     mostraSchermata("paziente");
     aggiornaPremium().then(() => caricaReseAI());
+    setTimeout(() => controllaAvvisoTermini(utenteDati), 4000);
     if (!avviaPaziente.collegato) {
       avviaPaziente.collegato = true;
       document.addEventListener("click", (e) => {
@@ -919,7 +920,7 @@
   let PIANO_VISTO = null; // { id, il }: ultimo nuovo piano del nutrizionista visto dal paziente
   const LS_FINE_PROVA = "pnut:fine-prova-vista";
   // Deve coincidere con CACHE_VERSION di service-worker.js (lo controlla test/versione.test.js)
-  const VERSIONE_APP = "v148";
+  const VERSIONE_APP = "v149";
 
   function premiumLimitato() { return RUOLO === "paziente" && PREMIUM.noto && !PREMIUM.attivo; }
 
@@ -6629,6 +6630,7 @@
   async function avviaFamiliare(utenteDati) {
     mostraSchermata("paziente");
     mostraInformativaPrimoAccesso(utenteDati, "familiare");
+    setTimeout(() => controllaAvvisoTermini(utenteDati), 4000);
     document.body.classList.add("ruolo-familiare");
     if (!window.temaApp) applyTema(localStorage.getItem(LS_KEYS.tema) || "sistema");
     CONFIG = await caricaConfig();
@@ -7844,6 +7846,41 @@
   // =======================================================================
   // LATO PROFESSIONISTA
   // =======================================================================
+  // v149 · Avviso di modifica dei termini: una volta per avviso, fino a 60
+  // giorni dopo l'entrata in vigore. Lo invia il server anche per email.
+  const RUOLI_AVVISO = { pazienti: ["paziente"], professionisti: ["professionista"], tutti: ["paziente", "professionista", "familiare"] };
+  function avvisoTerminiDaMostrare(avvisi, ruolo, visti, oggiMs) {
+    const letti = Array.isArray(visti) ? visti : [];
+    return (avvisi || [])
+      .filter((a) => a && a.stato === "inviato" && (RUOLI_AVVISO[a.destinatari] || []).includes(ruolo) && !letti.includes(a.id) && (!a.prova || a.prova === UID))
+      .filter((a) => { const t = Date.parse(String(a.inVigoreDal) + "T00:00:00+01:00"); return Number.isFinite(t) && oggiMs < t + 60 * 86400000; })
+      .sort((a, b) => String(b.inVigoreDal).localeCompare(String(a.inVigoreDal)))[0] || null;
+  }
+  async function controllaAvvisoTermini(utenteDati, tentativi = 0) {
+    let avviso = null;
+    try { avviso = avvisoTerminiDaMostrare(await window.cloud.avvisiTermini(), RUOLO, utenteDati && utenteDati.terminiVisti, Date.now()); } catch (e) { return; }
+    if (!avviso) return;
+    // non sopra un'altra schermata: si riprova dopo
+    if (document.getElementById("sheet-overlay")) { if (tentativi < 20) setTimeout(() => controllaAvvisoTermini(utenteDati, tentativi + 1), 15000); return; }
+    const quando = new Date(avviso.inVigoreDal + "T12:00:00+01:00").toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" });
+    const giaInVigore = Date.now() >= Date.parse(avviso.inVigoreDal + "T00:00:00+01:00");
+    const link = avviso.link || CONFIG.linkTermini || "https://ilmiopiano.it/termini.html";
+    apriSheet(`
+      <h2 class="sheet__titolo">Modifiche ai termini di servizio</h2>
+      <p class="sheet__nota">Dal ${escapeHTML(quando)} ${giaInVigore ? "sono in vigore" : "cambiano"} i termini di servizio di Il mio Piano. In sintesi:</p>
+      <p class="hint" style="white-space:pre-line;">${escapeHTML(String(avviso.sintesi || ""))}</p>
+      <p class="hint"><a href="${escapeHTML(link)}" target="_blank" rel="noopener" class="link-inline">Leggi i termini aggiornati</a></p>
+      <p class="stat-nota">Ti abbiamo inviato lo stesso avviso per email. Se non accetti le modifiche puoi eliminare l'account dalle Impostazioni.</p>
+      <button type="button" class="btn" id="btn-termini-letti">Ho letto</button>`);
+    const overlay = document.getElementById("sheet-overlay");
+    if (overlay) overlay.dataset.bloccato = "avvisoTermini";
+    document.getElementById("btn-termini-letti").addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      try { await window.cloud.segnaAvvisoTerminiLetto(UID, avviso.id); } catch (x) { /* si ripresenta al prossimo accesso */ }
+      chiudiSheet(true);
+    });
+  }
+
   /** Professionisti iscritti prima della v147: professione e partita IVA obbligatorie. */
   let datiProfInRichiesta = false;
   function chiediDatiProfessionali() {
@@ -7898,6 +7935,7 @@
     pazienteSelezionatoId = null;
     PROFILO_PROF = utenteDati || {};
     caricaConfig().then((c) => { CONFIG = c; if (vistaProfCorrente === "lista") renderListaPazienti(); });
+    setTimeout(() => controllaAvvisoTermini(utenteDati), 4000);
     if (unsubProfilo) unsubProfilo();
     unsubProfilo = window.cloud.ascoltaUtente(UID, (dati) => {
       if (!dati) return;

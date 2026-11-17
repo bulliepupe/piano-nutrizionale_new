@@ -242,6 +242,15 @@
      * sicurezza), ma può leggere il proprio piano — così vede sempre i
      * contatti aggiornati senza toccare le regole Firestore.
      */
+    /** v149: avvisi di modifica dei termini già inviati dal server. */
+    async avvisiTermini() {
+      const snap = await db.collection("avvisiTermini").where("stato", "==", "inviato").get();
+      return snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+    },
+    async segnaAvvisoTerminiLetto(uid, id) {
+      await db.collection("users").doc(uid).update({ terminiVisti: FieldValue.arrayUnion(id) });
+    },
+
     async salvaProfiloProfessionista(uid, contatti, datiProfessionali) {
       await db.collection("users").doc(uid).update(Object.assign({ contatti, nome: contatti.nome || "" }, datiProfessionali ? { datiProfessionali } : {}));
       const snap = await db.collection("piani").where("professionistaUid", "==", uid).get();

@@ -270,6 +270,13 @@ service cloud.firestore {
       allow list, write: if false;
     }
 
+    // v149: avvisi di modifica dei termini (li crea il titolare dalla console,
+    // li invia il server); l'app legge solo quelli già inviati.
+    match /avvisiTermini/{id} {
+      allow read: if isSignedIn() && resource.data.stato == "inviato";
+      allow write: if false;
+    }
+
     // Tutto il resto (licenze in attesa, registro notifiche) è solo per il server.
     match /{document=**} {
       allow read, write: if false;
