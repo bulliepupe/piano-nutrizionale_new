@@ -1482,19 +1482,23 @@ function consensoPerAcquisto(consensi, primoAcquistoMs) {
 exports.richiediRecesso = onCall(async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Accesso richiesto.");
+  const email = (request.auth.token && request.auth.token.email) || "";
+  if (!email) throw new HttpsError("failed-precondition", "email-mancante");
+  return creaRecesso(uid, email, Date.now(), "app");
+});
+
+/** Registra un recesso (dall'app o, v151, arrivato per email o PEC) e invia conferma e avviso. */
+async function creaRecesso(uid, email, adesso, canale) {
   const utente = (await db.collection("users").doc(uid).get()).data() || {};
   if (utente.ruolo !== "paziente") throw new HttpsError("permission-denied", "Solo per i pazienti.");
   const premium = utente.premium || {};
   if (!premium.prodotto) throw new HttpsError("failed-precondition", "nessun-abbonamento");
-  const email = (request.auth.token && request.auth.token.email) || "";
-  if (!email) throw new HttpsError("failed-precondition", "email-mancante");
   // una sola richiesta aperta per volta: si rimanda la conferma di quella
   const aperte = await db.collection("recessi").where("uid", "==", uid).where("stato", "==", "ricevuta").limit(1).get();
   if (!aperte.empty) {
     const r = aperte.docs[0].data();
     return { data: r.richiestaMs, giaPresente: true };
   }
-  const adesso = Date.now();
   const crypto = require("crypto");
   const rec = {
     uid, email,
@@ -1509,7 +1513,7 @@ exports.richiediRecesso = onCall(async (request) => {
   const proposta = esitoRecessoProposto(rec);
   const token = crypto.randomBytes(24).toString("hex");
   const ref = await db.collection("recessi").add(Object.assign({}, rec, {
-    richiestaMs: adesso, richiestaIl: Timestamp.fromMillis(adesso), stato: "ricevuta", proposta, token,
+    richiestaMs: adesso, richiestaIl: Timestamp.fromMillis(adesso), stato: "ricevuta", proposta, token, canale: canale || "app",
   }));
   const quando = dataOraIt(adesso);
   await accodaEmail({
@@ -1538,7 +1542,7 @@ exports.richiediRecesso = onCall(async (request) => {
     to: EMAIL_GESTIONE,
     subject: `Recesso Premium da gestire - ${ref.id}`,
     text: [
-      `Nuova richiesta di recesso ricevuta il ${quando}.`,
+      `Nuova richiesta di recesso ricevuta il ${quando}${canale && canale !== "app" ? ` (arrivata per ${canale}, registrata a mano)` : ""}.`,
       "",
       "Account: " + email + " (uid " + uid + ")",
       "Contratto: " + nomeAbbonamento(rec.prodotto) + " (" + rec.prodotto + ", " + (rec.store || "store") + ")",
@@ -1556,9 +1560,9 @@ exports.richiediRecesso = onCall(async (request) => {
       "Il rimborso e la revoca dell'abbonamento si fanno dal Play Console (Gestione ordini).",
     ].join("\n"),
   });
-  console.log("Recesso richiesto:", ref.id, p.esito);
-  return { data: adesso };
-});
+  console.log("Recesso richiesto:", ref.id, p.esito, canale || "app");
+  return { data: adesso, id: ref.id };
+}
 
 // ---------------------------------------------------------------------
 // v149 · Avviso di modifica dei termini (consulenza dell'11/11/2026): 30 giorni
@@ -1575,7 +1579,8 @@ function erroreAvvisoTermini(a, adesso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.inVigoreDal || ""))) return "inVigoreDal deve essere una data AAAA-MM-GG";
   const inizio = Date.parse(a.inVigoreDal + "T00:00:00+01:00");
   if (!Number.isFinite(inizio)) return "data non valida";
-  if (inizio - adesso < GIORNI_PREAVVISO_TERMINI * 86400000 - 3600000) return `servono almeno ${GIORNI_PREAVVISO_TERMINI} giorni di preavviso`;
+  // termini 11.3: le modifiche imposte da leggi o autorità possono avere un preavviso più breve
+  if (a.obbligoDiLegge !== true && inizio - adesso < GIORNI_PREAVVISO_TERMINI * 86400000 - 3600000) return `servono almeno ${GIORNI_PREAVVISO_TERMINI} giorni di preavviso (per modifiche imposte dalla legge aggiungi obbligoDiLegge = true)`;
   const sintesi = String(a.sintesi || "").trim();
   if (sintesi.length < 20 || sintesi.length > 1500) return "sintesi tra 20 e 1500 caratteri";
   if (a.link && !/^https:\/\/(www\.)?ilmiopiano\.it\//.test(String(a.link))) return "link deve essere una pagina di ilmiopiano.it";
@@ -1590,7 +1595,7 @@ function emailAvvisoTermini(a) {
     text: [
       "Ciao,",
       "",
-      `dal ${quando} cambiano i termini di servizio di Il mio Piano. Ecco in sintesi cosa cambia:`,
+      `dal ${quando} cambiano i termini di servizio di Il mio Piano${a.obbligoDiLegge === true ? ", per adeguarli a un obbligo di legge" : ""}. Ecco in sintesi cosa cambia:`,
       "",
       String(a.sintesi).trim(),
       "",
@@ -1651,15 +1656,20 @@ exports.inviaReclamo = onCall(async (request) => {
   if (testo.length < 10) throw new HttpsError("invalid-argument", "testo-breve");
   const email = (request.auth.token && request.auth.token.email) || "";
   if (!email) throw new HttpsError("failed-precondition", "email-mancante");
-  const utente = (await db.collection("users").doc(uid).get()).data() || {};
   // al massimo 5 reclami al giorno per account (abusi)
   const adesso = Date.now();
   const miei = await db.collection("reclami").where("uid", "==", uid).get();
   if (miei.docs.filter((d) => (d.data().ricevutoMs || 0) > adesso - 86400000).length >= 5) throw new HttpsError("resource-exhausted", "troppi-reclami");
+  return creaReclamo(uid, email, testo, adesso, "app");
+});
+
+/** Registra un reclamo (dall'app o, v151, arrivato per email o PEC) e invia conferma e avviso. */
+async function creaReclamo(uid, email, testo, adesso, canale) {
+  const utente = uid ? ((await db.collection("users").doc(uid).get()).data() || {}) : {};
   const token = require("crypto").randomBytes(24).toString("hex");
   const scadenzaMs = adesso + GIORNI_RISPOSTA_RECLAMO * 86400000;
   const ref = await db.collection("reclami").add({
-    uid, email, ruolo: String(utente.ruolo || ""), testo,
+    uid: uid || null, email, ruolo: String(utente.ruolo || ""), testo, canale: canale || "app",
     ricevutoMs: adesso, ricevutoIl: Timestamp.fromMillis(adesso), scadenzaMs, stato: "aperto", token, storico: [],
   });
   const quando = dataOraIt(adesso);
@@ -1685,7 +1695,7 @@ exports.inviaReclamo = onCall(async (request) => {
     to: EMAIL_GESTIONE,
     subject: `Reclamo da gestire - ${ref.id}`,
     text: [
-      `Nuovo reclamo ricevuto il ${quando}.`,
+      `Nuovo reclamo ricevuto il ${quando}${canale && canale !== "app" ? ` (arrivato per ${canale}, registrato a mano)` : ""}.`,
       "",
       `Da: ${email} (${utente.ruolo || "utente"}, uid ${uid})`,
       `Risposta dovuta entro: ${dataIt(scadenzaMs)}`,
@@ -1696,8 +1706,52 @@ exports.inviaReclamo = onCall(async (request) => {
       `${URL_RECLAMI}?id=${ref.id}&t=${token}`,
     ].join("\n"),
   });
-  console.log("Reclamo ricevuto:", ref.id);
+  console.log("Reclamo ricevuto:", ref.id, canale || "app");
   return { id: ref.id, data: adesso, scadenza: scadenzaMs };
+}
+
+// v151 (termini 6.3 e 12.2): recessi e reclami arrivati per email o PEC. Dalla
+// console si crea un documento in /richiesteManuali con: tipo ("recesso" |
+// "reclamo"), email (del mittente), ricevutoIl ("AAAA-MM-GG HH:MM", ora
+// italiana di arrivo del messaggio), canale ("email" | "PEC") e, per i
+// reclami, testo. Il server la registra come quelle dall'app.
+function datiRichiestaManuale(d, adesso) {
+  const tipo = d && d.tipo;
+  if (tipo !== "recesso" && tipo !== "reclamo") return { errore: "tipo deve essere recesso o reclamo" };
+  const email = String(d.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { errore: "email non valida" };
+  const m = String(d.ricevutoIl || "").trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})$/);
+  if (!m) return { errore: "ricevutoIl deve essere AAAA-MM-GG HH:MM" };
+  // ora italiana: +01:00 d'inverno, +02:00 d'estate
+  let ms = Date.parse(`${m[1]}T${m[2]}:${m[3]}:00+01:00`);
+  const estate = new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/Rome", timeZoneName: "longOffset" }).includes("+02");
+  if (estate) ms -= 3600000;
+  if (!Number.isFinite(ms) || ms > adesso + 600000 || ms < adesso - 60 * 86400000) return { errore: "data di arrivo non plausibile" };
+  const canale = d.canale === "PEC" ? "PEC" : "email";
+  const testo = String(d.testo || "").trim().slice(0, 4000);
+  if (tipo === "reclamo" && testo.length < 10) return { errore: "per un reclamo serve il testo" };
+  return { tipo, email, ms, canale, testo };
+}
+
+exports.registraRichiestaManuale = onDocumentCreated("richiesteManuali/{id}", async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const d = datiRichiestaManuale(snap.data() || {}, Date.now());
+  if (d.errore) { await snap.ref.update({ stato: "errore", errore: d.errore }); return; }
+  let uid = null;
+  try { uid = (await getAuth().getUserByEmail(d.email)).uid; } catch (e) { uid = null; }
+  try {
+    if (d.tipo === "reclamo") {
+      const r = await creaReclamo(uid, d.email, d.testo, d.ms, d.canale);
+      await snap.ref.update({ stato: "registrato", reclamo: r.id });
+    } else {
+      if (!uid) throw new HttpsError("not-found", "nessun account con questa email: gestisci il recesso a mano");
+      const r = await creaRecesso(uid, d.email, d.ms, d.canale);
+      await snap.ref.update({ stato: r.giaPresente ? "gia-presente" : "registrato", recesso: r.id || null });
+    }
+  } catch (e) {
+    await snap.ref.update({ stato: "errore", errore: String(e.message || e).slice(0, 300) });
+  }
 });
 
 function emailRispostaReclamo(r, tipo, testo, nuovaScadenzaMs) {
@@ -3677,5 +3731,5 @@ exports.applicaLicenzaInAttesa = onDocumentCreated("users/{uid}", async (event) 
 });
 
 if (typeof module !== "undefined") {
-  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoRecessoProposto, consensoPerAcquisto, emailEsitoRecesso, datiRecesso, erroreAvvisoTermini, emailAvvisoTermini, emailRispostaReclamo, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
+  module.exports._test = { rimozioniDaAggiornamento, riapplicaRegistro, registra, mettiInCustodiaDatiProfessionista, cancellaDatiAI, impattoSullaGiornata, soloFrasiDescrittive, eseguiCustodia, fasiDaEseguire, emailCustodia, macroEffettiviDaRisposta, normalizzaEtichetta, vociEtichettaPasto, orariAcqua, inPausaServer, premiumDaRevenueCat, consensoAINegato, statoPremiumServer, pianoHaContenuto, codiceStudioValido, nuovoCodiceStudio, normalizzaAnalisi, soloFrasiNeutre, togliMarcatori, frasiCoerentiConNumeri, nonStimabile, paroleLivelli, notaCitaSostituzione, esitoRecessoProposto, consensoPerAcquisto, emailEsitoRecesso, datiRecesso, erroreAvvisoTermini, emailAvvisoTermini, emailRispostaReclamo, datiRichiestaManuale, esitoConsensiDaRegistro, puoChiudereManutenzione, validaIscrizione, consensoSintesiNegato, esitoCancellazioneRC, normalizzaRiscontro, pastoDaNotificareOra, chiaveData, oraItaliana, licenzaDaAbbonamento, pianoDaPrezzo, statoLicenzaServer };
 }
