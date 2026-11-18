@@ -290,6 +290,29 @@ const giorni = async (g) => { ORA += g * G; return T.eseguiCustodia(ORA); };
   const pf = store["users/ua/pastiFatti/2026-11-04"];
   ok(!pf.pranzo && pf.cena === true && !pf.note.pranzo && pf.note.cena === "ok" && !(pf.etichette && pf.etichette.pranzo), "segnatura, nota e prodotti del pranzo tolti di nuovo, la cena resta");
 
+  // --- v152: account inutilizzati da 24 mesi ---
+  store = {
+    "users/vecchio": { ruolo: "paziente", autonomo: true, nome: "Ugo", email: "ugo@x.it", ultimoAccesso: ts(ORA - 731 * G) },
+    "piani/pv": { pazienteUid: "vecchio", settimane: {} },
+    "users/tornato": { ruolo: "paziente", autonomo: true, email: "t@x.it", ultimoAccesso: ts(ORA - 731 * G) },
+    "users/seguito": { ruolo: "paziente", professionistaUid: "prof", email: "s@x.it", ultimoAccesso: ts(ORA - 900 * G) },
+    "users/pagante": { ruolo: "paziente", autonomo: true, email: "p@x.it", ultimoAccesso: ts(ORA - 900 * G), premium: { prodotto: "premium:annuale", stato: "attivo", scadenza: ts(ORA + 100 * G) } },
+    "users/fam": { ruolo: "familiare", email: "f@x.it", creato: ts(ORA - 800 * G) },
+    "users/recente": { ruolo: "paziente", autonomo: true, email: "r@x.it", ultimoAccesso: ts(ORA - 100 * G) },
+  };
+  let ei = await T.eseguiCustodia(ORA);
+  ok(ei.avvisiInattivita === 3, "avvisati solo i tre account inattivi senza nutrizionista né abbonamento: " + ei.avvisiInattivita);
+  ok(email().filter((m) => /24 mesi/.test(m.message.subject)).length === 3, "tre email di avviso");
+  ok(store["users/vecchio"].avvisoInattivita && !store["users/seguito"].avvisoInattivita && !store["users/pagante"].avvisoInattivita && !store["users/recente"].avvisoInattivita, "seguito, pagante e recente esclusi");
+  ORA += 10 * G; store["users/tornato"].ultimoAccesso = ts(ORA);
+  ei = await T.eseguiCustodia(ORA);
+  ok(!store["users/tornato"].avvisoInattivita, "chi riapre l'app annulla l'avviso");
+  ORA += 19 * G; ei = await T.eseguiCustodia(ORA);
+  ok("users/vecchio" in store && ei.inattiviCancellati === 0, "a 29 giorni dall'avviso non si cancella");
+  ORA += 1 * G; ei = await T.eseguiCustodia(ORA);
+  ok(!("users/vecchio" in store) && !("users/fam" in store) && ei.inattiviCancellati === 2, "a 30 giorni cancellati paziente e familiare: " + ei.inattiviCancellati);
+  ok("users/tornato" in store && "users/seguito" in store && "users/pagante" in store, "gli altri restano");
+
   Date.now = realNow;
   console.log("OK: " + n + " verifiche superate");
 })().catch((e) => { console.error(e); process.exit(1); });

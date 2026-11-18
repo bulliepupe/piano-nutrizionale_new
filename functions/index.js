@@ -776,6 +776,75 @@ function emailCustodia(tipo, d) {
   };
 }
 
+const GIORNI_INATTIVITA = 730;
+const GIORNI_AVVISO_INATTIVITA = 30;
+
+/** true se l'account va considerato per la regola dei 24 mesi. */
+function inattivitaApplicabile(u, adesso) {
+  if (!u || (u.ruolo !== "paziente" && u.ruolo !== "familiare")) return false;
+  if (u.professionistaUid || u.confermaRichiesta) return false;
+  const p = u.premium || {};
+  if (p.prodotto && p.stato === "attivo" && (millisDi(p.scadenza) || 0) > adesso) return false;
+  return true;
+}
+
+async function controllaAccountInattivi(adesso) {
+  const esito = { avvisiInattivita: 0, inattiviCancellati: 0 };
+  const soglia = adesso - GIORNI_INATTIVITA * GIORNO_MS;
+  const visti = new Map();
+  for (const campo of ["ultimoAccesso", "creato"]) {
+    const q = await db.collection("users").where(campo, "<=", Timestamp.fromMillis(soglia)).get();
+    q.docs.forEach((d) => visti.set(d.id, d));
+  }
+  const avvisati = await db.collection("users").where("avvisoInattivita", "<=", Timestamp.fromMillis(adesso)).get();
+  avvisati.docs.forEach((d) => visti.set(d.id, d));
+  for (const [uid, doc] of visti) {
+    const u = doc.data() || {};
+    const ultimo = msDi(u.ultimoAccesso) || msDi(u.creato) || adesso;
+    const avviso = msDi(u.avvisoInattivita);
+    if (!inattivitaApplicabile(u, adesso) || ultimo > soglia) {
+      // è tornato (o non rientra più nella regola): l'avviso si annulla
+      if (avviso) await doc.ref.update({ avvisoInattivita: FieldValue.delete() });
+      continue;
+    }
+    if (!avviso) {
+      let email = u.email || "";
+      if (!email) { try { email = (await getAuth().getUser(uid)).email || ""; } catch (e) { email = ""; } }
+      if (email) {
+        const entro = dataIt(adesso + GIORNI_AVVISO_INATTIVITA * GIORNO_MS);
+        await accodaEmail({
+          to: email,
+          subject: "Il mio Piano - il tuo account non è usato da più di 24 mesi",
+          text: [
+            `Ciao${u.nome ? " " + u.nome : ""},`,
+            "",
+            "il tuo account di Il mio Piano non viene usato da più di 24 mesi. Come previsto dai termini di servizio e dall'informativa privacy, gli account inutilizzati vengono eliminati.",
+            "",
+            `Se vuoi tenerlo, basta aprire l'app e accedere entro il ${entro}: non devi fare altro. Se non accedi entro quella data, il ${entro} elimineremo l'account e tutti i dati collegati, in modo definitivo.`,
+            "",
+            "Per qualsiasi domanda puoi rispondere a questa email.",
+            "",
+            "Il mio Piano - Bulli & Pupe S.r.l.",
+          ].join("\n"),
+        });
+      }
+      await doc.ref.update({ avvisoInattivita: Timestamp.fromMillis(adesso) });
+      esito.avvisiInattivita++;
+      continue;
+    }
+    if (adesso - avviso >= GIORNI_AVVISO_INATTIVITA * GIORNO_MS && ultimo < avviso) {
+      if (u.ruolo === "paziente") {
+        const piano = await pianoDelPaziente(uid);
+        await cancellaDatiPaziente(uid, piano ? piano.ref : null);
+      } else {
+        await cancellaAccountFamiliare(uid, u, true);
+      }
+      esito.inattiviCancellati++;
+    }
+  }
+  return esito;
+}
+
 /** Eseguita ogni notte: scollegamenti, licenze cessate, conferme scadute. */
 async function eseguiCustodia(adesso) {
   adesso = adesso || Date.now();
@@ -894,6 +963,11 @@ async function eseguiCustodia(adesso) {
   for (const d of nonConfermate.docs) {
     if ((msDi(d.data().creato) || adesso) <= adesso - 7 * GIORNO_MS) { await d.ref.delete(); esito.iscrizioniNonConfermate++; }
   }
+  // 7) v152 · Account inutilizzati da 24 mesi (termini pazienti 10.3 e informativa):
+  //    avviso per email, cancellazione dopo 30 giorni se nessuno accede.
+  //    Solo pazienti non seguiti da un nutrizionista e familiari, mai con un
+  //    abbonamento pagato attivo; un nuovo accesso annulla l'avviso.
+  Object.assign(esito, await controllaAccountInattivi(adesso));
   console.log("Custodia dei dati:", JSON.stringify(esito));
   return esito;
 }
@@ -2078,16 +2152,20 @@ exports.eliminaAccount = onCall(async (request) => {
     return { ok: true };
   }
   // Familiare (o profilo incompleto)
+  await cancellaAccountFamiliare(uid, utente, utenteSnap.exists);
+  return { ok: true };
+});
+
+async function cancellaAccountFamiliare(uid, utente, esiste) {
   try {
     await getAuth().deleteUser(uid);
   } catch (e) {
     if (e.code !== "auth/user-not-found") throw new HttpsError("internal", "Impossibile eliminare l'account di accesso.");
   }
-  if (utente.listaCasa) await lasciaLista(uid, utente.listaCasa).catch(() => {});
-  if (utenteSnap.exists) await db.recursiveDelete(utenteRef);
+  if (utente && utente.listaCasa) await lasciaLista(uid, utente.listaCasa).catch(() => {});
+  if (esiste !== false) await db.recursiveDelete(db.collection("users").doc(uid));
   await cancellaRegistroNotifiche(uid);
-  return { ok: true };
-});
+}
 
 // =========================================================================
 // LISTA DELLA SPESA CONDIVISA ("lista di casa")
