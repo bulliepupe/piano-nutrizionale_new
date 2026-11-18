@@ -13,7 +13,7 @@ ok(/destinatari/.test(T.erroreAvvisoTermini(Object.assign({}, base, { destinatar
 ok(/sintesi/.test(T.erroreAvvisoTermini(Object.assign({}, base, { sintesi: "breve" }), oggi)), "sintesi troppo corta");
 ok(/link/.test(T.erroreAvvisoTermini(Object.assign({}, base, { link: "https://altro.it/x" }), oggi)), "link esterno rifiutato");
 const m = T.emailAvvisoTermini(base);
-ok(/5 gennaio 2027/.test(m.subject) && m.text.includes(base.sintesi) && /termini\.html/.test(m.text), "email con data, sintesi e link");
+ok(/5 gennaio 2027/.test(m.subject) && m.text.includes(base.sintesi) && /termini-pazienti\.html/.test(m.text), "email con data, sintesi e link");
 // nell'app
 const avvisi = [Object.assign({ id: "a1", stato: "inviato" }, base), { id: "a0", stato: "errore", destinatari: "pazienti", inVigoreDal: "2027-01-05" }];
 ok(app.avvisoTerminiDaMostrare(avvisi, "paziente", [], oggi).id === "a1", "avviso mostrato al paziente");

@@ -1589,7 +1589,7 @@ function erroreAvvisoTermini(a, adesso) {
 
 function emailAvvisoTermini(a) {
   const quando = new Date(a.inVigoreDal + "T12:00:00+01:00").toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Rome" });
-  const link = a.link || "https://ilmiopiano.it/termini.html";
+  const link = a.link || (a.destinatari === "professionisti" ? "https://ilmiopiano.it/termini.html" : "https://ilmiopiano.it/termini-pazienti.html");
   return {
     subject: "Il mio Piano - modifiche ai termini di servizio dal " + quando,
     text: [

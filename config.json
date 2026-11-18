@@ -17,6 +17,7 @@
   "linkPortaleClienti": "https://billing.stripe.com/p/login/7sY4gB7JU3iedrV2gXeME00",
   "linkPrivacy": "https://ilmiopiano.it/privacy.html",
   "linkTermini": "https://ilmiopiano.it/termini.html",
+  "linkTerminiPazienti": "https://ilmiopiano.it/termini-pazienti.html",
   "linkAccordoDati": "https://ilmiopiano.it/accordo-trattamento-dati.html",
   "_link_spiegazione": "Indirizzi del sito commerciale. linkPortaleClienti è il link del Customer Portal di Stripe (Impostazioni → Portale clienti → link di accesso): permette al professionista di disdire, cambiare piano e scaricare le fatture.",
 

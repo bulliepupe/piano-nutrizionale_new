@@ -332,7 +332,7 @@
         && !document.getElementById("form-login").hidden) {
         document.getElementById("blocco-signup-paziente").hidden = false;
       }
-      const mappa = { privacy: c.linkPrivacy, termini: c.linkTermini, dpa: c.linkAccordoDati };
+      const mappa = { privacy: c.linkPrivacy, termini: c.linkTermini, terminiPazienti: c.linkTerminiPazienti, dpa: c.linkAccordoDati };
       document.querySelectorAll("[data-link]").forEach((a) => { if (mappa[a.dataset.link]) a.href = mappa[a.dataset.link]; });
     });
 
@@ -628,7 +628,7 @@
           <li><strong>Funzioni AI:</strong> restano spente finché non scegli qui sotto, o più avanti in Impostazioni → Privacy. Le scelte date durante il percorso con il nutrizionista non valgono per il servizio autonomo.</li>
           <li>Per continuare servono i consensi qui sotto${entro ? `, entro il <strong>${escapeHTML(entro)}</strong>` : ""}. ${durante ? "Se non scegli entro quella data, quel giorno il tuo account e i tuoi dati verranno cancellati." : "Se non continui, il tuo account verrà cancellato."}</li>
         </ul>
-        <label class="auth-check"><input type="checkbox" id="cds-maggiorenne"> <span>Ho almeno 18 anni, accetto i <a href="https://ilmiopiano.it/termini.html" target="_blank" rel="noopener" class="link-inline">Termini di servizio</a> e ho letto l'<a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa privacy</a></span></label>
+        <label class="auth-check"><input type="checkbox" id="cds-maggiorenne"> <span>Ho almeno 18 anni, accetto i <a href="https://ilmiopiano.it/termini-pazienti.html" target="_blank" rel="noopener" class="link-inline">Termini di servizio</a> e ho letto l'<a href="${URL_INFORMATIVA}" target="_blank" rel="noopener" class="link-inline">Informativa privacy</a></span></label>
         <label class="auth-check"><input type="checkbox" id="cds-salute"> <span>Acconsento al trattamento dei miei dati relativi alla salute (piano alimentare, pasti, peso, misure, allenamenti) per usare Il mio Piano. Posso revocare il consenso in qualsiasi momento.</span></label>
         <label class="auth-check"><input type="checkbox" id="cds-ai"> <span><b>Facoltativo.</b> ${FORMULA_AI_PERSONALE} <span class="stato-pasto__avviso">${TESTO_INFO_AI_PERSONALE}</span></span></label>
         <p class="auth-error" id="cds-errore" hidden></p>
@@ -1129,7 +1129,7 @@
       <label class="consenso-esecuzione"><input type="checkbox" id="premium-esecuzione"> <span>${escapeHTML(TESTO_CONSENSO_ESECUZIONE)}</span></label>
       <p class="stat-nota" style="text-align:left;margin:0 0 4px;">Facoltativo. Se non spunti la casella puoi acquistare lo stesso e, se recedi entro 14 giorni, ti rimborsiamo l'intero importo.</p>
       ${pacchetti.map((p, i) => `<button type="button" class="btn${i ? " btn--ghost" : ""}" data-pacchetto="${i}" style="margin-top:8px;">${p.packageType === "ANNUAL" ? "Annuale" : "Mensile"} · ${escapeHTML(p.product.priceString || "")}</button>`).join("")}
-      <p class="hint">Il pagamento avviene con Google Play. L'abbonamento si rinnova da solo; puoi disdirlo quando vuoi da Google Play e resta attivo fino alla fine del periodo pagato. Entro 14 giorni dall'acquisto puoi recedere con il pulsante «Recedi dal contratto qui» in Impostazioni.${CONFIG.linkTermini ? ` Acquistando accetti i <a href="${escapeHTML(CONFIG.linkTermini)}" target="_blank" rel="noopener">termini di servizio</a>.` : ""}</p>
+      <p class="hint">Il pagamento avviene con Google Play. L'abbonamento si rinnova da solo; puoi disdirlo quando vuoi da Google Play e resta attivo fino alla fine del periodo pagato. Entro 14 giorni dall'acquisto puoi recedere con il pulsante «Recedi dal contratto qui» in Impostazioni. Acquistando accetti i <a href="${escapeHTML(CONFIG.linkTerminiPazienti || "https://ilmiopiano.it/termini-pazienti.html")}" target="_blank" rel="noopener">termini di servizio</a>.</p>
       <button type="button" class="btn btn--ghost" id="premium-ripristina">Ripristina acquisti</button>`;
     box.querySelectorAll("[data-pacchetto]").forEach((b) => b.addEventListener("click", () => compraPremium(pacchetti[Number(b.dataset.pacchetto)], b)));
     document.getElementById("premium-ripristina").addEventListener("click", (e) => ripristinaAcquisti(e.currentTarget));
@@ -7932,7 +7932,7 @@
     if (document.getElementById("sheet-overlay")) { if (tentativi < 20) setTimeout(() => controllaAvvisoTermini(utenteDati, tentativi + 1), 15000); return; }
     const quando = new Date(avviso.inVigoreDal + "T12:00:00+01:00").toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" });
     const giaInVigore = Date.now() >= Date.parse(avviso.inVigoreDal + "T00:00:00+01:00");
-    const link = avviso.link || CONFIG.linkTermini || "https://ilmiopiano.it/termini.html";
+    const link = avviso.link || (RUOLO === "professionista" ? (CONFIG.linkTermini || "https://ilmiopiano.it/termini.html") : (CONFIG.linkTerminiPazienti || "https://ilmiopiano.it/termini-pazienti.html"));
     apriSheet(`
       <h2 class="sheet__titolo">Modifiche ai termini di servizio</h2>
       <p class="sheet__nota">Dal ${escapeHTML(quando)} ${giaInVigore ? "sono in vigore" : "cambiano"} i termini di servizio di Il mio Piano. In sintesi:</p>
